@@ -1,6 +1,7 @@
 ﻿// Importiamo l'assembly condiviso con i contratti
 using RPG.Common.Protocol;
 using RPG.Common.Protocol.Payloads;
+using RPG.Common.Model;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -76,6 +77,7 @@ class Program
             Console.WriteLine(" - Scrivi qualsiasi testo per chattare con gli altri.");
             Console.WriteLine(" - Scrivi '/roll <espressione>' per lanciare i dadi.\n");
             Console.WriteLine(" - Scrivi '/status' per visualizzare lo stato del personaggio.\n");
+            Console.WriteLine(" - Scrivi '/move X,Y,Z' per spostarti a una nuova posizione (es. /move 10,5,3).\n");
             Console.WriteLine(" - Scrivi 'exit' per disconnetterti.\n");
 
             while (!cts.IsCancellationRequested)
@@ -104,6 +106,25 @@ class Program
                     var statusPacket = NetworkPacket.Create(OpCode.C2S_GetStatus, new { });
                     await writer.WriteLineAsync(JsonSerializer.Serialize(statusPacket));
                     continue;
+                }
+
+                if(input.StartsWith("/move "))
+                {
+                    string positionStr = input[6..].Trim();
+                    // Qui dovremmo parsare la posizione e inviare il pacchetto di movimento
+                    var coords = positionStr.Split(',');
+                    if (coords.Length == 3 && int.TryParse(coords[0], out int x) && int.TryParse(coords[1], out int y) && int.TryParse(coords[2], out int z))
+                    {
+                        var movePacket = NetworkPacket.Create(OpCode.C2S_Move, new MoveRequestPayload
+                        {
+                            TargetPosition = new Position3D { X = x, Y = y, Z = z }
+                        });
+                        await writer.WriteLineAsync(JsonSerializer.Serialize(movePacket));
+                    }
+                    else
+                    {
+                        Console.WriteLine("[ERRORE] Formato posizione non valido. Usa: /move X,Y,Z");
+                    }
                 }
 
                 // Ogni messaggio scritto dall'utente viene impacchettato in C2S_Chat
@@ -171,6 +192,15 @@ class Program
                     Console.WriteLine($" Posizione   : X: {c.Position.X}, Y: {c.Position.Y}. Z: {c.Position.Z}");
                     Console.WriteLine("=============================");
                 }
+                break;
+
+            case OpCode.S2C_PlayerMoved:
+                var moveResp = packet.DeserializePayload<JsonElement>();
+                string? playerId = moveResp.TryGetProperty("PlayerId", out var pid) ? pid.GetString() : "Unknown";
+                int x = moveResp.TryGetProperty("X", out var xVal) ? xVal.GetInt32() : 0;
+                int y = moveResp.TryGetProperty("Y", out var yVal) ? yVal.GetInt32() : 0;
+                int z = moveResp.TryGetProperty("Z", out var zVal) ? zVal.GetInt32() : 0;
+                Console.WriteLine($"[MOVIMENTO] Giocatore {playerId} si è spostato a posizione ({x}, {y}, {z})");
                 break;
 
             default:

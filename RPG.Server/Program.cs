@@ -1,19 +1,22 @@
 ﻿// Importiamo le classi definite nell'assembly condiviso RPG.Common
+using RPG.Common.Model;
 using RPG.Common.Protocol;
 using RPG.Common.Protocol.Payloads;
 using RPG.Common.Utils;
-using RPG.Common.Model;
+using RPG.Server.World;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using static RPG.Server.World.GameMap;
 
 namespace RPG.Server;
 
 class Program
 {
     private const int Port = 5000;
+    private static GameMap _gameMap = new(); // <--- LA MAPPA GLOBALE DEL SERVER
     private static readonly ConcurrentDictionary<Guid, ConnectedClient> Clients = new();
 
     static async Task Main(string[] args)
@@ -180,6 +183,42 @@ class Program
                     // Se la sintassi della stringa dei dadi non è valida
                     var errPacket = NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"Espressione dadi non valida: '{expr}' ({ex.Message})" });
                     await client.SendPacketAsync(errPacket);
+                }
+                break;
+
+            case OpCode.C2S_Move:
+                var moveReq = packet.DeserializePayload<MoveRequestPayload>();
+                if (moveReq?.TargetPosition != null)
+                {
+                    // Valutiamo il movimento tramite la mappa
+                    MovementResult moveResult = gameMap.GetMovementResult(moveReq.TargetPosition);
+
+                    if (moveResult == MovementResult.Success)
+                    {
+                        // Aggiorniamo la posizione autoritativa del player nello stato
+                        client.Character.Position = moveReq.TargetPosition;
+                        Console.WriteLine($"[MOVE] {client.Character.Handle} si è spostato a ({client.Character.Position.X}, {client.Character.Position.Y}, {client.Character.Position.Z})");
+                    }
+
+                    // Rispondiamo al client con l'esito
+                    string message = moveResult switch
+                    {
+                        MovementResult.Success => "Movimento effettuato.",
+                        MovementResult.OutOfBounds => "Area inaccessibile (Fuori dai confini).",
+                        MovementResult.ObstacleInTheWay => "La via è sbarrata da un ostacolo.",
+                        _ => "Movimento non valido."
+                    };
+
+                    var moveResp = NetworkPacket.Create(OpCode.S2C_MoveResponse, new MoveResponsePayload
+                    {
+                        Success = (moveResult == MovementResult.Success),
+                        Result = moveResult,
+                        CurrentPosition = client.Character.Position,
+                        Message = message
+                    });
+                    await client.SendPacketAsync(moveResp);
+
+                    // (Opzionale) Se il movimento è riuscito, potremmo anche fare un broadcast agli altri player vicini
                 }
                 break;
 

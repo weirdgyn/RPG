@@ -1,4 +1,5 @@
 ﻿using RPG.Common.Model;
+using static RPG.Server.World.GameMap;
 
 namespace RPG.Common.Protocol.Payloads;
 // Usato sia per C2S che per S2C
@@ -36,4 +37,18 @@ public class DiceResponsePayload
 public class PlayerStatePayload
 {
     public PlayerState Character { get; set; } = new();
+}
+
+public class MoveRequestPayload
+{
+    // Coordinate assolute o delta (qui usiamo coordinate di destinazione assolute per semplicità)
+    public Position3D TargetPosition { get; set; } = new();
+}
+
+public class MoveResponsePayload
+{
+    public bool Success { get; set; }
+    public MovementResult Result { get; set; }
+    public Position3D CurrentPosition { get; set; } = new();
+    public string Message { get; set; } = string.Empty;
 }
