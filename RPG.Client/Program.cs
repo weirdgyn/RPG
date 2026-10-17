@@ -195,12 +195,22 @@ class Program
                 break;
 
             case OpCode.S2C_PlayerMoved:
-                var moveResp = packet.DeserializePayload<JsonElement>();
-                string? playerId = moveResp.TryGetProperty("PlayerId", out var pid) ? pid.GetString() : "Unknown";
-                int x = moveResp.TryGetProperty("X", out var xVal) ? xVal.GetInt32() : 0;
-                int y = moveResp.TryGetProperty("Y", out var yVal) ? yVal.GetInt32() : 0;
-                int z = moveResp.TryGetProperty("Z", out var zVal) ? zVal.GetInt32() : 0;
-                Console.WriteLine($"[MOVIMENTO] Giocatore {playerId} si è spostato a posizione ({x}, {y}, {z})");
+                var moveResp = packet.DeserializePayload<MoveResponsePayload>();
+                if (moveResp != null)
+                {
+                    if (moveResp.Success)
+                    {
+                        Console.ForegroundColor = ConsoleColor.Green;
+                        Console.WriteLine($"[POSIZIONE] {moveResp.Message}");
+                        Console.ResetColor();
+                    }
+                    else
+                    {
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine($"[ERRORE MOVIMENTO] {moveResp.Message} (Posizione attuale: X:{moveResp.CurrentPosition.X}, Y:{moveResp.CurrentPosition.Y}, Z:{moveResp.CurrentPosition.Z})");
+                        Console.ResetColor();
+                    }
+                }
                 break;
 
             default:
