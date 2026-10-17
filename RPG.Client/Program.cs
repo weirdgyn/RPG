@@ -196,7 +196,7 @@ class Program
             Console.WriteLine(" - Scrivi '/roll <espressione>' per lanciare i dadi.\n");
             Console.WriteLine(" - Scrivi '/move <X,Y,Z>' per spostarti a una nuova posizione (es. /move 10,5,3).\n");
             Console.WriteLine(" - Scrivi '/skill <NomeAbilità> <TN>' per eseguire un controllo di abilità.\n");
-            Console.WriteLine(" - Scrivi '/attack <NomeBersaglio> <Abilita> [DadiArma]' per attaccare un bersaglio (es. /attack StreetPunk 3 2d6).\n");
+            Console.WriteLine(" - Scrivi '/attack <NomeBersaglio> <NomeAbilita> [Dadi]' per attaccare un bersaglio (es. /attack mike Pistola 2d6).\n");
             Console.WriteLine(" - Scrivi 'exit' per disconnetterti.\n");
 
             while (!cts.IsCancellationRequested)
@@ -269,19 +269,20 @@ class Program
                     }
                 }
 
+                // Sintassi: /attack <Target> [Abilità] [Dadi]  (es. /attack Jackie Pistola 2d6)
                 if (input.StartsWith("/attack ", StringComparison.OrdinalIgnoreCase))
                 {
-                    string[] parts = input.Split(' ');
-                    if (parts.Length >= 3)
+                    string[] parts = input.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length >= 2)
                     {
                         string targetHandle = parts[1];
-                        int skillLvl = int.TryParse(parts[2], out int s) ? s : 0;
+                        string skillName = parts.Length >= 3 ? parts[2] : "Pistola";
                         string weaponDice = parts.Length >= 4 ? parts[3] : "2d6";
 
                         var attackPacket = NetworkPacket.Create(OpCode.C2S_Attack, new AttackRequestPayload
                         {
                             TargetHandle = targetHandle,
-                            WeaponSkillLevel = skillLvl,
+                            SkillName = skillName,
                             WeaponDice = weaponDice
                         });
                         await writer.WriteLineAsync(JsonSerializer.Serialize(attackPacket));
@@ -289,7 +290,7 @@ class Program
                     }
                     else
                     {
-                        Console.WriteLine("[!] Sintassi non valida. Usa: /attack <NomeBersaglio> <Abilita> [DadiArma] (es. /attack StreetPunk 3 2d6)");
+                        Console.WriteLine("[!] Sintassi non valida. Usa: /attack <Bersaglio> [NomeAbilità] [DadiArma] (es. /attack Jackie Pistola 2d6)");
                         continue;
                     }
                 }

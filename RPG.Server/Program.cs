@@ -278,30 +278,41 @@ class Program
                     await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_SkillResult, resultPayload));
                 }
                 break;
+
             case OpCode.C2S_Attack:
                 var attackReq = packet.DeserializePayload<AttackRequestPayload>();
                 if (attackReq != null)
                 {
-                    // 1. Trova il bersaglio tra i client connessi (escludendo se stesso)
+                    // 1. Trova il bersaglio tra i client connessi
                     var targetClient = Clients.Values
                         .FirstOrDefault(c => c.Character.Handle.Equals(attackReq.TargetHandle, StringComparison.OrdinalIgnoreCase));
 
                     if (targetClient == null)
                     {
-                        var errPacket = NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"Bersaglio '{attackReq.TargetHandle}' non trovato o non online." });
-                        await client.SendPacketAsync(errPacket);
+                        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"Bersaglio '{attackReq.TargetHandle}' non trovato o non online." }));
                         break;
                     }
 
                     if (targetClient.Id == client.Id)
                     {
-                        var selfErr = NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Non puoi attaccare te stesso!" });
-                        await client.SendPacketAsync(selfErr);
+                        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Non puoi attaccare te stesso!" }));
                         break;
                     }
 
-                    // 2. Calcolo Attacco dell'aggressore
-                    int attackerRef = client.Character.Stats.REF;
+                    // 2. Lettura Autoritativa Statistica + Abilità dell'Attaccante
+                    string skillName = string.IsNullOrWhiteSpace(attackReq.SkillName) ? "Pistola" : attackReq.SkillName.Trim();
+                    string statName = Skills.GetStatForSkill(skillName); // Es. Pistola -> REF
+
+                    int attackerStat = statName.ToUpper() switch
+                    {
+                        "REF" => client.Character.Stats.REF,
+                        "COOL" => client.Character.Stats.COOL,
+                        "INT" => client.Character.Stats.INT,
+                        _ => client.Character.Stats.REF
+                    };
+
+                    // Livello abilità dalla scheda salvata (0 se non la possiede)
+                    int attackerSkillLvl = client.Character.Skills.TryGetValue(skillName, out int lvl) ? lvl : 0;
                     int attackerPenalty = client.Character.Health.GetWoundPenalty();
 
                     if (attackerPenalty <= -99)
@@ -310,14 +321,19 @@ class Program
                         break;
                     }
 
+                    // Tiro 1d10 per l'attacco
                     var attackRoll = GameDice.Roll("1d10");
                     int attackDiceVal = (int)attackRoll.Total;
-                    int attackTotal = attackerRef + attackReq.WeaponSkillLevel + attackerPenalty + attackDiceVal;
 
-                    // 3. Calcolo Difesa del bersaglio (Base 15 + Riflessi del bersaglio + sue eventuali penalità ferite)
+                    // Formula Interlock: STAT + SKILL + WOUNDS + 1d10
+                    int attackTotal = attackerStat + attackerSkillLvl + attackerPenalty + attackDiceVal;
+
+                    // 3. Calcolo Difesa del Bersaglio (Base 15 + REF + eventuale Schivare + Penalità Ferite)
                     int targetRef = targetClient.Character.Stats.REF;
+                    int targetDodgeLvl = targetClient.Character.Skills.TryGetValue("Schivare", out int dLvl) ? dLvl : 0;
                     int targetPenalty = targetClient.Character.Health.GetWoundPenalty();
-                    int defenseTN = 15 + targetRef + targetPenalty; // TN dinamico basato sul bersaglio
+
+                    int defenseTN = 15 + targetRef + targetDodgeLvl + targetPenalty;
 
                     bool isHit = attackTotal >= defenseTN;
                     int damageDealt = 0;
@@ -325,20 +341,20 @@ class Program
                     if (isHit)
                     {
                         // 4. Tiro Danno Arma
-                        var damageRoll = GameDice.Roll(string.IsNullOrWhiteSpace(attackReq.WeaponDice) ? "2d6" : attackReq.WeaponDice);
+                        string diceFormula = string.IsNullOrWhiteSpace(attackReq.WeaponDice) ? "2d6" : attackReq.WeaponDice;
+                        var damageRoll = GameDice.Roll(diceFormula);
                         damageDealt = (int)damageRoll.Total;
 
-                        // Applica il danno al bersaglio (autoritativo)
+                        // Applica il danno al bersaglio
                         targetClient.Character.Health.CurrentHealth = Math.Max(0, targetClient.Character.Health.CurrentHealth - damageDealt);
+
+                        // Salviamo lo stato aggiornato della salute del bersaglio su file JSON
+                        CharacterLoader.SaveCharacter(targetClient.Character);
                     }
 
-                    // 5. Costruzione del messaggio e risposta
-                    string outcomeMsg = isHit
-                        ? $"COLPO! {client.Character.Handle} colpisce {targetClient.Character.Handle} per {damageDealt} danni con '{attackReq.WeaponDice}'!"
-                        : $"MANCATO! {client.Character.Handle} fallisce l'attacco contro {targetClient.Character.Handle} (Tot: {attackTotal} vs TN {defenseTN}).";
+                    Console.WriteLine($"[COMBAT] {client.Character.Handle} attacca {targetClient.Character.Handle} con {skillName} (Stat:{attackerStat} + Skill:{attackerSkillLvl} + Pen:{attackerPenalty} + d10:[{attackDiceVal}] = {attackTotal} vs TN {defenseTN}) -> {(isHit ? $"COLPITO per {damageDealt} danni" : "MANCATO")}");
 
-                    Console.WriteLine($"[COMBAT] {outcomeMsg}");
-
+                    // 5. Invia esito sia all'attaccante che al bersaglio
                     var respPayload = new AttackResponsePayload
                     {
                         AttackerHandle = client.Character.Handle,
@@ -349,17 +365,16 @@ class Program
                         DamageDealt = damageDealt,
                         TargetRemainingHealth = targetClient.Character.Health.CurrentHealth,
                         TargetWoundStatus = targetClient.Character.Health.GetWoundStatusDescription(),
-                        Message = outcomeMsg
+                        Message = isHit
+                            ? $"COLPO A SEGNO! {client.Character.Handle} usa '{skillName}' e infligge {damageDealt} danni con {attackReq.WeaponDice}!"
+                            : $"MANCATO! {client.Character.Handle} fallisce l'attacco con '{skillName}' contro {targetClient.Character.Handle}."
                     };
 
                     var attackPacket = NetworkPacket.Create(OpCode.S2C_AttackResult, respPayload);
-
-                    // Invia il risultato sia all'attaccante che al bersaglio (e opzionalmente broadcast alla stanza)
                     await client.SendPacketAsync(attackPacket);
                     await targetClient.SendPacketAsync(attackPacket);
                 }
                 break;
-
             default:
                 Console.WriteLine($"[!] OpCode non gestito: {packet.OpCode}");
                 break;
