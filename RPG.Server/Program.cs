@@ -391,6 +391,9 @@ class Program
 
         var cts = new CancellationTokenSource();
 
+        Console.WriteLine("[SERVER] Inizializzazione configurazioni di gioco...");
+        Skills.Initialize(); // Forza il caricamento immediato di DefaultSkillMap.json all'avvio!
+
         while (!cts.Token.IsCancellationRequested)
         {
             TcpClient tcpClient = await listener.AcceptTcpClientAsync(cts.Token);

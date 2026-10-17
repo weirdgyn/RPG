@@ -83,32 +83,35 @@ public class SkillDefinition
 public static class Skills
 {
     private static Dictionary<string, string> _skillToStatMap = new(StringComparer.OrdinalIgnoreCase);
+    private static bool _isInitialized = false;
 
-    // Mappa hardcoded di fallback
     private static readonly Dictionary<string, string> DefaultMap = new(StringComparer.OrdinalIgnoreCase)
-    {
-        { "Pistola", "REF" },
-        { "Fucile", "REF" },
-        { "ArtiMarziali", "REF" },
-        { "Schivare", "REF" },
-        { "RiparareArmi", "TECH" },
-        { "Cybertech", "TECH" },
-        { "Netrunning", "INT" },
-        { "Streetwise", "INT" },
-        { "Intimidire", "COOL" },
-        { "Persuasione", "EMP" }
-    };
+        {
+            { "Pistola", "REF" },
+            { "Fucile", "REF" },
+            { "ArtiMarziali", "REF" },
+            { "Schivare", "REF" },
+            { "Guidare", "REF" },
+            { "RiparareArmi", "TECH" },
+            { "Cybertech", "TECH" },
+            { "Elettronica", "TECH" },
+            { "Scassinare", "TECH" },
+            { "Netrunning", "INT" },
+            { "Streetwise", "INT" },
+            { "Medicina", "INT" },
+            { "Intimidire", "COOL" },
+            { "Interrogare", "COOL" },
+            { "Persuasione", "EMP" },
+            { "Seduzione", "EMP" }
+        };
 
-    static Skills()
+    // Metodo da chiamare esplicitamente all'avvio del server
+    public static void Initialize(string filePath = "Data/DefaultSkillMap.json")
     {
-        LoadSkillMap();
-    }
+        if (_isInitialized) return;
 
-    public static void LoadSkillMap(string filePath = "Data/DefaultSkillMap.json")
-    {
         try
         {
-            // Mostriamo il percorso assoluto risolto, utilissimo per capire dove il server sta cercando il file
             string fullPath = Path.GetFullPath(filePath);
             Console.WriteLine($"[CONFIG] Tentativo di caricamento mappa abilità da: {fullPath}");
 
@@ -120,6 +123,7 @@ public static class Skills
                 if (loadedMap != null && loadedMap.Count > 0)
                 {
                     _skillToStatMap = new Dictionary<string, string>(loadedMap, StringComparer.OrdinalIgnoreCase);
+                    _isInitialized = true;
                     Console.WriteLine($"[CONFIG] -> SUCCESSO: Caricate {_skillToStatMap.Count} abilità da '{filePath}'.");
                     return;
                 }
@@ -134,13 +138,20 @@ public static class Skills
             Console.WriteLine($"[CONFIG] -> ERRORE durante la lettura di '{filePath}': {ex.Message}. Utilizzo mappa di fallback.");
         }
 
+        // Fallback
         _skillToStatMap = new Dictionary<string, string>(DefaultMap, StringComparer.OrdinalIgnoreCase);
+        _isInitialized = true;
         Console.WriteLine($"[CONFIG] -> Fallback attivo: {_skillToStatMap.Count} abilità caricate da codice.");
     }
+
     public static string GetStatForSkill(string skillName)
     {
+        // Assicurazione di sicurezza: se per qualsiasi motivo non è stato inizializzato, lo fa al volo
+        if (!_isInitialized)
+        {
+            Initialize();
+        }
+
         return _skillToStatMap.TryGetValue(skillName, out var stat) ? stat : "REF";
     }
-
-    public static IReadOnlyDictionary<string, string> GetAllSkills() => _skillToStatMap;
 }
