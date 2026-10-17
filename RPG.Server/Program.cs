@@ -3,6 +3,7 @@ using RPG.Common.Protocol;
 using RPG.Common.Protocol.Payloads;
 using RPG.Common.Utils;
 using RPG.Server.World;
+using RPG.Common.Model;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
@@ -224,8 +225,13 @@ class Program
                 var skillReq = packet.DeserializePayload<SkillCheckRequestPayload>();
                 if (skillReq != null)
                 {
-                    // 1. Estraiamo la statistica corretta dal personaggio del client
-                    int statVal = skillReq.StatName.ToUpper() switch
+                    string skillName = skillReq.SkillName.Trim();
+
+                    // 1. Identifichiamo la Statistica correlata
+                    string statName = Skills.GetStatForSkill(skillName);
+
+                    // 2. Estraiamo il valore della Statistica dal personaggio
+                    int statVal = statName.ToUpper() switch
                     {
                         "INT" => client.Character.Stats.INT,
                         "REF" => client.Character.Stats.REF,
@@ -235,56 +241,50 @@ class Program
                         "MA" => client.Character.Stats.MA,
                         "BODY" => client.Character.Stats.BODY,
                         "EMP" => client.Character.Stats.EMP,
-                        _ => client.Character.Stats.REF // Default su REF
+                        _ => client.Character.Stats.REF
                     };
 
-                    // 2. Calcoliamo la penalità dovuta alle ferite attuali
-                    int woundPenalty = client.Character.Health.GetWoundPenalty();
+                    // 3. Leggiamo il livello dell'abilità dalla scheda (0 se non addestrata)
+                    int skillLvl = client.Character.Skills.TryGetValue(skillName, out int lvl) ? lvl : 0;
 
-                    // Se il personaggio è K.O. o morto, blocchiamo l'azione
+                    // 4. Calcoliamo la penalità ferite
+                    int woundPenalty = client.Character.Health.GetWoundPenalty();
                     if (woundPenalty <= -99)
                     {
-                        var deadResp = NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Sei troppo ferito per agire (K.O.)!" });
-                        await client.SendPacketAsync(deadResp);
+                        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Sei K.O., non puoi eseguire prove!" }));
                         break;
                     }
 
-                    // 3. Tiro autorevole 1d10
+                    // 5. Tiro d10 autorevole con DiceRoller
                     var roll = GameDice.Roll("1d10");
                     int diceVal = (int)roll.Total;
 
-                    // 4. Somma finale Interlock
-                    int total = statVal + skillReq.SkillLevel + woundPenalty + diceVal;
+                    // 6. Formula Interlock canonica
+                    int total = statVal + skillLvl + woundPenalty + diceVal;
                     bool success = total >= skillReq.TargetNumber;
 
-                    Console.WriteLine($"[SKILL] {client.Character.Handle} prova {skillReq.StatName} (Stat:{statVal} + Skill:{skillReq.SkillLevel} + Ferite:{woundPenalty} + d10:{diceVal}) = {total} vs TN {skillReq.TargetNumber} -> {(success ? "SUCCESSO" : "FALLIMENTO")}");
+                    Console.WriteLine($"[SKILL] {client.Character.Handle} test '{skillName}' -> Stat({statName}):{statVal} + Skill:{skillLvl} + Pen:{woundPenalty} + d10:[{diceVal}] = {total} vs TN {skillReq.TargetNumber} -> {(success ? "SUCCESSO" : "FALLIMENTO")}");
 
-                    // 5. Inviamo il risultato al client (e volendo in broadcast alla stanza)
                     var resultPayload = new SkillCheckResponsePayload
                     {
                         PlayerHandle = client.Character.Handle,
-                        StatUsed = skillReq.StatName.ToUpper(),
+                        SkillName = skillName,
+                        StatUsed = statName,
                         StatValue = statVal,
-                        SkillLevel = skillReq.SkillLevel,
+                        SkillLevel = skillLvl,
                         WoundPenalty = woundPenalty,
                         DiceRoll = diceVal,
                         Total = total,
                         TargetNumber = skillReq.TargetNumber,
                         Success = success,
                         Message = success
-                            ? $"SUCCESSO! {total} contro TN {skillReq.TargetNumber}"
-                            : $"FALLIMENTO! {total} contro TN {skillReq.TargetNumber}"
+                            ? $"SUCCESSO! ({total} vs TN {skillReq.TargetNumber})"
+                            : $"FALLIMENTO! ({total} vs TN {skillReq.TargetNumber})"
                     };
 
-                    var respPacket = NetworkPacket.Create(OpCode.S2C_SkillResult, resultPayload);
-                    await client.SendPacketAsync(respPacket);
-
-                    // (Opzionale) Notifica anche gli altri nella zona che il player ha fatto un'azione
-                    var broadcastNotification = NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"{client.Character.Handle} esegue un test di {skillReq.StatName} -> {(success ? "Riuscito!" : "Fallito!")}" });
-                    await BroadcastPacketAsync(broadcastNotification, excludeClientId: client.Id);
+                    await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_SkillResult, resultPayload));
                 }
                 break;
-
             case OpCode.C2S_Attack:
                 var attackReq = packet.DeserializePayload<AttackRequestPayload>();
                 if (attackReq != null)

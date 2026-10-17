@@ -14,6 +14,9 @@ public class PlayerState
 
     // Posizione nel mondo virtuale (per quando aggiungeremo il movimento)
     public Position3D Position { get; set; } = new();
+
+    // NUOVO: Mappa delle abilità possedute (Es: "Pistola" -> 4, "RiparareArmi" -> 2)
+    public Dictionary<string, int> Skills { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 public class CoreStats
@@ -67,4 +70,47 @@ public class Position3D
     }
 
     public override int GetHashCode() => HashCode.Combine(X, Y, Z);
+}
+
+public class SkillDefinition
+{
+    public string Name { get; set; } = string.Empty;
+    public string RelatedStat { get; set; } = "REF"; // Es. REF, TECH, INT...
+}
+
+public static class Skills
+{
+    public static readonly Dictionary<string, string> SkillToStatMap = new(StringComparer.OrdinalIgnoreCase)
+        {
+            // Riflessi (REF)
+            { "Pistola", "REF" },
+            { "Fucile", "REF" },
+            { "ArtiMarziali", "REF" },
+            { "Schivare", "REF" },
+            { "Guidare", "REF" },
+
+            // Tecnica (TECH)
+            { "RiparareArmi", "TECH" },
+            { "Cybertech", "TECH" },
+            { "Elettronica", "TECH" },
+            { "Scassinare", "TECH" },
+
+            // Intelligenza (INT)
+            { "Netrunning", "INT" },
+            { "Streetwise", "INT" },
+            { "Medicina", "INT" },
+
+            // Cool / Freddezza (COOL)
+            { "Intimidire", "COOL" },
+            { "Interrogare", "COOL" },
+
+            // Empatia (EMP)
+            { "Persuasione", "EMP" },
+            { "Seduzione", "EMP" }
+        };
+
+    public static string GetStatForSkill(string skillName)
+    {
+        return SkillToStatMap.TryGetValue(skillName, out var stat) ? stat : "REF"; // Default REF
+    }
 }

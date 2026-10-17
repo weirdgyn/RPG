@@ -55,19 +55,14 @@ public class MoveResponsePayload
 
 public class SkillCheckRequestPayload
 {
-    // Quale statistica usare (es. "REF", "INT", "TECH", "BODY"...)
-    public string StatName { get; set; } = "REF";
-
-    // Livello dell'abilità specifica (default 0 se non specificato)
-    public int SkillLevel { get; set; } = 0;
-
-    // Difficoltà della prova stabilita dal server o richiesta
-    public int TargetNumber { get; set; } = 15; // Es. Medio = 15
+    public string SkillName { get; set; } = string.Empty; // es. "Pistola"
+    public int TargetNumber { get; set; } = 15;            // Difficoltà TN
 }
 
 public class SkillCheckResponsePayload
 {
     public string PlayerHandle { get; set; } = string.Empty;
+    public string SkillName { get; set; } = string.Empty;
     public string StatUsed { get; set; } = string.Empty;
     public int StatValue { get; set; }
     public int SkillLevel { get; set; }

@@ -85,26 +85,17 @@ class Program
                 if (skillResp != null)
                 {
                     Console.WriteLine("\n----------------------------------------");
-                    Console.WriteLine($"🎲 [TEST ABILITÀ - {skillResp.PlayerHandle}]");
-                    Console.WriteLine($"   Stat ({skillResp.StatUsed}): {skillResp.StatValue} | Abilità: {skillResp.SkillLevel} | Pen. Ferite: {skillResp.WoundPenalty}");
-                    Console.WriteLine($"   Lancio 1d10: [{skillResp.DiceRoll}]");
-                    Console.WriteLine($"   TOTALE: {skillResp.Total} (vs Difficoltà TN {skillResp.TargetNumber})");
+                    Console.WriteLine($"🎲 [PROVA ABILITÀ - {skillResp.PlayerHandle}]");
+                    Console.WriteLine($"   Abilità: {skillResp.SkillName} (Lvl: {skillResp.SkillLevel}) | Stat ({skillResp.StatUsed}): {skillResp.StatValue}");
+                    Console.WriteLine($"   Penalità Ferite: {skillResp.WoundPenalty} | Lancio d10: [{skillResp.DiceRoll}]");
+                    Console.WriteLine($"   TOTALE: {skillResp.Total} vs Difficoltà TN {skillResp.TargetNumber}");
 
-                    if (skillResp.Success)
-                    {
-                        Console.ForegroundColor = ConsoleColor.Green;
-                        Console.WriteLine($"   RISULTATO: {skillResp.Message}");
-                    }
-                    else
-                    {
-                        Console.ForegroundColor = ConsoleColor.Red;
-                        Console.WriteLine($"   RISULTATO: {skillResp.Message}");
-                    }
+                    Console.ForegroundColor = skillResp.Success ? ConsoleColor.Green : ConsoleColor.Red;
+                    Console.WriteLine($"   ESITO: {skillResp.Message}");
                     Console.ResetColor();
                     Console.WriteLine("----------------------------------------");
                 }
                 break;
-
             case OpCode.S2C_AttackResult:
                 var atkResp = packet.DeserializePayload<AttackResponsePayload>();
                 if (atkResp != null)
@@ -204,7 +195,7 @@ class Program
             Console.WriteLine(" - Scrivi '/status' per visualizzare lo stato del personaggio.\n");
             Console.WriteLine(" - Scrivi '/roll <espressione>' per lanciare i dadi.\n");
             Console.WriteLine(" - Scrivi '/move <X,Y,Z>' per spostarti a una nuova posizione (es. /move 10,5,3).\n");
-            Console.WriteLine(" - Scrivi '/skill <STAT> <ABILITA> <TN>' per eseguire un controllo di abilità.\n");
+            Console.WriteLine(" - Scrivi '/skill <NomeAbilità> <TN>' per eseguire un controllo di abilità.\n");
             Console.WriteLine(" - Scrivi '/attack <NomeBersaglio> <Abilita> [DadiArma]' per attaccare un bersaglio (es. /attack StreetPunk 3 2d6).\n");
             Console.WriteLine(" - Scrivi 'exit' per disconnetterti.\n");
 
@@ -236,20 +227,17 @@ class Program
                     continue;
                 }
 
-                // Esempio nel parsing dei comandi del client:
-                // Sintassi: /skill <STAT> <ABILITA> <TN>  (es. /skill REF 3 15)
+                // Sintassi: /skill <NomeAbilità> <TN>   (es. /skill Pistola 15)
                 if (input.StartsWith("/skill ", StringComparison.OrdinalIgnoreCase))
                 {
-                    string[] parts = input.Split(' ');
-                    if (parts.Length >= 4 &&
-                        int.TryParse(parts[2], out int skillLvl) &&
-                        int.TryParse(parts[3], out int tn))
+                    string[] parts = input.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length >= 3 && int.TryParse(parts[2], out int tn))
                     {
-                        string statName = parts[1];
+                        string skillName = parts[1];
+
                         var skillPacket = NetworkPacket.Create(OpCode.C2S_SkillCheck, new SkillCheckRequestPayload
                         {
-                            StatName = statName,
-                            SkillLevel = skillLvl,
+                            SkillName = skillName,
                             TargetNumber = tn
                         });
                         await writer.WriteLineAsync(JsonSerializer.Serialize(skillPacket));
@@ -257,7 +245,7 @@ class Program
                     }
                     else
                     {
-                        Console.WriteLine("[!] Sintassi non valida. Usa: /skill <STAT> <Abilità> <TN> (es. /skill REF 3 15)");
+                        Console.WriteLine("[!] Sintassi non valida. Usa: /skill <NomeAbilità> <TN> (es. /skill Pistola 15)");
                         continue;
                     }
                 }
