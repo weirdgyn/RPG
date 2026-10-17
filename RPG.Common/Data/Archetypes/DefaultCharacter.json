@@ -1,0 +1,21 @@
+﻿{
+  "Handle": "Mercenario_Standard",
+  "Stats": {
+    "INT": 6,
+    "REF": 8,
+    "TECH": 5,
+    "COOL": 7,
+    "ATTR": 5,
+    "MA": 6,
+    "BODY": 7,
+    "EMP": 5
+  },
+  "Skills": {
+    "Pistola": 4,
+    "Fucile": 3,
+    "Schivare": 3,
+    "ArtiMarziali": 2,
+    "Streetwise": 2,
+    "RiparareArmi": 1
+  }
+}

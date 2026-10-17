@@ -1,0 +1,18 @@
+﻿{
+  "Pistola": "REF",
+  "Fucile": "REF",
+  "ArtiMarziali": "REF",
+  "Schivare": "REF",
+  "Guidare": "REF",
+  "RiparareArmi": "TECH",
+  "Cybertech": "TECH",
+  "Elettronica": "TECH",
+  "Scassinare": "TECH",
+  "Netrunning": "INT",
+  "Streetwise": "INT",
+  "Medicina": "INT",
+  "Intimidire": "COOL",
+  "Interrogare": "COOL",
+  "Persuasione": "EMP",
+  "Seduzione": "EMP"
+}

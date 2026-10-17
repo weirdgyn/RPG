@@ -1,4 +1,6 @@
-﻿namespace RPG.Common.Model;
+﻿using System.Text.Json;
+
+namespace RPG.Common.Model;
 
 public class PlayerState
 {
@@ -80,37 +82,59 @@ public class SkillDefinition
 
 public static class Skills
 {
-    public static readonly Dictionary<string, string> SkillToStatMap = new(StringComparer.OrdinalIgnoreCase)
+    private static Dictionary<string, string> _skillToStatMap = new(StringComparer.OrdinalIgnoreCase);
+
+    // Mappa hardcoded di fallback
+    private static readonly Dictionary<string, string> DefaultMap = new(StringComparer.OrdinalIgnoreCase)
+    {
+        { "Pistola", "REF" },
+        { "Fucile", "REF" },
+        { "ArtiMarziali", "REF" },
+        { "Schivare", "REF" },
+        { "RiparareArmi", "TECH" },
+        { "Cybertech", "TECH" },
+        { "Netrunning", "INT" },
+        { "Streetwise", "INT" },
+        { "Intimidire", "COOL" },
+        { "Persuasione", "EMP" }
+    };
+
+    static Skills()
+    {
+        LoadSkillMap();
+    }
+
+    public static void LoadSkillMap(string filePath = "Data/DefaultSkillMap.json")
+    {
+        try
         {
-            // Riflessi (REF)
-            { "Pistola", "REF" },
-            { "Fucile", "REF" },
-            { "ArtiMarziali", "REF" },
-            { "Schivare", "REF" },
-            { "Guidare", "REF" },
+            if (File.Exists(filePath))
+            {
+                string json = File.ReadAllText(filePath);
+                var loadedMap = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
 
-            // Tecnica (TECH)
-            { "RiparareArmi", "TECH" },
-            { "Cybertech", "TECH" },
-            { "Elettronica", "TECH" },
-            { "Scassinare", "TECH" },
+                if (loadedMap != null && loadedMap.Count > 0)
+                {
+                    _skillToStatMap = new Dictionary<string, string>(loadedMap, StringComparer.OrdinalIgnoreCase);
+                    Console.WriteLine($"[CONFIG] Caricate {_skillToStatMap.Count} abilità da '{filePath}'.");
+                    return;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[AVVISO] Impossibile caricare '{filePath}': {ex.Message}. Utilizzo mappa di fallback.");
+        }
 
-            // Intelligenza (INT)
-            { "Netrunning", "INT" },
-            { "Streetwise", "INT" },
-            { "Medicina", "INT" },
-
-            // Cool / Freddezza (COOL)
-            { "Intimidire", "COOL" },
-            { "Interrogare", "COOL" },
-
-            // Empatia (EMP)
-            { "Persuasione", "EMP" },
-            { "Seduzione", "EMP" }
-        };
+        // Fallback se il file non esiste o fallisce
+        _skillToStatMap = new Dictionary<string, string>(DefaultMap, StringComparer.OrdinalIgnoreCase);
+        Console.WriteLine($"[CONFIG] Utilizzo mappa abilità di default ({_skillToStatMap.Count} abilità).");
+    }
 
     public static string GetStatForSkill(string skillName)
     {
-        return SkillToStatMap.TryGetValue(skillName, out var stat) ? stat : "REF"; // Default REF
+        return _skillToStatMap.TryGetValue(skillName, out var stat) ? stat : "REF";
     }
+
+    public static IReadOnlyDictionary<string, string> GetAllSkills() => _skillToStatMap;
 }
