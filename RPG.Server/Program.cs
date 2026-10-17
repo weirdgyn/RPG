@@ -1,6 +1,7 @@
 ﻿// Importiamo le classi definite nell'assembly condiviso RPG.Common
 using RPG.Common.Protocol;
 using RPG.Common.Protocol.Payloads;
+using RPG.Common.Utils;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
@@ -133,6 +134,36 @@ class Program
             case OpCode.C2S_Ping:
                 var pongPacket = NetworkPacket.Create(OpCode.S2C_Pong, new { ServerTime = DateTime.UtcNow });
                 await client.SendPacketAsync(pongPacket);
+                break;
+
+            case OpCode.C2S_RollDice:
+                var diceReq = packet.DeserializePayload<DiceRequestPayload>();
+                string expr = string.IsNullOrWhiteSpace(diceReq?.Expression) ? "1d20" : diceReq.Expression;
+
+                try
+                {
+                    // Tiro autorevole sul server
+                    var rollResult = GameDice.Roll(expr);
+
+                    Console.WriteLine($"[DICE] {client.Username} ha tirato '{expr}' -> Totale: {rollResult.Total} ({rollResult.Details})");
+
+                    // Prepara il pacchetto di broadcast per la stanza
+                    var diceBroadcast = NetworkPacket.Create(OpCode.S2C_DiceResult, new DiceResponsePayload
+                    {
+                        Player = client.Username,
+                        Expression = rollResult.Expression,
+                        Total = rollResult.Total,
+                        Details = rollResult.Details
+                    });
+
+                    await BroadcastPacketAsync(diceBroadcast); // Invia a tutti (incluso il mittente, o usa exclude se preferisci)
+                }
+                catch (Exception ex)
+                {
+                    // Se la sintassi della stringa dei dadi non è valida
+                    var errPacket = NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"Espressione dadi non valida: '{expr}' ({ex.Message})" });
+                    await client.SendPacketAsync(errPacket);
+                }
                 break;
 
             default:

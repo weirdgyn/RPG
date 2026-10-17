@@ -17,3 +17,16 @@ public class LoginResponsePayload
     public string PlayerId { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
 }
+
+public class DiceRequestPayload
+{
+    public string Expression { get; set; } = "1d20";
+}
+
+public class DiceResponsePayload
+{
+    public string Player { get; set; } = string.Empty;
+    public string Expression { get; set; } = string.Empty;
+    public long Total { get; set; }
+    public string Details { get; set; } = string.Empty;
+}

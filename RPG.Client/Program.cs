@@ -89,6 +89,14 @@ class Program
                     break;
                 }
 
+                if (input.StartsWith("/roll "))
+                {
+                    string diceExpr = input[6..].Trim();
+                    var rollPacket = NetworkPacket.Create(OpCode.C2S_RollDice, new DiceRequestPayload { Expression = diceExpr });
+                    await writer.WriteLineAsync(JsonSerializer.Serialize(rollPacket));
+                    continue;
+                }
+
                 // Ogni messaggio scritto dall'utente viene impacchettato in C2S_Chat
                 var chatPacket = NetworkPacket.Create(OpCode.C2S_Chat, new ChatPayload
                 {
@@ -134,6 +142,11 @@ class Program
 
             case OpCode.S2C_Pong:
                 Console.WriteLine("[SYSTEM] Pong ricevuto dal server.");
+                break;
+
+            case OpCode.S2C_DiceResult:
+                var diceResp = packet.DeserializePayload<DiceResponsePayload>();
+                Console.WriteLine($"[🎲 TIRE DI DADI] {diceResp?.Player} lancia [{diceResp?.Expression}] ➔ Risultato: {diceResp?.Total}  ({diceResp?.Details})");
                 break;
 
             default:
