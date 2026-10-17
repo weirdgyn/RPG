@@ -1,4 +1,6 @@
-﻿namespace RPG.Common.Protocol.Payloads;
+﻿using RPG.Common.Model;
+
+namespace RPG.Common.Protocol.Payloads;
 // Usato sia per C2S che per S2C
 public class ChatPayload
 {
@@ -29,4 +31,9 @@ public class DiceResponsePayload
     public string Expression { get; set; } = string.Empty;
     public decimal Total { get; set; }
     public string Details { get; set; } = string.Empty;
+}
+
+public class PlayerStatePayload
+{
+    public PlayerState Character { get; set; } = new();
 }

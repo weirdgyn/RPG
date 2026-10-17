@@ -2,6 +2,7 @@
 using RPG.Common.Protocol;
 using RPG.Common.Protocol.Payloads;
 using RPG.Common.Utils;
+using RPG.Common.Model;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
@@ -109,9 +110,25 @@ class Program
                 // Invia la risposta SOLO a questo client
                 await client.SendPacketAsync(loginRespPacket);
 
+                // 2. Inviamo subito lo stato iniziale del personaggio al client
+                var statePacket = NetworkPacket.Create(OpCode.S2C_PlayerStateUpdate, new PlayerStatePayload
+                {
+                    Character = client.Character
+                });
+                await client.SendPacketAsync(statePacket);
+
                 // Manda una notifica di BENVENUTO a tutti gli altri
                 var joinNotify = NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"{client.Username} e' entrato nel mondo!" });
                 await BroadcastPacketAsync(joinNotify, excludeClientId: client.Id);
+                break;
+            
+            case OpCode.C2S_GetStatus:
+                // Il client richiede il suo stato attuale
+                var statusPacket = NetworkPacket.Create(OpCode.S2C_PlayerStateUpdate, new PlayerStatePayload
+                {
+                    Character = client.Character
+                });
+                await client.SendPacketAsync(statusPacket);
                 break;
 
             case OpCode.C2S_Chat:
@@ -145,7 +162,7 @@ class Program
                     // Tiro autorevole sul server
                     var rollResult = GameDice.Roll(expr);
 
-                    Console.WriteLine($"[DICE] {client.Username} ha tirato '{expr}' -> Totale: {rollResult.Total} ({rollResult.Details})");
+                    Console.WriteLine($"[🎲 DICE] {client.Username} ha tirato '{expr}' -> Totale: {rollResult.Total} ({rollResult.Details})");
 
                     // Prepara il pacchetto di broadcast per la stanza
                     var diceBroadcast = NetworkPacket.Create(OpCode.S2C_DiceResult, new DiceResponsePayload
@@ -197,7 +214,7 @@ public class ConnectedClient
     public string Username { get; set; } = "Guest";
     public TcpClient TcpClient { get; }
     public EndPoint? RemoteEndPoint => TcpClient.Client.RemoteEndPoint;
-
+    public PlayerState Character { get; set; } = new();
     private readonly StreamWriter _writer;
 
     public ConnectedClient(TcpClient tcpClient)

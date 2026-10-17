@@ -74,6 +74,8 @@ class Program
             // --- 3. LOOP PRINCIPALE DI INPUT UTENTE ---
             Console.WriteLine("\nComandi disponibili:");
             Console.WriteLine(" - Scrivi qualsiasi testo per chattare con gli altri.");
+            Console.WriteLine(" - Scrivi '/roll <espressione>' per lanciare i dadi.\n");
+            Console.WriteLine(" - Scrivi '/status' per visualizzare lo stato del personaggio.\n");
             Console.WriteLine(" - Scrivi 'exit' per disconnetterti.\n");
 
             while (!cts.IsCancellationRequested)
@@ -94,6 +96,13 @@ class Program
                     string diceExpr = input[6..].Trim();
                     var rollPacket = NetworkPacket.Create(OpCode.C2S_RollDice, new DiceRequestPayload { Expression = diceExpr });
                     await writer.WriteLineAsync(JsonSerializer.Serialize(rollPacket));
+                    continue;
+                }
+
+                if (input.Equals("/status", StringComparison.OrdinalIgnoreCase))
+                {
+                    var statusPacket = NetworkPacket.Create(OpCode.C2S_GetStatus, new { });
+                    await writer.WriteLineAsync(JsonSerializer.Serialize(statusPacket));
                     continue;
                 }
 
@@ -137,7 +146,7 @@ class Program
             case OpCode.S2C_Notification:
                 var notif = packet.DeserializePayload<JsonElement>(); // Esempio di payload dinamico o oggetto anonimo
                 string? msg = notif.TryGetProperty("Message", out var val) ? val.GetString() : "Notifica di sistema";
-                Console.WriteLine($"[MONDO] {msg}");
+                Console.WriteLine($"[NOTIFICATION] {msg}");
                 break;
 
             case OpCode.S2C_Pong:
@@ -146,11 +155,26 @@ class Program
 
             case OpCode.S2C_DiceResult:
                 var diceResp = packet.DeserializePayload<DiceResponsePayload>();
-                Console.WriteLine($"[🎲 TIRE DI DADI] {diceResp?.Player} lancia [{diceResp?.Expression}] ➔ Risultato: {diceResp?.Total}  ({diceResp?.Details})");
+                Console.WriteLine($"[🎲 DICE ROLL] {diceResp?.Player} lancia [{diceResp?.Expression}] ➔ Risultato: {diceResp?.Total}  ({diceResp?.Details})");
+                break;
+
+            case OpCode.S2C_PlayerStateUpdate:
+                var stateResp = packet.DeserializePayload<PlayerStatePayload>();
+                var c = stateResp?.Character;
+                if (c != null)
+                {
+                    Console.WriteLine("\n=== [SCHEDA PERSONAGGIO] ===");
+                    Console.WriteLine($" Nome/Handle : {c.Handle} ({c.Role})");
+                    Console.WriteLine($" Salute      : {c.Health.CurrentHealth}/{c.Health.MaxHealth} HP -> Stato: {c.Health.GetWoundStatusDescription()}");
+                    Console.WriteLine($" Statistiche : INT:{c.Stats.INT} | REF:{c.Stats.REF} | TECH:{c.Stats.TECH} | COOL:{c.Stats.COOL}");
+                    Console.WriteLine($"               ATTR:{c.Stats.ATTR} | MA:{c.Stats.MA} | BODY:{c.Stats.BODY} | EMP:{c.Stats.EMP}");
+                    Console.WriteLine($" Posizione   : X: {c.Position.X}, Y: {c.Position.Y}. Z: {c.Position.Z}");
+                    Console.WriteLine("=============================");
+                }
                 break;
 
             default:
-                Console.WriteLine($"[SCONOSCIUTO] Ricevuto OpCode: {packet.OpCode}");
+                Console.WriteLine($"[UNKNOWN] Ricevuto OpCode: {packet.OpCode}");
                 break;
         }
 
