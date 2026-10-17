@@ -27,6 +27,6 @@ public class DiceResponsePayload
 {
     public string Player { get; set; } = string.Empty;
     public string Expression { get; set; } = string.Empty;
-    public long Total { get; set; }
+    public decimal Total { get; set; }
     public string Details { get; set; } = string.Empty;
 }
