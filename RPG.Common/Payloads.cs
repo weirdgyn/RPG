@@ -78,3 +78,23 @@ public class SkillCheckResponsePayload
     public bool Success { get; set; }
     public string Message { get; set; } = string.Empty;
 }
+
+public class AttackRequestPayload
+{
+    public string TargetHandle { get; set; } = string.Empty; // Nome del bersaglio
+    public int WeaponSkillLevel { get; set; } = 0;            // Livello abilità arma (es. Pistole, Mischia)
+    public string WeaponDice { get; set; } = "2d6";           // Dadi danno dell'arma (es. "2d6", "3d6")
+}
+
+public class AttackResponsePayload
+{
+    public string AttackerHandle { get; set; } = string.Empty;
+    public string TargetHandle { get; set; } = string.Empty;
+    public int AttackTotal { get; set; }
+    public int DefenseTN { get; set; }
+    public bool IsHit { get; set; }
+    public int DamageDealt { get; set; }
+    public int TargetRemainingHealth { get; set; }
+    public string TargetWoundStatus { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+}

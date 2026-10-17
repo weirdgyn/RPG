@@ -10,6 +10,7 @@ public enum OpCode
     C2S_GetStatus = 40,
     C2S_Move = 50,
     C2S_SkillCheck = 60,
+    C2S_Attack = 70,        // Richiesta di attacco verso un altro player
 
     // Server -> Client (S2C)
     S2C_Pong = 101,
@@ -19,5 +20,6 @@ public enum OpCode
     S2C_DiceResult = 140,
     S2C_PlayerStateUpdate = 150,
     S2C_PlayerMoved = 160,
-    S2C_SkillResult = 170
+    S2C_SkillResult = 170,
+    S2C_AttackResult = 180  // Risultato dell'attacco (notificato a chi attacca, al bersaglio e alla stanza)
 }

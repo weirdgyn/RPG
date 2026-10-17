@@ -1,5 +1,4 @@
 ﻿// Importiamo le classi definite nell'assembly condiviso RPG.Common
-using RPG.Common.Model;
 using RPG.Common.Protocol;
 using RPG.Common.Protocol.Payloads;
 using RPG.Common.Utils;
@@ -18,28 +17,6 @@ class Program
     private const int Port = 5000;
     private static GameMap gameMap = new(); // <--- LA MAPPA GLOBALE DEL SERVER
     private static readonly ConcurrentDictionary<Guid, ConnectedClient> Clients = new();
-
-    static async Task Main(string[] args)
-    {
-        Console.WriteLine("=== RPG SERVER CORE (JSON Protocol) ===");
-        var listener = new TcpListener(IPAddress.Any, Port);
-        listener.Start();
-        Console.WriteLine($"[*] Server in ascolto su 0.0.0.0:{Port}...");
-
-        var cts = new CancellationTokenSource();
-
-        while (!cts.Token.IsCancellationRequested)
-        {
-            TcpClient tcpClient = await listener.AcceptTcpClientAsync(cts.Token);
-            var client = new ConnectedClient(tcpClient);
-
-            Clients.TryAdd(client.Id, client);
-            Console.WriteLine($"[+] [Client {client.IdShort}] Connesso da {client.RemoteEndPoint}");
-
-            _ = Task.Run(() => HandleClientAsync(client, cts.Token));
-        }
-    }
-
     private static async Task HandleClientAsync(ConnectedClient client, CancellationToken ct)
     {
         try
@@ -290,7 +267,89 @@ class Program
                     await BroadcastPacketAsync(broadcastNotification, excludeClientId: client.Id);
                 }
                 break;
-            
+
+            case OpCode.C2S_Attack:
+                var attackReq = packet.DeserializePayload<AttackRequestPayload>();
+                if (attackReq != null)
+                {
+                    // 1. Trova il bersaglio tra i client connessi (escludendo se stesso)
+                    var targetClient = Clients.Values
+                        .FirstOrDefault(c => c.Character.Handle.Equals(attackReq.TargetHandle, StringComparison.OrdinalIgnoreCase));
+
+                    if (targetClient == null)
+                    {
+                        var errPacket = NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"Bersaglio '{attackReq.TargetHandle}' non trovato o non online." });
+                        await client.SendPacketAsync(errPacket);
+                        break;
+                    }
+
+                    if (targetClient.Id == client.Id)
+                    {
+                        var selfErr = NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Non puoi attaccare te stesso!" });
+                        await client.SendPacketAsync(selfErr);
+                        break;
+                    }
+
+                    // 2. Calcolo Attacco dell'aggressore
+                    int attackerRef = client.Character.Stats.REF;
+                    int attackerPenalty = client.Character.Health.GetWoundPenalty();
+
+                    if (attackerPenalty <= -99)
+                    {
+                        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Sei K.O., non puoi attaccare!" }));
+                        break;
+                    }
+
+                    var attackRoll = GameDice.Roll("1d10");
+                    int attackDiceVal = (int)attackRoll.Total;
+                    int attackTotal = attackerRef + attackReq.WeaponSkillLevel + attackerPenalty + attackDiceVal;
+
+                    // 3. Calcolo Difesa del bersaglio (Base 15 + Riflessi del bersaglio + sue eventuali penalità ferite)
+                    int targetRef = targetClient.Character.Stats.REF;
+                    int targetPenalty = targetClient.Character.Health.GetWoundPenalty();
+                    int defenseTN = 15 + targetRef + targetPenalty; // TN dinamico basato sul bersaglio
+
+                    bool isHit = attackTotal >= defenseTN;
+                    int damageDealt = 0;
+
+                    if (isHit)
+                    {
+                        // 4. Tiro Danno Arma
+                        var damageRoll = GameDice.Roll(string.IsNullOrWhiteSpace(attackReq.WeaponDice) ? "2d6" : attackReq.WeaponDice);
+                        damageDealt = (int)damageRoll.Total;
+
+                        // Applica il danno al bersaglio (autoritativo)
+                        targetClient.Character.Health.CurrentHealth = Math.Max(0, targetClient.Character.Health.CurrentHealth - damageDealt);
+                    }
+
+                    // 5. Costruzione del messaggio e risposta
+                    string outcomeMsg = isHit
+                        ? $"COLPO! {client.Character.Handle} colpisce {targetClient.Character.Handle} per {damageDealt} danni con '{attackReq.WeaponDice}'!"
+                        : $"MANCATO! {client.Character.Handle} fallisce l'attacco contro {targetClient.Character.Handle} (Tot: {attackTotal} vs TN {defenseTN}).";
+
+                    Console.WriteLine($"[COMBAT] {outcomeMsg}");
+
+                    var respPayload = new AttackResponsePayload
+                    {
+                        AttackerHandle = client.Character.Handle,
+                        TargetHandle = targetClient.Character.Handle,
+                        AttackTotal = attackTotal,
+                        DefenseTN = defenseTN,
+                        IsHit = isHit,
+                        DamageDealt = damageDealt,
+                        TargetRemainingHealth = targetClient.Character.Health.CurrentHealth,
+                        TargetWoundStatus = targetClient.Character.Health.GetWoundStatusDescription(),
+                        Message = outcomeMsg
+                    };
+
+                    var attackPacket = NetworkPacket.Create(OpCode.S2C_AttackResult, respPayload);
+
+                    // Invia il risultato sia all'attaccante che al bersaglio (e opzionalmente broadcast alla stanza)
+                    await client.SendPacketAsync(attackPacket);
+                    await targetClient.SendPacketAsync(attackPacket);
+                }
+                break;
+
             default:
                 Console.WriteLine($"[!] OpCode non gestito: {packet.OpCode}");
                 break;
@@ -312,30 +371,25 @@ class Program
             catch { }
         }
     }
-}
 
-// Estensione della classe ConnectedClient per gestire l'invio diretto di NetworkPacket
-public class ConnectedClient
-{
-    public Guid Id { get; } = Guid.NewGuid();
-    public string IdShort => Id.ToString()[..8];
-    public string Username { get; set; } = "Guest";
-    public TcpClient TcpClient { get; }
-    public EndPoint? RemoteEndPoint => TcpClient.Client.RemoteEndPoint;
-    public PlayerState Character { get; set; } = new();
-    private readonly StreamWriter _writer;
-
-    public ConnectedClient(TcpClient tcpClient)
+    static async Task Main(string[] args)
     {
-        TcpClient = tcpClient;
-        var stream = TcpClient.GetStream();
-        _writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
-    }
+        Console.WriteLine("=== RPG SERVER CORE (JSON Protocol) ===");
+        var listener = new TcpListener(IPAddress.Any, Port);
+        listener.Start();
+        Console.WriteLine($"[*] Server in ascolto su 0.0.0.0:{Port}...");
 
-    // Converte l'oggetto NetworkPacket in stringa JSON e lo scrive sul socket
-    public async Task SendPacketAsync(NetworkPacket packet)
-    {
-        string json = JsonSerializer.Serialize(packet);
-        await _writer.WriteLineAsync(json);
+        var cts = new CancellationTokenSource();
+
+        while (!cts.Token.IsCancellationRequested)
+        {
+            TcpClient tcpClient = await listener.AcceptTcpClientAsync(cts.Token);
+            var client = new ConnectedClient(tcpClient);
+
+            Clients.TryAdd(client.Id, client);
+            Console.WriteLine($"[+] [Client {client.IdShort}] Connesso da {client.RemoteEndPoint}");
+
+            _ = Task.Run(() => HandleClientAsync(client, cts.Token));
+        }
     }
 }
