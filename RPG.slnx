@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="RPG.Client/RPG.Client.csproj" />
+  <Project Path="RPG.Server/RPG.Server.csproj" />
+</Solution>
