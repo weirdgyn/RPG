@@ -190,38 +190,41 @@ class Program
                 var moveReq = packet.DeserializePayload<MoveRequestPayload>();
                 if (moveReq?.TargetPosition != null)
                 {
-                    // Valutiamo il movimento tramite la mappa
+                    // 1. Valutiamo il movimento sulla mappa
                     MovementResult moveResult = gameMap.GetMovementResult(moveReq.TargetPosition);
 
                     if (moveResult == MovementResult.Success)
                     {
-                        // Aggiorniamo la posizione autoritativa del player nello stato
+                        // Aggiorniamo la posizione autoritativa del personaggio
                         client.Character.Position = moveReq.TargetPosition;
                         Console.WriteLine($"[MOVE] {client.Character.Handle} si è spostato a ({client.Character.Position.X}, {client.Character.Position.Y}, {client.Character.Position.Z})");
                     }
+                    else
+                    {
+                        Console.WriteLine($"[MOVE REJECTED] {client.Character.Handle} tentato spostamento non valido verso ({moveReq.TargetPosition.X}, {moveReq.TargetPosition.Y}, {moveReq.TargetPosition.Z}) -> Esito: {moveResult}");
+                    }
 
-                    // Rispondiamo al client con l'esito
+                    // 2. Mappiamo il risultato in un messaggio chiaro per l'utente
                     string message = moveResult switch
                     {
-                        MovementResult.Success => "Movimento effettuato.",
-                        MovementResult.OutOfBounds => "Area inaccessibile (Fuori dai confini).",
-                        MovementResult.ObstacleInTheWay => "La via è sbarrata da un ostacolo.",
+                        MovementResult.Success => $"Spostato con successo in ({client.Character.Position.X}, {client.Character.Position.Y}, {client.Character.Position.Z}).",
+                        MovementResult.OutOfBounds => "Movimento fallito: Sei ai confini della mappa/area inaccessibile!",
+                        MovementResult.ObstacleInTheWay => "Movimento fallito: La strada è bloccata da un ostacolo!",
                         _ => "Movimento non valido."
                     };
 
+                    // 3. Invia SEMPRE la risposta al client (sia in caso di successo che di errore)
                     var moveResp = NetworkPacket.Create(OpCode.S2C_PlayerMoved, new MoveResponsePayload
                     {
                         Success = (moveResult == MovementResult.Success),
                         Result = moveResult,
-                        CurrentPosition = client.Character.Position,
+                        CurrentPosition = client.Character.Position, // Invia la posizione reale (invariata se fallito)
                         Message = message
                     });
-                    await client.SendPacketAsync(moveResp);
 
-                    // (Opzionale) Se il movimento è riuscito, potremmo anche fare un broadcast agli altri player vicini
+                    await client.SendPacketAsync(moveResp);
                 }
                 break;
-
             default:
                 Console.WriteLine($"[!] OpCode non gestito: {packet.OpCode}");
                 break;
