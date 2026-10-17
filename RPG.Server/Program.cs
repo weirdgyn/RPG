@@ -209,7 +209,7 @@ class Program
                         _ => "Movimento non valido."
                     };
 
-                    var moveResp = NetworkPacket.Create(OpCode.S2C_MoveResponse, new MoveResponsePayload
+                    var moveResp = NetworkPacket.Create(OpCode.S2C_PlayerMoved, new MoveResponsePayload
                     {
                         Success = (moveResult == MovementResult.Success),
                         Result = moveResult,
