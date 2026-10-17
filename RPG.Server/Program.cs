@@ -1,129 +1,185 @@
-﻿using System;
+﻿// Importiamo le classi definite nell'assembly condiviso RPG.Common
+using RPG.Common.Protocol;
+using RPG.Common.Protocol.Payloads;
 using System.Collections.Concurrent;
-using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
+using System.Text.Json;
 
-namespace RPG.Server
+namespace RPG.Server;
+
+class Program
 {
-    class Program
+    private const int Port = 5000;
+    private static readonly ConcurrentDictionary<Guid, ConnectedClient> Clients = new();
+
+    static async Task Main(string[] args)
     {
-        private const int Port = 5000;
-        // Registro thread-safe dei client connessi (ID univoco -> TcpClient)
-        private static readonly ConcurrentDictionary<Guid, ConnectedClient> Clients = new();
+        Console.WriteLine("=== RPG SERVER CORE (JSON Protocol) ===");
+        var listener = new TcpListener(IPAddress.Any, Port);
+        listener.Start();
+        Console.WriteLine($"[*] Server in ascolto su 0.0.0.0:{Port}...");
 
-        static async Task Main(string[] args)
+        var cts = new CancellationTokenSource();
+
+        while (!cts.Token.IsCancellationRequested)
         {
-            Console.WriteLine("=== RPG SERVER CORE v0.1 ===");
-            var listener = new TcpListener(IPAddress.Any, Port);
-            listener.Start();
-            Console.WriteLine($"[*] Server in ascolto su 0.0.0.0:{Port}...");
+            TcpClient tcpClient = await listener.AcceptTcpClientAsync(cts.Token);
+            var client = new ConnectedClient(tcpClient);
 
-            var cts = new CancellationTokenSource();
+            Clients.TryAdd(client.Id, client);
+            Console.WriteLine($"[+] [Client {client.IdShort}] Connesso da {client.RemoteEndPoint}");
 
-            try
-            {
-                while (!cts.Token.IsCancellationRequested)
-                {
-                    // Accetta una nuova connessione senza bloccare
-                    TcpClient tcpClient = await listener.AcceptTcpClientAsync(cts.Token);
-                    var client = new ConnectedClient(tcpClient);
-
-                    Clients.TryAdd(client.Id, client);
-                    Console.WriteLine($"[+] [Client {client.IdShort}] Connesso da {client.RemoteEndPoint}");
-
-                    // Avvia la gestione del client in un Task separato (non bloccante)
-                    _ = Task.Run(() => HandleClientAsync(client, cts.Token));
-                }
-            }
-            catch (OperationCanceledException) { }
-            finally
-            {
-                listener.Stop();
-            }
-        }
-
-        private static async Task HandleClientAsync(ConnectedClient client, CancellationToken ct)
-        {
-            // Notifica il nuovo client della connessione avvenuta
-            await client.SendMessageAsync($"WELCOME|Il tuo ID e': {client.IdShort}");
-
-            // Broadcast agli altri giocatori
-            await BroadcastMessageAsync($"SYSTEM|[Client {client.IdShort}] e' entrato nel mondo.", client.Id);
-
-            try
-            {
-                using var stream = client.TcpClient.GetStream();
-                using var reader = new StreamReader(stream, Encoding.UTF8);
-
-                while (!ct.IsCancellationRequested && client.TcpClient.Connected)
-                {
-                    string? rawMessage = await reader.ReadLineAsync(ct);
-
-                    if (rawMessage == null) break; // Disconnessione pulita dal client
-
-                    Console.WriteLine($"[<] [Client {client.IdShort}]: {rawMessage}");
-
-                    // Broadcast del messaggio a TUTTI gli altri client
-                    await BroadcastMessageAsync($"CHAT|[{client.IdShort}]: {rawMessage}", client.Id);
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[!] Errore gestione client {client.IdShort}: {ex.Message}");
-            }
-            finally
-            {
-                // Cleanup alla disconnessione
-                Clients.TryRemove(client.Id, out _);
-                client.TcpClient.Close();
-                Console.WriteLine($"[-] [Client {client.IdShort}] Disconnesso.");
-                await BroadcastMessageAsync($"SYSTEM|[Client {client.IdShort}] e' uscito dal mondo.", client.Id);
-            }
-        }
-
-        private static async Task BroadcastMessageAsync(string message, Guid? excludeClientId = null)
-        {
-            foreach (var kvp in Clients)
-            {
-                if (excludeClientId.HasValue && kvp.Key == excludeClientId.Value)
-                    continue; // Salta il mittente se richiesto
-
-                try
-                {
-                    await kvp.Value.SendMessageAsync(message);
-                }
-                catch
-                {
-                    // Se fallisce l'invio, il client verrà rimosso dal suo loop di lettura
-                }
-            }
+            _ = Task.Run(() => HandleClientAsync(client, cts.Token));
         }
     }
 
-    // Abstraction minimale per rappresentare un Client connesso
-    public class ConnectedClient
+    private static async Task HandleClientAsync(ConnectedClient client, CancellationToken ct)
     {
-        public Guid Id { get; } = Guid.NewGuid();
-        public string IdShort => Id.ToString()[..8];
-        public TcpClient TcpClient { get; }
-        public EndPoint? RemoteEndPoint => TcpClient.Client.RemoteEndPoint;
-
-        private readonly StreamWriter _writer;
-
-        public ConnectedClient(TcpClient tcpClient)
+        try
         {
-            TcpClient = tcpClient;
-            var stream = TcpClient.GetStream();
-            _writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
-        }
+            using var stream = client.TcpClient.GetStream();
+            using var reader = new StreamReader(stream, Encoding.UTF8);
 
-        public async Task SendMessageAsync(string message)
-        {
-            await _writer.WriteLineAsync(message);
+            while (!ct.IsCancellationRequested && client.TcpClient.Connected)
+            {
+                // 1. LEGGE LA RIGA JSON RAW DALLA RETE
+                string? rawJson = await reader.ReadLineAsync(ct);
+                if (rawJson == null) break; // Client disconnesso
+
+                Console.WriteLine($"[RAW IN] [{client.IdShort}]: {rawJson}");
+
+                // 2. DESERIALIZZA IL JSON NEL PACCHETTO BASE NetworkPacket
+                NetworkPacket? packet = null;
+                try
+                {
+                    packet = JsonSerializer.Deserialize<NetworkPacket>(rawJson);
+                }
+                catch (JsonException ex)
+                {
+                    Console.WriteLine($"[!] Errore parsing JSON da {client.IdShort}: {ex.Message}");
+                    continue;
+                }
+
+                // 3. SE IL PACCHETTO È VALIDO, PROCESSA L'OPCODE
+                if (packet != null)
+                {
+                    await ProcessPacketAsync(client, packet);
+                }
+            }
         }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[!] Errore gestione client {client.IdShort}: {ex.Message}");
+        }
+        finally
+        {
+            Clients.TryRemove(client.Id, out _);
+            client.TcpClient.Close();
+            Console.WriteLine($"[-] [Client {client.IdShort} ({client.Username})] Disconnesso.");
+
+            // Notifica gli altri della disconnessione
+            var exitNotify = NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"{client.Username} ha lasciato il gioco." });
+            await BroadcastPacketAsync(exitNotify, excludeClientId: client.Id);
+        }
+    }
+
+    // --- SMISTAMENTO E GESTIONE DEI PACCHETTI ---
+    private static async Task ProcessPacketAsync(ConnectedClient client, NetworkPacket packet)
+    {
+        switch (packet.OpCode)
+        {
+            case OpCode.C2S_Login:
+                // Estraiamo il payload specifico del Login
+                var loginReq = packet.DeserializePayload<LoginRequestPayload>();
+                client.Username = string.IsNullOrWhiteSpace(loginReq?.Username) ? $"Player_{client.IdShort}" : loginReq.Username;
+
+                Console.WriteLine($"[LOGIN] Client {client.IdShort} autenticato come '{client.Username}'");
+
+                // Prepariamo la risposta di Login (S2C_LoginResponse)
+                var loginRespPacket = NetworkPacket.Create(OpCode.S2C_LoginResponse, new LoginResponsePayload
+                {
+                    Success = true,
+                    PlayerId = client.Id.ToString(),
+                    Message = $"Benvenuto {client.Username}!"
+                });
+
+                // Invia la risposta SOLO a questo client
+                await client.SendPacketAsync(loginRespPacket);
+
+                // Manda una notifica di BENVENUTO a tutti gli altri
+                var joinNotify = NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"{client.Username} e' entrato nel mondo!" });
+                await BroadcastPacketAsync(joinNotify, excludeClientId: client.Id);
+                break;
+
+            case OpCode.C2S_Chat:
+                // Estraiamo il payload della Chat
+                var chatReq = packet.DeserializePayload<ChatPayload>();
+
+                Console.WriteLine($"[CHAT] {client.Username}: {chatReq?.Message}");
+
+                // Prepariamo il pacchetto Chat per il broadcast
+                var chatBroadcastPacket = NetworkPacket.Create(OpCode.S2C_ChatMessage, new ChatPayload
+                {
+                    Sender = client.Username,
+                    Message = chatReq?.Message ?? ""
+                });
+
+                // Invia a TUTTI i client connessi
+                await BroadcastPacketAsync(chatBroadcastPacket);
+                break;
+
+            case OpCode.C2S_Ping:
+                var pongPacket = NetworkPacket.Create(OpCode.S2C_Pong, new { ServerTime = DateTime.UtcNow });
+                await client.SendPacketAsync(pongPacket);
+                break;
+
+            default:
+                Console.WriteLine($"[!] OpCode non gestito: {packet.OpCode}");
+                break;
+        }
+    }
+
+    // Funzione helper per inviare un pacchetto a tutti i client
+    private static async Task BroadcastPacketAsync(NetworkPacket packet, Guid? excludeClientId = null)
+    {
+        foreach (var kvp in Clients)
+        {
+            if (excludeClientId.HasValue && kvp.Key == excludeClientId.Value)
+                continue;
+
+            try
+            {
+                await kvp.Value.SendPacketAsync(packet);
+            }
+            catch { }
+        }
+    }
+}
+
+// Estensione della classe ConnectedClient per gestire l'invio diretto di NetworkPacket
+public class ConnectedClient
+{
+    public Guid Id { get; } = Guid.NewGuid();
+    public string IdShort => Id.ToString()[..8];
+    public string Username { get; set; } = "Guest";
+    public TcpClient TcpClient { get; }
+    public EndPoint? RemoteEndPoint => TcpClient.Client.RemoteEndPoint;
+
+    private readonly StreamWriter _writer;
+
+    public ConnectedClient(TcpClient tcpClient)
+    {
+        TcpClient = tcpClient;
+        var stream = TcpClient.GetStream();
+        _writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
+    }
+
+    // Converte l'oggetto NetworkPacket in stringa JSON e lo scrive sul socket
+    public async Task SendPacketAsync(NetworkPacket packet)
+    {
+        string json = JsonSerializer.Serialize(packet);
+        await _writer.WriteLineAsync(json);
     }
 }
