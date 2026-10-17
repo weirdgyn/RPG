@@ -17,14 +17,12 @@ public class ConnectedClient
     public EndPoint? RemoteEndPoint => TcpClient.Client.RemoteEndPoint;
     public PlayerState Character { get; set; } = new();
     private readonly StreamWriter _writer;
-
     public ConnectedClient(TcpClient tcpClient)
     {
         TcpClient = tcpClient;
         var stream = TcpClient.GetStream();
         _writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
     }
-
     // Converte l'oggetto NetworkPacket in stringa JSON e lo scrive sul socket
     public async Task SendPacketAsync(NetworkPacket packet)
     {
