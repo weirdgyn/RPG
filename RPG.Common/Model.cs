@@ -108,6 +108,10 @@ public static class Skills
     {
         try
         {
+            // Mostriamo il percorso assoluto risolto, utilissimo per capire dove il server sta cercando il file
+            string fullPath = Path.GetFullPath(filePath);
+            Console.WriteLine($"[CONFIG] Tentativo di caricamento mappa abilità da: {fullPath}");
+
             if (File.Exists(filePath))
             {
                 string json = File.ReadAllText(filePath);
@@ -116,21 +120,23 @@ public static class Skills
                 if (loadedMap != null && loadedMap.Count > 0)
                 {
                     _skillToStatMap = new Dictionary<string, string>(loadedMap, StringComparer.OrdinalIgnoreCase);
-                    Console.WriteLine($"[CONFIG] Caricate {_skillToStatMap.Count} abilità da '{filePath}'.");
+                    Console.WriteLine($"[CONFIG] -> SUCCESSO: Caricate {_skillToStatMap.Count} abilità da '{filePath}'.");
                     return;
                 }
+            }
+            else
+            {
+                Console.WriteLine($"[CONFIG] -> File '{filePath}' non trovato. Verrà utilizzata la mappa di fallback hardcoded.");
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[AVVISO] Impossibile caricare '{filePath}': {ex.Message}. Utilizzo mappa di fallback.");
+            Console.WriteLine($"[CONFIG] -> ERRORE durante la lettura di '{filePath}': {ex.Message}. Utilizzo mappa di fallback.");
         }
 
-        // Fallback se il file non esiste o fallisce
         _skillToStatMap = new Dictionary<string, string>(DefaultMap, StringComparer.OrdinalIgnoreCase);
-        Console.WriteLine($"[CONFIG] Utilizzo mappa abilità di default ({_skillToStatMap.Count} abilità).");
+        Console.WriteLine($"[CONFIG] -> Fallback attivo: {_skillToStatMap.Count} abilità caricate da codice.");
     }
-
     public static string GetStatForSkill(string skillName)
     {
         return _skillToStatMap.TryGetValue(skillName, out var stat) ? stat : "REF";
