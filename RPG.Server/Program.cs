@@ -322,7 +322,7 @@ class Program
                     }
 
                     // Tiro 1d10 per l'attacco
-                    var attackRoll = GameDice.Roll("1d10");
+                    var attackRoll = GameDice.Roll("1d10!");    // Tiro autorevole con esplosione (se 10, rilancia)
                     int attackDiceVal = (int)attackRoll.Total;
 
                     // Formula Interlock: STAT + SKILL + WOUNDS + 1d10
