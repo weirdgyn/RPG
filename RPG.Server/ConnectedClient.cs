@@ -12,7 +12,7 @@ public class ConnectedClient
 {
     public Guid Id { get; } = Guid.NewGuid();
     public string IdShort => Id.ToString()[..8];
-    public string Username { get; set; } = "Guest";
+    public string Username => !string.IsNullOrEmpty(Character?.Handle) ? Character.Handle : "Guest";
     public TcpClient TcpClient { get; }
     public EndPoint? RemoteEndPoint => TcpClient.Client.RemoteEndPoint;
     public PlayerState Character { get; set; } = new();
