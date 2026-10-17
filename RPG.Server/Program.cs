@@ -1,9 +1,10 @@
 ﻿// Importiamo le classi definite nell'assembly condiviso RPG.Common
+using RPG.Common.Model;
 using RPG.Common.Protocol;
 using RPG.Common.Protocol.Payloads;
 using RPG.Common.Utils;
+using RPG.Server.Services;
 using RPG.Server.World;
-using RPG.Common.Model;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
@@ -76,46 +77,38 @@ class Program
             case OpCode.C2S_Login:
                 var loginReq = packet.DeserializePayload<LoginRequestPayload>();
 
-                // Assegnamo l'handle scelto o un fallback
+                // 1. Determiniamo l'handle richiesto dal client (con fallback)
                 string desiredHandle = loginReq?.Username?.Trim() ?? string.Empty;
-                client.Character.Handle = string.IsNullOrWhiteSpace(desiredHandle) ? $"Punk_{client.IdShort}" : desiredHandle;
+                if (string.IsNullOrWhiteSpace(desiredHandle))
+                {
+                    desiredHandle = $"Punk_{client.IdShort}";
+                }
+
+                // 2. ORA INOCULIAMO IL CARICAMENTO DA FILE O LA CREAZIONE AUTOMATICA TRAMITE IL LOADER!
+                client.Character = CharacterLoader.LoadOrGenerateCharacter(desiredHandle);
+
+                // Assicuriamoci che il PlayerId corrisponda all'ID univoco del client di rete
                 client.Character.PlayerId = client.Id.ToString();
 
-                // GENERAZIONE STATISTICHE TRAMITE IL NOSTRO DICEROLLER!
-                // In Cyberpunk le stats vanno tipicamente da 2 a 10. 
-                // Usiamo ad esempio "1d8+2" o "1d6+4" o un tiro dedicato per ogni stat.
-                client.Character.Stats.INT = (int)GameDice.Roll("1d8+2").Total;
-                client.Character.Stats.REF = (int)GameDice.Roll("1d8+2").Total;
-                client.Character.Stats.TECH = (int)GameDice.Roll("1d8+2").Total;
-                client.Character.Stats.COOL = (int)GameDice.Roll("1d8+2").Total;
-                client.Character.Stats.ATTR = (int)GameDice.Roll("1d8+2").Total;
-                client.Character.Stats.MA = (int)GameDice.Roll("1d8+2").Total;
-                client.Character.Stats.BODY = (int)GameDice.Roll("1d8+2").Total;
-                client.Character.Stats.EMP = (int)GameDice.Roll("1d8+2").Total;
+                Console.WriteLine($"[LOGIN] Client {client.IdShort} autenticato come '{client.Character.Handle}' (HP: {client.Character.Health.CurrentHealth}/{client.Character.Health.MaxHealth}, Skills caricate: {client.Character.Skills.Count})");
 
-                // I Punti Ferita derivano direttamente dalla statistica BODY appena tirata (es. BODY * 5)
-                client.Character.Health.MaxHealth = client.Character.Stats.BODY * 5;
-                client.Character.Health.CurrentHealth = client.Character.Health.MaxHealth;
-
-                Console.WriteLine($"[LOGIN] {client.Character.Handle} registrato. Statistiche generate via dadi -> REF:{client.Character.Stats.REF}, BODY:{client.Character.Stats.BODY}, HP:{client.Character.Health.MaxHealth}");
-
-                // 1. Risposta di login
+                // 3. Risposta di login al client
                 var loginRespPacket = NetworkPacket.Create(OpCode.S2C_LoginResponse, new LoginResponsePayload
                 {
                     Success = true,
                     PlayerId = client.Character.PlayerId,
-                    Message = $"Benvenuto a Night City, {client.Character.Handle}! Personaggio generato con successo."
+                    Message = $"Benvenuto a Night City, {client.Character.Handle}!"
                 });
                 await client.SendPacketAsync(loginRespPacket);
 
-                // 2. Invio dello stato iniziale al client
+                // 4. Inviamo lo stato aggiornato del personaggio al client
                 var statePacket = NetworkPacket.Create(OpCode.S2C_PlayerStateUpdate, new PlayerStatePayload
                 {
                     Character = client.Character
                 });
                 await client.SendPacketAsync(statePacket);
 
-                // 3. Notifica broadcast agli altri
+                // 5. Notifica agli altri nella stanza
                 var joinNotify = NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"{client.Character.Handle} è entrato nella rete." });
                 await BroadcastPacketAsync(joinNotify, excludeClientId: client.Id);
                 break;
