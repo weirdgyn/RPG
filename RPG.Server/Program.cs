@@ -225,6 +225,72 @@ class Program
                     await client.SendPacketAsync(moveResp);
                 }
                 break;
+
+            case OpCode.C2S_SkillCheck:
+                var skillReq = packet.DeserializePayload<SkillCheckRequestPayload>();
+                if (skillReq != null)
+                {
+                    // 1. Estraiamo la statistica corretta dal personaggio del client
+                    int statVal = skillReq.StatName.ToUpper() switch
+                    {
+                        "INT" => client.Character.Stats.INT,
+                        "REF" => client.Character.Stats.REF,
+                        "TECH" => client.Character.Stats.TECH,
+                        "COOL" => client.Character.Stats.COOL,
+                        "ATTR" => client.Character.Stats.ATTR,
+                        "MA" => client.Character.Stats.MA,
+                        "BODY" => client.Character.Stats.BODY,
+                        "EMP" => client.Character.Stats.EMP,
+                        _ => client.Character.Stats.REF // Default su REF
+                    };
+
+                    // 2. Calcoliamo la penalità dovuta alle ferite attuali
+                    int woundPenalty = client.Character.Health.GetWoundPenalty();
+
+                    // Se il personaggio è K.O. o morto, blocchiamo l'azione
+                    if (woundPenalty <= -99)
+                    {
+                        var deadResp = NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Sei troppo ferito per agire (K.O.)!" });
+                        await client.SendPacketAsync(deadResp);
+                        break;
+                    }
+
+                    // 3. Tiro autorevole 1d10
+                    var roll = GameDice.Roll("1d10");
+                    int diceVal = (int)roll.Total;
+
+                    // 4. Somma finale Interlock
+                    int total = statVal + skillReq.SkillLevel + woundPenalty + diceVal;
+                    bool success = total >= skillReq.TargetNumber;
+
+                    Console.WriteLine($"[SKILL] {client.Character.Handle} prova {skillReq.StatName} (Stat:{statVal} + Skill:{skillReq.SkillLevel} + Ferite:{woundPenalty} + d10:{diceVal}) = {total} vs TN {skillReq.TargetNumber} -> {(success ? "SUCCESSO" : "FALLIMENTO")}");
+
+                    // 5. Inviamo il risultato al client (e volendo in broadcast alla stanza)
+                    var resultPayload = new SkillCheckResponsePayload
+                    {
+                        PlayerHandle = client.Character.Handle,
+                        StatUsed = skillReq.StatName.ToUpper(),
+                        StatValue = statVal,
+                        SkillLevel = skillReq.SkillLevel,
+                        WoundPenalty = woundPenalty,
+                        DiceRoll = diceVal,
+                        Total = total,
+                        TargetNumber = skillReq.TargetNumber,
+                        Success = success,
+                        Message = success
+                            ? $"SUCCESSO! {total} contro TN {skillReq.TargetNumber}"
+                            : $"FALLIMENTO! {total} contro TN {skillReq.TargetNumber}"
+                    };
+
+                    var respPacket = NetworkPacket.Create(OpCode.S2C_SkillResult, resultPayload);
+                    await client.SendPacketAsync(respPacket);
+
+                    // (Opzionale) Notifica anche gli altri nella zona che il player ha fatto un'azione
+                    var broadcastNotification = NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"{client.Character.Handle} esegue un test di {skillReq.StatName} -> {(success ? "Riuscito!" : "Fallito!")}" });
+                    await BroadcastPacketAsync(broadcastNotification, excludeClientId: client.Id);
+                }
+                break;
+            
             default:
                 Console.WriteLine($"[!] OpCode non gestito: {packet.OpCode}");
                 break;

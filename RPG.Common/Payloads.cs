@@ -52,3 +52,29 @@ public class MoveResponsePayload
     public Position3D CurrentPosition { get; set; } = new();
     public string Message { get; set; } = string.Empty;
 }
+
+public class SkillCheckRequestPayload
+{
+    // Quale statistica usare (es. "REF", "INT", "TECH", "BODY"...)
+    public string StatName { get; set; } = "REF";
+
+    // Livello dell'abilità specifica (default 0 se non specificato)
+    public int SkillLevel { get; set; } = 0;
+
+    // Difficoltà della prova stabilita dal server o richiesta
+    public int TargetNumber { get; set; } = 15; // Es. Medio = 15
+}
+
+public class SkillCheckResponsePayload
+{
+    public string PlayerHandle { get; set; } = string.Empty;
+    public string StatUsed { get; set; } = string.Empty;
+    public int StatValue { get; set; }
+    public int SkillLevel { get; set; }
+    public int WoundPenalty { get; set; }
+    public int DiceRoll { get; set; }
+    public int Total { get; set; }
+    public int TargetNumber { get; set; }
+    public bool Success { get; set; }
+    public string Message { get; set; } = string.Empty;
+}

@@ -78,6 +78,7 @@ class Program
             Console.WriteLine(" - Scrivi '/roll <espressione>' per lanciare i dadi.\n");
             Console.WriteLine(" - Scrivi '/status' per visualizzare lo stato del personaggio.\n");
             Console.WriteLine(" - Scrivi '/move X,Y,Z' per spostarti a una nuova posizione (es. /move 10,5,3).\n");
+            Console.WriteLine(" - Scrivi '/skill STAT ABILITA TN' per eseguire un controllo di abilità.\n");
             Console.WriteLine(" - Scrivi 'exit' per disconnetterti.\n");
 
             while (!cts.IsCancellationRequested)
@@ -108,7 +109,32 @@ class Program
                     continue;
                 }
 
-                if(input.StartsWith("/move "))
+                // Esempio nel parsing dei comandi del client:
+                // Sintassi: /skill <STAT> <ABILITA> <TN>  (es. /skill REF 3 15)
+                if (input.StartsWith("/skill ", StringComparison.OrdinalIgnoreCase))
+                {
+                    string[] parts = input.Split(' ');
+                    if (parts.Length >= 4 &&
+                        int.TryParse(parts[2], out int skillLvl) &&
+                        int.TryParse(parts[3], out int tn))
+                    {
+                        string statName = parts[1];
+                        var skillPacket = NetworkPacket.Create(OpCode.C2S_SkillCheck, new SkillCheckRequestPayload
+                        {
+                            StatName = statName,
+                            SkillLevel = skillLvl,
+                            TargetNumber = tn
+                        });
+                        await writer.WriteLineAsync(JsonSerializer.Serialize(skillPacket));
+                        continue;
+                    }
+                    else
+                    {
+                        Console.WriteLine("[!] Sintassi non valida. Usa: /skill <STAT> <Abilità> <TN> (es. /skill REF 3 15)");
+                        continue;
+                    }
+                }
+                if (input.StartsWith("/move "))
                 {
                     string positionStr = input[6..].Trim();
                     // Qui dovremmo parsare la posizione e inviare il pacchetto di movimento
@@ -201,15 +227,40 @@ class Program
                     if (moveResp.Success)
                     {
                         Console.ForegroundColor = ConsoleColor.Green;
-                        Console.WriteLine($"[POSIZIONE] {moveResp.Message}");
+                        Console.WriteLine($"[POSITION] {moveResp.Message}");
                         Console.ResetColor();
                     }
                     else
                     {
                         Console.ForegroundColor = ConsoleColor.Red;
-                        Console.WriteLine($"[ERRORE MOVIMENTO] {moveResp.Message} (Posizione attuale: X:{moveResp.CurrentPosition.X}, Y:{moveResp.CurrentPosition.Y}, Z:{moveResp.CurrentPosition.Z})");
+                        Console.WriteLine($"[MOVEMENT ERROR] {moveResp.Message} (Posizione attuale: X:{moveResp.CurrentPosition.X}, Y:{moveResp.CurrentPosition.Y}, Z:{moveResp.CurrentPosition.Z})");
                         Console.ResetColor();
                     }
+                }
+                break;
+
+            case OpCode.S2C_SkillResult:
+                var skillResp = packet.DeserializePayload<SkillCheckResponsePayload>();
+                if (skillResp != null)
+                {
+                    Console.WriteLine("\n----------------------------------------");
+                    Console.WriteLine($"🎲 [TEST ABILITÀ - {skillResp.PlayerHandle}]");
+                    Console.WriteLine($"   Stat ({skillResp.StatUsed}): {skillResp.StatValue} | Abilità: {skillResp.SkillLevel} | Pen. Ferite: {skillResp.WoundPenalty}");
+                    Console.WriteLine($"   Lancio 1d10: [{skillResp.DiceRoll}]");
+                    Console.WriteLine($"   TOTALE: {skillResp.Total} (vs Difficoltà TN {skillResp.TargetNumber})");
+
+                    if (skillResp.Success)
+                    {
+                        Console.ForegroundColor = ConsoleColor.Green;
+                        Console.WriteLine($"   RISULTATO: {skillResp.Message}");
+                    }
+                    else
+                    {
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine($"   RISULTATO: {skillResp.Message}");
+                    }
+                    Console.ResetColor();
+                    Console.WriteLine("----------------------------------------");
                 }
                 break;
 
