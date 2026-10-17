@@ -16,7 +16,7 @@ namespace RPG.Server;
 class Program
 {
     private const int Port = 5000;
-    private static GameMap _gameMap = new(); // <--- LA MAPPA GLOBALE DEL SERVER
+    private static GameMap gameMap = new(); // <--- LA MAPPA GLOBALE DEL SERVER
     private static readonly ConcurrentDictionary<Guid, ConnectedClient> Clients = new();
 
     static async Task Main(string[] args)
