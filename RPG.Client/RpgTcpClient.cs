@@ -12,6 +12,7 @@ namespace RPG.Client
         private StreamReader? _reader;
         private StreamWriter? _writer;
         private bool _isRunning;
+        private PlayerState? _lastKnownCharacter;
         public async Task<bool> ConnectAsync(string host, int port)
         {
             try
@@ -83,18 +84,41 @@ namespace RPG.Client
                     continue;
                 }
 
-                // --- COMANDO: /status o /sheet (Mostra scheda) ---
-                if (trimmedInput.Equals("/status", StringComparison.OrdinalIgnoreCase) ||
-                    trimmedInput.Equals("/sheet", StringComparison.OrdinalIgnoreCase))
+                // --- COMANDO: /status (Richiede e mostra la scheda completa) ---
+                if (trimmedInput.Equals("/status", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Richiede lo stato aggiornato o stampa l'ultima nota ricevuta
-                    Console.WriteLine("[*] In attesa di aggiornamento scheda dal server...");
+                    // Invia al server la richiesta esplicita di aggiornamento stato
+                    await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetStatus, new { })));
+                    continue;
+                }
+
+                // --- COMANDO: /skills (PLURALE: Mostra SOLTANTO la lista abilità) ---
+                if (trimmedInput.Equals("/skills", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (_lastKnownCharacter?.Skills != null && _lastKnownCharacter.Skills.Count > 0)
+                    {
+                        Console.WriteLine("\n========================================");
+                        Console.WriteLine($"🧠 ELENCO ABILITÀ - {_lastKnownCharacter.Handle}");
+                        Console.WriteLine("----------------------------------------");
+                        foreach (var kv in _lastKnownCharacter.Skills)
+                        {
+                            string statAssoc = Skills.GetStatForSkill(kv.Key);
+                            int statVal = _lastKnownCharacter.Stats.GetStatValue(statAssoc);
+                            int totalPool = statVal + kv.Value;
+                            Console.WriteLine($"  - {kv.Key,-20} : Livello {kv.Value} ({statAssoc}: {statVal}) -> Pool Base: {totalPool}");
+                        }
+                        Console.WriteLine("========================================");
+                    }
+                    else
+                    {
+                        Console.WriteLine("[!] Nessuna abilità trovata o scheda non ancora caricata.");
+                    }
                     PrintPrompt();
                     continue;
                 }
 
                 // --- COMANDO: /move X Y Z ---
-                if (trimmedInput.StartsWith("/move ", StringComparison.OrdinalIgnoreCase))
+                if (trimmedInput.StartsWith("/move", StringComparison.OrdinalIgnoreCase))
                 {
                     string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                     if (parts.Length >= 4 &&
@@ -117,7 +141,7 @@ namespace RPG.Client
                 }
 
                 // --- COMANDO: /attack <Target> [WeaponOrSkill] ---
-                if (trimmedInput.StartsWith("/attack ", StringComparison.OrdinalIgnoreCase))
+                if (trimmedInput.StartsWith("/attack", StringComparison.OrdinalIgnoreCase))
                 {
                     string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                     if (parts.Length >= 2)
@@ -134,43 +158,14 @@ namespace RPG.Client
                     }
                     else
                     {
-                        Console.WriteLine("[!] Sintassi non valida. Usa: /attack <Bersaglio> [Arma_o_Abilità]");
-                    }
-                    PrintPrompt();
-                    continue;
-                }
-
-                // --- COMANDO: /skill ---
-                if (trimmedInput.Equals("/skill", StringComparison.OrdinalIgnoreCase) ||
-                    trimmedInput.Equals("/skills", StringComparison.OrdinalIgnoreCase))
-                {
-                    // Stampa locale immediata se abbiamo il personaggio in memoria o richiede al server
-                    if (_lastKnownCharacter?.Skills != null)
-                    {
-                        Console.WriteLine("\n========================================");
-                        Console.WriteLine("🧠 ELENCO ABILITÀ:");
-                        Console.WriteLine("----------------------------------------");
-                        foreach (var kv in _lastKnownCharacter.Skills)
-                        {
-                            string statAssoc = Skills.GetStatForSkill(kv.Key);
-                            int statVal = _lastKnownCharacter.Stats.GetStatValue(statAssoc);
-                            int totalPool = statVal + kv.Value;
-                            Console.WriteLine($"  - {kv.Key,-20} : Livello {kv.Value} (Stat: {statAssoc}={statVal} -> Pool Totale: {totalPool})");
-                        }
-                        Console.WriteLine("========================================");
-                    }
-                    else
-                    {
-                        // Chiede aggiornamento al server
-                        await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetSkills, new { })));
+                        Console.WriteLine("[!] Sintassi non valida. Usa: /attack <Bersaglio> [Arma|Abilità]");
                     }
                     PrintPrompt();
                     continue;
                 }
 
                 // --- COMANDO: /roll o /rool ---
-                if (trimmedInput.StartsWith("/roll", StringComparison.OrdinalIgnoreCase) ||
-                    trimmedInput.StartsWith("/rool", StringComparison.OrdinalIgnoreCase))
+                if (trimmedInput.StartsWith("/roll", StringComparison.OrdinalIgnoreCase))
                 {
                     string[] parts = trimmedInput.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
                     string diceExpr = parts.Length >= 2 ? parts[1] : "1d10";
@@ -186,6 +181,36 @@ namespace RPG.Client
                     continue;
                 }
 
+                // --- COMANDO: /skill (SINGOLARE: Test di Abilità, es. /skill Percezione 15) ---
+                if (trimmedInput.StartsWith("/skill", StringComparison.OrdinalIgnoreCase))
+                {
+                    string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length >= 2)
+                    {
+                        string skillName = parts[1];
+                        int difficulty = 15; // TN Standard di default (Medio)
+
+                        if (parts.Length >= 3 && int.TryParse(parts[2], out int parsedDiff))
+                        {
+                            difficulty = parsedDiff;
+                        }
+
+                        var skillPacket = NetworkPacket.Create(OpCode.C2S_SkillCheck, new SkillCheckRequestPayload
+                        {
+                            SkillName = skillName,
+                            Difficulty = difficulty
+                        });
+                        await _writer.WriteLineAsync(JsonSerializer.Serialize(skillPacket));
+                    }
+                    else
+                    {
+                        Console.WriteLine("[!] Sintassi non valida. Usa: /skill <NomeAbilità> [Difficoltà/TN]");
+                        Console.WriteLine("    Esempi: /skill Percezione 15  oppure  /skill Guidare");
+                        PrintPrompt();
+                    }
+                    continue;
+                }
+
                 Console.WriteLine($"[!] Comando non riconosciuto: '{trimmedInput}'. Digita /help per la lista comandi.");
                 PrintPrompt();
             }
@@ -197,12 +222,13 @@ namespace RPG.Client
             Console.WriteLine("\n========================================");
             Console.WriteLine("🎮 COMANDI DISPONIBILI - NIGHT CITY RPG");
             Console.WriteLine("----------------------------------------");
-            Console.WriteLine("  /status                               - Visualizza stato e inventario");
+            Console.WriteLine("  /status                               - Richiede la scheda personaggio completa");
+            Console.WriteLine("  /skills                               - Visualizza la lista delle tue abilità");
             Console.WriteLine("  /move <X> <Y> <Z>                     - Spostati nello spazio 3D");
             Console.WriteLine("  /attack <Bersaglio>                   - Attacca con l'arma equipaggiata");
             Console.WriteLine("  /attack <Bersaglio> <Arma/Abilità>    - Attacca specificando arma o abilità (es. /attack Jackie ArtiMarziali)");
-            Console.WriteLine("  /skill                                - Visualizza la lista delle tue abilità");
             Console.WriteLine("  /roll <Espressione> [Motivazione]     - Effettua un tiro di dadi (es. /roll 1d10+4 Iniziativa)");
+            Console.WriteLine("  /skill <NomeAbilità> [TN]             - Effettua un test di abilità (es. /skill Percezione 15)");
             Console.WriteLine("  /help                                 - Mostra questo menu");
             Console.WriteLine("  /exit                                 - Disconnettiti ed esci");
             Console.WriteLine("========================================\n");
@@ -231,7 +257,6 @@ namespace RPG.Client
                 }
             }
         }
-        private PlayerState? _lastKnownCharacter;
         private static void HandleServerPacket(NetworkPacket packet)
         {
             switch (packet.OpCode)
@@ -248,6 +273,8 @@ namespace RPG.Client
                     var statePayload = packet.DeserializePayload<PlayerStatePayload>();
                     if (statePayload?.Character != null)
                     {
+                        // Salva lo stato in memoria locale per i comandi /skills e consultazione rapida
+                        
                         var c = statePayload.Character;
                         Console.WriteLine("\n========================================");
                         Console.WriteLine($"📋 SCHEDA PERSONAGGIO: {c.Handle}");
@@ -310,6 +337,17 @@ namespace RPG.Client
                     if (rollResp != null)
                     {
                         Console.WriteLine($"\n🎲 [TIRO DADI] {rollResp.Message}");
+                    }
+                    break;
+
+                case OpCode.S2C_SkillCheckResult:
+                    var skillResp = packet.DeserializePayload<SkillCheckResponsePayload>();
+                    if (skillResp != null)
+                    {
+                        string icon = skillResp.IsSuccess ? "✅" : "❌";
+                        Console.WriteLine($"\n🧠 [PROVA ABILITÀ] {skillResp.CharacterHandle} -> {skillResp.SkillName} ({skillResp.StatName})");
+                        Console.WriteLine($"   Tiro: {skillResp.TotalResult} (Stat:{skillResp.StatValue} + Lvl:{skillResp.SkillLevel} + d10:{skillResp.DiceRoll}) vs TN: {skillResp.TargetNumber}");
+                        Console.WriteLine($"   Esito: {icon} {skillResp.Message}");
                     }
                     break;
 

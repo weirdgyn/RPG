@@ -10,172 +10,6 @@ using System.Text.Json;
 
 namespace RPG.Server.Services
 {
-    public static class CharacterLoader
-    {
-        private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
-
-        public static PlayerState LoadOrGenerateCharacter(string handle, string directoryPath = "Data/Characters")
-        {
-            // Risolviamo i percorsi per avere chiarezza nei log
-            string absoluteDir = Path.GetFullPath(directoryPath);
-            Directory.CreateDirectory(absoluteDir);
-
-            string userFilePath = Path.Combine(absoluteDir, $"{handle}.json");
-            Console.WriteLine($"[CHAR] Ricerca scheda utente per '{handle}' in: {userFilePath}");
-
-            // 1. Controllo se esiste già il salvataggio specifico dell'utente
-            if (File.Exists(userFilePath))
-            {
-                try
-                {
-                    string json = File.ReadAllText(userFilePath);
-                    var character = JsonSerializer.Deserialize<PlayerState>(json);
-                    if (character != null)
-                    {
-                        Console.WriteLine($"[CHAR] -> SUCCESSO: Scheda di '{handle}' caricata dal file di salvataggio esistente.");
-                        return character;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[CHAR] -> ERRORE nella lettura della scheda '{userFilePath}': {ex.Message}");
-                }
-            }
-            else
-            {
-                Console.WriteLine($"[CHAR] -> Nessun salvataggio precedente trovato per '{handle}'. Procedo alla creazione.");
-            }
-
-            // 2. Cerchiamo il template di default
-            string defaultTemplatePath = "Data/DefaultCharacter.json";
-            string absoluteTemplatePath = Path.GetFullPath(defaultTemplatePath);
-            PlayerState newChar;
-
-            Console.WriteLine($"[CHAR] Ricerca template di default in: {absoluteTemplatePath}");
-
-            if (File.Exists(defaultTemplatePath))
-            {
-                try
-                {
-                    string templateJson = File.ReadAllText(defaultTemplatePath);
-                    newChar = JsonSerializer.Deserialize<PlayerState>(templateJson) ?? new PlayerState();
-                    Console.WriteLine($"[CHAR] -> SUCCESSO: Creato nuovo personaggio basato sul template '{defaultTemplatePath}'.");
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[CHAR] -> ERRORE lettura template '{defaultTemplatePath}': {ex.Message}. Utilizzo generazione dadi.");
-                    newChar = GenerateRandomCharacterWithDice();
-                }
-            }
-            else
-            {
-                Console.WriteLine($"[CHAR] -> Template '{defaultTemplatePath}' non trovato. Generazione statistiche casuali con dadi.");
-                newChar = GenerateRandomCharacterWithDice();
-            }
-
-            // Inizializziamo/sovrascriviamo l'handle e calcoliamo i punti ferita
-            newChar.Handle = handle;
-            newChar.Health.MaxHealth = newChar.Stats.BODY * 5;
-            newChar.Health.CurrentHealth = newChar.Health.MaxHealth;
-
-            // 3. Salvataggio forzato e persistente su disco del nuovo personaggio
-            SaveCharacter(newChar, directoryPath);
-
-            return newChar;
-        }
-
-        public static void SaveCharacter(PlayerState character, string directoryPath = "Data/Characters")
-        {
-            try
-            {
-                string absoluteDir = Path.GetFullPath(directoryPath);
-                Directory.CreateDirectory(absoluteDir);
-
-                string filePath = Path.Combine(absoluteDir, $"{character.Handle}.json");
-                string json = JsonSerializer.Serialize(character, JsonOpts);
-
-                File.WriteAllText(filePath, json);
-                Console.WriteLine($"[CHAR] -> PERSISTENZA: Scheda di '{character.Handle}' salvata con successo in '{filePath}'.");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[CHAR] -> ERRORE CRITICO salvataggio scheda di {character.Handle}: {ex.Message}");
-            }
-        }
-
-        private static PlayerState GenerateRandomCharacterWithDice()
-        {
-            var character = new PlayerState();
-            character.Stats.INT = (int)GameDice.Roll("2d4+2").Total;
-            character.Stats.REF = (int)GameDice.Roll("2d4+2").Total;
-            character.Stats.TECH = (int)GameDice.Roll("2d4+2").Total;
-            character.Stats.COOL = (int)GameDice.Roll("2d4+2").Total;
-            character.Stats.ATTR = (int)GameDice.Roll("2d4+2").Total;
-            character.Stats.MA = (int)GameDice.Roll("2d4+2").Total;
-            character.Stats.BODY = (int)GameDice.Roll("2d4+2").Total;
-            character.Stats.EMP = (int)GameDice.Roll("2d4+2").Total;
-
-            character.Skills["Pistola"] = 2;
-            character.Skills["ArtiMarziali"] = 2;
-            character.Skills["Schivare"] = 2;
-            character.Skills["Streetwise"] = 1;
-
-            // Arma 1: Pistola da Fuoco
-            var pistol = new Weapon
-            {
-                Id = "sternmeyer_35",
-                Name = "Sternmeyer 35",
-                Type = WeaponType.Ranged,
-                SkillName = "Pistola",
-                DamageDice = "2d6",
-                OptimalRangeMeters = 50
-            };
-
-            // Arma 2: Corpo a corpo / Arti Marziali
-            var unarmed = new Weapon
-            {
-                Id = "unarmed",
-                Name = "ArtiMarziali",
-                Type = WeaponType.Melee,
-                SkillName = "ArtiMarziali",
-                DamageDice = "1d6+2",
-                OptimalRangeMeters = 2
-            };
-
-            character.Weapons.Add(pistol);
-            character.Weapons.Add(unarmed);
-
-            // Di default parte con la pistola in pugno
-            character.EquippedWeapon = pistol;
-
-            return character;
-        }
-    }
-
-    public class ClientSession
-    {
-        public Guid Id { get; } = Guid.NewGuid();
-        public string IdShort => Id.ToString().Substring(0, 6);
-        public TcpClient TcpClient { get; }
-        public StreamReader Reader { get; }
-        public StreamWriter Writer { get; }
-        public PlayerState Character { get; set; } = new();
-
-        public ClientSession(TcpClient tcpClient)
-        {
-            TcpClient = tcpClient;
-            var stream = tcpClient.GetStream();
-            Reader = new StreamReader(stream);
-            Writer = new StreamWriter(stream) { AutoFlush = true };
-        }
-
-        public async Task SendPacketAsync(NetworkPacket packet)
-        {
-            string json = JsonSerializer.Serialize(packet);
-            await Writer.WriteLineAsync(json);
-        }
-    }
-
     public class RpgTcpServer
     {
         private readonly IPAddress _ipAddress;
@@ -446,6 +280,56 @@ namespace RPG.Server.Services
                         {
                             Character = client.Character
                         }));
+                    }
+                    break;
+
+                case OpCode.C2S_GetStatus:
+                    {
+                        // Reinvia lo stato aggiornato del personaggio al client che lo ha richiesto
+                        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_PlayerStateUpdate, new PlayerStatePayload
+                        {
+                            Character = client.Character
+                        }));
+                    }
+                    break;
+
+                case OpCode.C2S_SkillCheck:
+                    {
+                        var skillReq = packet.DeserializePayload<SkillCheckRequestPayload>();
+                        if (skillReq != null && !string.IsNullOrWhiteSpace(skillReq.SkillName))
+                        {
+                            string skillName = skillReq.SkillName.Trim();
+                            string statName = Skills.GetStatForSkill(skillName);
+
+                            int statVal = client.Character.Stats.GetStatValue(statName);
+                            int skillLvl = client.Character.Skills.TryGetValue(skillName, out int lvl) ? lvl : 0;
+                            int penalty = client.Character.Health.GetWoundPenalty();
+
+                            var roll = GameDice.Roll("1d10");
+                            int diceVal = (int)roll.Total;
+                            int totalResult = statVal + skillLvl + penalty + diceVal;
+                            bool isSuccess = totalResult >= skillReq.Difficulty;
+
+                            string outcome = isSuccess ? "SUCCESSO" : "FALLIMENTO";
+                            Console.WriteLine($"[SKILL] {client.Character.Handle} prova '{skillName}' ({statName}:{statVal} + Lvl:{skillLvl} + d10:{diceVal} - Pen:{Math.Abs(penalty)}) = {totalResult} vs TN {skillReq.Difficulty} -> {outcome}");
+
+                            var respPayload = new SkillCheckResponsePayload
+                            {
+                                CharacterHandle = client.Character.Handle,
+                                SkillName = skillName,
+                                StatName = statName,
+                                StatValue = statVal,
+                                SkillLevel = skillLvl,
+                                DiceRoll = diceVal,
+                                TotalResult = totalResult,
+                                TargetNumber = skillReq.Difficulty,
+                                IsSuccess = isSuccess,
+                                Message = $"{client.Character.Handle} effettua una prova di {skillName} ({statName}): {totalResult} vs TN {skillReq.Difficulty} -> {outcome}!"
+                            };
+
+                            // Notifica l'esito a tutti i client
+                            await BroadcastPacketAsync(NetworkPacket.Create(OpCode.S2C_SkillCheckResult, respPayload));
+                        }
                     }
                     break;
 

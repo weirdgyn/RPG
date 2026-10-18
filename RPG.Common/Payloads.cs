@@ -8,43 +8,25 @@ public class ChatPayload
     public string Sender { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
 }
-
 public class LoginRequestPayload
 {
     public string Username { get; set; } = string.Empty;
 }
-
 public class LoginResponsePayload
 {
     public bool Success { get; set; }
     public string PlayerId { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
 }
-
-public class DiceRequestPayload
-{
-    public string Expression { get; set; } = "1d20";
-}
-
-public class DiceResponsePayload
-{
-    public string Player { get; set; } = string.Empty;
-    public string Expression { get; set; } = string.Empty;
-    public decimal Total { get; set; }
-    public string Details { get; set; } = string.Empty;
-}
-
 public class PlayerStatePayload
 {
     public PlayerState Character { get; set; } = new();
 }
-
 public class MoveRequestPayload
 {
     // Coordinate assolute o delta (qui usiamo coordinate di destinazione assolute per semplicità)
     public Position3D TargetPosition { get; set; } = new();
 }
-
 public class MoveResponsePayload
 {
     public bool Success { get; set; }
@@ -52,28 +34,24 @@ public class MoveResponsePayload
     public Position3D CurrentPosition { get; set; } = new();
     public string Message { get; set; } = string.Empty;
 }
-
 public class SkillCheckRequestPayload
 {
-    public string SkillName { get; set; } = string.Empty; // es. "Pistola"
-    public int TargetNumber { get; set; } = 15;            // Difficoltà TN
+    public string SkillName { get; set; } = string.Empty;
+    public int Difficulty { get; set; } = 15; // TN predefinito se non specificato (es. 15 = Medio)
 }
-
 public class SkillCheckResponsePayload
 {
-    public string PlayerHandle { get; set; } = string.Empty;
+    public string CharacterHandle { get; set; } = string.Empty;
     public string SkillName { get; set; } = string.Empty;
-    public string StatUsed { get; set; } = string.Empty;
+    public string StatName { get; set; } = string.Empty;
     public int StatValue { get; set; }
     public int SkillLevel { get; set; }
-    public int WoundPenalty { get; set; }
     public int DiceRoll { get; set; }
-    public int Total { get; set; }
+    public int TotalResult { get; set; }
     public int TargetNumber { get; set; }
-    public bool Success { get; set; }
+    public bool IsSuccess { get; set; }
     public string Message { get; set; } = string.Empty;
 }
-
 public class AttackRequestPayload
 {
     public string TargetHandle { get; set; } = string.Empty; // Nome del bersaglio!
