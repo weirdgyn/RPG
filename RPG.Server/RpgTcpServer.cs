@@ -12,12 +12,12 @@ namespace RPG.Server.Services
 {
     public class RpgTcpServer(string ipAddress, int port)
     {
-        private readonly IPAddress _ipAddress = ipAddress == "0.0.0.0" ? IPAddress.Any : IPAddress.Parse(ipAddress);
+        private const string DefaultListenIpAddr = "0.0.0.0";
+        private readonly IPAddress _ipAddress = ipAddress == DefaultListenIpAddr ? IPAddress.Any : IPAddress.Parse(ipAddress);
         private readonly int _port = port;
         private TcpListener? _listener;
         private readonly ConcurrentDictionary<Guid, ClientSession> _connectedClients = new();
         private bool _isRunning;
-
         public async Task StartAsync()
         {
             _listener = new TcpListener(_ipAddress, _port);
@@ -178,7 +178,7 @@ namespace RPG.Server.Services
                             int targetNumber = 15;
                             string attackTypeDesc = "";
 
-                            if (weaponToUse.Type == WeaponType.Ranged)
+                            if (weaponToUse.Type == Weapon.WeaponType.Ranged)
                             {
                                 targetNumber = CombatRules.GetRangedTargetNumber(distance);
                                 attackTypeDesc = $"A Distanza con {weaponToUse.Name} ({distance:F1}m) -> TN Fisso: {targetNumber}";

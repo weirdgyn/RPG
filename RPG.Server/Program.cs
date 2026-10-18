@@ -1,5 +1,4 @@
-﻿// Importiamo le classi definite nell'assembly condiviso RPG.Common
-using CommandLine;
+﻿using CommandLine;
 using RPG.Common.Model;
 using RPG.Server.Services;
 

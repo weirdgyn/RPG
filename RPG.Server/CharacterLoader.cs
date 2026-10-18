@@ -6,9 +6,9 @@ namespace RPG.Server.Services
 {
     public static class CharacterLoader
     {
+        private const string CharactersFolder = "Data/Characters";
         private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
-
-        public static PlayerState LoadOrGenerateCharacter(string handle, string directoryPath = "Data/Characters")
+        public static PlayerState LoadOrGenerateCharacter(string handle, string directoryPath = CharactersFolder)
         {
             // Risolviamo i percorsi per avere chiarezza nei log
             string absoluteDir = Path.GetFullPath(directoryPath);
@@ -77,8 +77,7 @@ namespace RPG.Server.Services
 
             return newChar;
         }
-
-        public static void SaveCharacter(PlayerState character, string directoryPath = "Data/Characters")
+        public static void SaveCharacter(PlayerState character, string directoryPath = CharactersFolder)
         {
             try
             {
@@ -96,7 +95,6 @@ namespace RPG.Server.Services
                 Console.WriteLine($"[CHAR] -> ERRORE CRITICO salvataggio scheda di {character.Handle}: {ex.Message}");
             }
         }
-
         private static PlayerState GenerateRandomCharacterWithDice()
         {
             var character = new PlayerState();
@@ -119,7 +117,7 @@ namespace RPG.Server.Services
             {
                 Id = "sternmeyer_35",
                 Name = "Sternmeyer 35",
-                Type = WeaponType.Ranged,
+                Type = Weapon.WeaponType.Ranged,
                 SkillName = "Pistola",
                 DamageDice = "2d6",
                 OptimalRangeMeters = 50
@@ -130,7 +128,7 @@ namespace RPG.Server.Services
             {
                 Id = "unarmed",
                 Name = "ArtiMarziali",
-                Type = WeaponType.Melee,
+                Type = Weapon.WeaponType.Melee,
                 SkillName = "ArtiMarziali",
                 DamageDice = "1d6+2",
                 OptimalRangeMeters = 2

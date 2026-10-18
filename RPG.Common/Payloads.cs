@@ -27,13 +27,6 @@ public class MoveRequestPayload
     // Coordinate assolute o delta (qui usiamo coordinate di destinazione assolute per semplicità)
     public Position3D Position { get; set; } = new();
 }
-public class MoveResponsePayload
-{
-    public bool Success { get; set; }
-    public MovementResult Result { get; set; }
-    public Position3D Position { get; set; } = new();
-    public string Message { get; set; } = string.Empty;
-}
 public class SkillCheckRequestPayload
 {
     public string SkillName { get; set; } = string.Empty;

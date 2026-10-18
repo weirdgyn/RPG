@@ -2,17 +2,11 @@
 
 namespace RPG.Common.Model;
 
-public class SkillDefinition
-{
-    public string Name { get; set; } = string.Empty;
-    public string RelatedStat { get; set; } = "REF"; // Es. REF, TECH, INT...
-}
-
 public static class Skills
 {
+    private const string DefaultSkillMap = "Data/DefaultSkillMap.json";
     private static Dictionary<string, string> _skillToStatMap = new(StringComparer.OrdinalIgnoreCase);
     private static bool _isInitialized = false;
-
     private static readonly Dictionary<string, string> DefaultMap = new(StringComparer.OrdinalIgnoreCase)
     {
         { "Pistola", "REF" },
@@ -32,9 +26,8 @@ public static class Skills
         { "Persuasione", "EMP" },
         { "Seduzione", "EMP" }
     };
-
     // Metodo da chiamare esplicitamente all'avvio del server
-    public static void Initialize(string filePath = "Data/DefaultSkillMap.json")
+    public static void Initialize(string filePath = DefaultSkillMap)
     {
         if (_isInitialized) return;
 
@@ -71,7 +64,6 @@ public static class Skills
         _isInitialized = true;
         Console.WriteLine($"[CONFIG] -> Fallback attivo: {_skillToStatMap.Count} abilità caricate da codice.");
     }
-
     public static string GetStatForSkill(string skillName)
     {
         // Assicurazione di sicurezza: se per qualsiasi motivo non è stato inizializzato, lo fa al volo
@@ -82,5 +74,4 @@ public static class Skills
 
         return _skillToStatMap.TryGetValue(skillName, out var stat) ? stat : "REF";
     }
-
 }
