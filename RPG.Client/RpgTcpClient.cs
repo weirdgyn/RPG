@@ -71,6 +71,7 @@ namespace RPG.Client
                 Console.WriteLine("  /attack <Bersaglio> <Arma/Abilità>    - Attacca specificando arma o abilità (es. /attack Jackie ArtiMarziali)");
                 Console.WriteLine("  /roll <Espressione> [Motivazione]     - Effettua un tiro di dadi (es. /roll 1d10+4 Iniziativa)");
                 Console.WriteLine("  /skill <NomeAbilità> [TN]             - Effettua un test di abilità (es. /skill Percezione 15)");
+                Console.WriteLine("  /chat \"<Messaggio>\" [userid]         - Chat broadcast, o privata aggiungendo l'userid dopo le virgolette");
                 Console.WriteLine("  /ping                                 - Verifica la latenza con il server (ping/pong)");
                 Console.WriteLine("  /help                                 - Mostra questo menu");
                 Console.WriteLine("  /list                                 - Elenca i giocatori online");
@@ -350,6 +351,51 @@ namespace RPG.Client
                     continue;
                 }
 
+                if (trimmedInput.StartsWith("/chat", StringComparison.OrdinalIgnoreCase))
+                {
+                    string raw = input.Trim();
+                    string rest = raw.Length > 5 ? raw[5..].Trim() : string.Empty;
+
+                    if (string.IsNullOrWhiteSpace(rest))
+                    {
+                        Console.WriteLine("[!] Uso: /chat \"<messaggio>\" [userid]");
+                        continue;
+                    }
+
+                    // Il messaggio è delimitato da virgolette: /chat "testo" [userid]
+                    int firstQuote = rest.IndexOf('"');
+                    if (firstQuote < 0)
+                    {
+                        Console.WriteLine("[!] Il messaggio deve essere racchiuso tra virgolette. Es.: /chat \"Salve a tutti\" oppure /chat \"Ti cerco\" Nome");
+                        continue;
+                    }
+                    int lastQuote = rest.LastIndexOf('"');
+                    if (lastQuote == firstQuote)
+                    {
+                        Console.WriteLine("[!] Virgolette non chiuse. Es.: /chat \"Salve a tutti\"");
+                        continue;
+                    }
+
+                    string message = rest[(firstQuote + 1)..lastQuote].Trim();
+                    string after = rest[(lastQuote + 1)..].Trim(); // eventuale userid
+
+                    if (string.IsNullOrWhiteSpace(message))
+                    {
+                        Console.WriteLine("[!] Messaggio vuoto. Uso: /chat \"<messaggio>\" [userid]");
+                        continue;
+                    }
+
+                    string? recipient = string.IsNullOrWhiteSpace(after) ? null : after;
+
+                    var chatPacket = NetworkPacket.Create(OpCode.C2S_Chat, new ChatPayload
+                    {
+                        Message = message,
+                        Recipient = recipient
+                    });
+                    await _writer.WriteLineAsync(JsonSerializer.Serialize(chatPacket));
+                    continue;
+                }
+
                 Console.WriteLine($"[!] Comando non riconosciuto: '{trimmedInput}'. Digita /help per la lista comandi.");
             }
 
@@ -460,6 +506,23 @@ namespace RPG.Client
                     break;
 
                 case OpCode.S2C_ChatMessage:
+                    var chat = packet.DeserializePayload<ChatPayload>();
+                    if (chat != null)
+                    {
+                        bool isMine = _lastKnownCharacter != null
+                            && string.Equals(_lastKnownCharacter.Handle, chat.Sender, StringComparison.OrdinalIgnoreCase);
+                        bool hasRecipient = !string.IsNullOrWhiteSpace(chat.Recipient);
+
+                        PrintServerOutput(() =>
+                        {
+                            if (hasRecipient && isMine)
+                                Console.WriteLine($"🤫 [PRIVATO → {chat.Recipient}] {chat.Message}");
+                            else if (hasRecipient)
+                                Console.WriteLine($"🤫 [PRIVATO da {chat.Sender}] {chat.Message}");
+                            else
+                                Console.WriteLine($"💬 [{chat.Sender}] {chat.Message}");
+                        });
+                    }
                     break;
 
                 case OpCode.S2C_SkillListResponse:

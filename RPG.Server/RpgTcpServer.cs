@@ -324,6 +324,61 @@ namespace RPG.Server.Services
                     }
                     break;
 
+                case OpCode.C2S_Chat:
+                    {
+                        var chatReq = packet.DeserializePayload<ChatPayload>();
+                        if (chatReq == null || string.IsNullOrWhiteSpace(chatReq.Message)) break;
+
+                        string message = chatReq.Message.Trim();
+                        string? recipient = string.IsNullOrWhiteSpace(chatReq.Recipient) ? null : chatReq.Recipient.Trim();
+
+                        // Broadcast: nessun destinatario specificato (il messaggio è già delimitato da virgolette)
+                        if (recipient == null)
+                        {
+                            var broadcast = NetworkPacket.Create(OpCode.S2C_ChatMessage, new ChatPayload
+                            {
+                                Sender = client.Character.Handle,
+                                Message = message,
+                                Recipient = null
+                            });
+
+                            foreach (var c in _connectedClients.Values.Where(c => c.IsAuthenticated))
+                            {
+                                try { await c.SendPacketAsync(broadcast); } catch { }
+                            }
+
+                            Console.WriteLine($"[CHAT] {client.Character.Handle} (broadcast): {message}");
+                            break;
+                        }
+
+                        // Privato esplicito: il destinatario è stato scritto fuori dalle virgolette
+                        var target = _connectedClients.Values.FirstOrDefault(c =>
+                            c.Id != client.Id &&
+                            c.IsAuthenticated &&
+                            c.Character.Handle.Equals(recipient, StringComparison.OrdinalIgnoreCase));
+
+                        if (target == null)
+                        {
+                            // Nessun fallback a broadcast: un privato esplicito non deve "sfuggire" in chat pubblica
+                            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"Destinatario '{recipient}' non trovato o non online." }));
+                            Console.WriteLine($"[CHAT] {client.Character.Handle} -> '{recipient}': destinatario non trovato.");
+                            break;
+                        }
+
+                        var priv = NetworkPacket.Create(OpCode.S2C_ChatMessage, new ChatPayload
+                        {
+                            Sender = client.Character.Handle,
+                            Message = message,
+                            Recipient = target.Character.Handle
+                        });
+
+                        await client.SendPacketAsync(priv);
+                        await target.SendPacketAsync(priv);
+
+                        Console.WriteLine($"[CHAT] {client.Character.Handle} -> {target.Character.Handle} (privato): {message}");
+                    }
+                    break;
+
                 case OpCode.C2S_GetSkills:
                     {
                         var skillListPayload = new SkillListResponsePayload
