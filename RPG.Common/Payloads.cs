@@ -84,3 +84,10 @@ public class RollResponsePayload
     public string Details { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
 }
+public class SkillListResponsePayload
+{
+    public string Character { get; set; } = string.Empty;
+
+    // Mappa NomeAbilità -> Livello
+    public Dictionary<string, int> Skills { get; set; } = [];
+}

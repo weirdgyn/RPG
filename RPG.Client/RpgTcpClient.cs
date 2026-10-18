@@ -356,6 +356,34 @@ namespace RPG.Client
                     }
                     break;
 
+                case OpCode.S2C_ChatMessage:
+                    break;
+
+                case OpCode.S2C_SkillListResponse:
+                    var skillListResp = packet.DeserializePayload<SkillListResponsePayload>();
+                    if (skillListResp?.Skills != null)
+                    {
+                        // Se abbiamo lo stato locale, aggiorniamo il dizionario
+                        if (_lastKnownCharacter != null)
+                        {
+                            _lastKnownCharacter.Skills = skillListResp.Skills;
+                            PrintSkillList(_lastKnownCharacter);
+                        }
+                        else
+                        {
+                            // Fallback se la scheda completa non è ancora in memoria
+                            Console.WriteLine("\n========================================");
+                            Console.WriteLine($"🧠 ELENCO ABILITÀ - {skillListResp.Character}");
+                            Console.WriteLine("----------------------------------------");
+                            foreach (var kv in skillListResp.Skills)
+                            {
+                                string statAssoc = Skills.GetStatForSkill(kv.Key);
+                                Console.WriteLine($"  - {kv.Key,-20} : Livello {kv.Value} (Stat: {statAssoc})");
+                            }
+                            Console.WriteLine("========================================");
+                        }
+                    }
+                    break;
                 default:
                     Console.WriteLine($"\n[PACKET] Ricevuto OpCode non gestito: {packet.OpCode}");
                     break;

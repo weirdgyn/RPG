@@ -10,19 +10,14 @@ using System.Text.Json;
 
 namespace RPG.Server.Services
 {
-    public class RpgTcpServer
+    public class RpgTcpServer(string ipAddress, int port)
     {
-        private readonly IPAddress _ipAddress;
-        private readonly int _port;
+        private readonly IPAddress _ipAddress = ipAddress == "0.0.0.0" ? IPAddress.Any : IPAddress.Parse(ipAddress);
+        private readonly int _port = port;
         private TcpListener? _listener;
         private readonly ConcurrentDictionary<Guid, ClientSession> _connectedClients = new();
         private bool _isRunning;
-        public RpgTcpServer(string ipAddress, int port)
-        {
-            // Supporto sia per 0.0.0.0 (tutte le interfacce) che per IP specifici (es. 127.0.0.1)
-            _ipAddress = ipAddress == "0.0.0.0" ? IPAddress.Any : IPAddress.Parse(ipAddress);
-            _port = port;
-        }
+
         public async Task StartAsync()
         {
             _listener = new TcpListener(_ipAddress, _port);
@@ -246,8 +241,6 @@ namespace RPG.Server.Services
                     }
                     break;
 
-                // --- SOTTO SWITCH (packet.OpCode) NEL SERVER ---
-
                 case OpCode.C2S_Roll:
                     {
                         var rollReq = packet.DeserializePayload<RollRequestPayload>();
@@ -275,11 +268,13 @@ namespace RPG.Server.Services
 
                 case OpCode.C2S_GetSkills:
                     {
-                        // Invia la lista delle skill del personaggio corrente
-                        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_PlayerStateUpdate, new PlayerStatePayload
+                        var skillListPayload = new SkillListResponsePayload
                         {
-                            Character = client.Character
-                        }));
+                            Character = client.Character.Handle,
+                            Skills = client.Character.Skills
+                        };
+
+                        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_SkillListResponse, skillListPayload));
                     }
                     break;
 
