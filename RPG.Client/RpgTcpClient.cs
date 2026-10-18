@@ -66,7 +66,7 @@ namespace RPG.Client
                 Console.WriteLine("----------------------------------------");
                 Console.WriteLine("  /status                               - Richiede la scheda personaggio completa");
                 Console.WriteLine("  /skills                               - Visualizza la lista delle tue abilità");
-                Console.WriteLine("  /move <X> <Y> <Z>                     - Spostati nello spazio 3D");
+                Console.WriteLine("  /move <X> <Y> [Z]                     - Spostati nello spazio 3D");
                 Console.WriteLine("  /attack <Bersaglio>                   - Attacca con l'arma equipaggiata");
                 Console.WriteLine("  /attack <Bersaglio> <Arma/Abilità>    - Attacca specificando arma o abilità (es. /attack Jackie ArtiMarziali)");
                 Console.WriteLine("  /roll <Espressione> [Motivazione]     - Effettua un tiro di dadi (es. /roll 1d10+4 Iniziativa)");
@@ -288,7 +288,7 @@ namespace RPG.Client
                     }
                     else
                     {
-                        Console.WriteLine("[!] Sintassi non valida. Usa: /move <X> <Y> <Z> (es. /move 10 0 5)");
+                        Console.WriteLine("[!] Sintassi non valida. Usa: /move <X> <Y> [Z] (es. /move 10 0 5)");
                     }
                     continue;
                 }
