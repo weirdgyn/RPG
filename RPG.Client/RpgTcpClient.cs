@@ -14,27 +14,65 @@ namespace RPG.Client
         private StreamWriter? _writer;
         private bool _isRunning;
         private PlayerState? _lastKnownCharacter;
+        // Serializza l'accesso alla console: il listener di rete e il loop dei comandi
+        // scrivono entrambi, e il prompt deve restare in fondo senza essere "seppellito"
+        // dai messaggi asincroni del server.
+        private static readonly object _consoleLock = new();
+        private bool _promptPending;
+        // True solo quando il loop dei comandi è attivo: prima (es. durante il login)
+        // i messaggi del server vengono stampati senza ripristinare il prompt.
+        private bool _commandLoopActive;
         // Completato dal listener di rete quando arriva la risposta al login
         private TaskCompletionSource<LoginResponsePayload> _loginTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private static void PrintPrompt()
+        /// <summary>
+        /// Mostra il prompt solo se non è già visibile (evita "> > " duplicati
+        /// quando il listener ha già ripristinato il prompt dopo un messaggio).
+        /// </summary>
+        private void ShowPromptIfIdle()
         {
-            Console.Write("\n> ");
+            lock (_consoleLock)
+            {
+                if (_promptPending) return;
+                Console.Write("> ");
+                _promptPending = true;
+            }
+        }
+        /// <summary>
+        /// Stampa un blocco proveniente dal server (thread del listener) e, se il loop
+        /// dei comandi è attivo, ripristina immediatamente il prompt: l'utente non resta
+        /// mai "senza prompt" dopo una risposta asincrona.
+        /// </summary>
+        private void PrintServerOutput(Action render)
+        {
+            lock (_consoleLock)
+            {
+                Console.WriteLine(); // chiude l'eventuale riga del prompt corrente
+                render();
+                if (_commandLoopActive)
+                {
+                    Console.Write("> ");
+                    _promptPending = true;
+                }
+            }
         }
         private static void PrintHelpMenu()
         {
-            Console.WriteLine("\n========================================");
-            Console.WriteLine("🎮 COMANDI DISPONIBILI - NIGHT CITY RPG");
-            Console.WriteLine("----------------------------------------");
-            Console.WriteLine("  /status                               - Richiede la scheda personaggio completa");
-            Console.WriteLine("  /skills                               - Visualizza la lista delle tue abilità");
-            Console.WriteLine("  /move <X> <Y> <Z>                     - Spostati nello spazio 3D");
-            Console.WriteLine("  /attack <Bersaglio>                   - Attacca con l'arma equipaggiata");
-            Console.WriteLine("  /attack <Bersaglio> <Arma/Abilità>    - Attacca specificando arma o abilità (es. /attack Jackie ArtiMarziali)");
-            Console.WriteLine("  /roll <Espressione> [Motivazione]     - Effettua un tiro di dadi (es. /roll 1d10+4 Iniziativa)");
-            Console.WriteLine("  /skill <NomeAbilità> [TN]             - Effettua un test di abilità (es. /skill Percezione 15)");
-            Console.WriteLine("  /help                                 - Mostra questo menu");
-            Console.WriteLine("  /exit                                 - Disconnettiti ed esci");
-            Console.WriteLine("========================================\n");
+            lock (_consoleLock)
+            {
+                Console.WriteLine("\n========================================");
+                Console.WriteLine("🎮 COMANDI DISPONIBILI - NIGHT CITY RPG");
+                Console.WriteLine("----------------------------------------");
+                Console.WriteLine("  /status                               - Richiede la scheda personaggio completa");
+                Console.WriteLine("  /skills                               - Visualizza la lista delle tue abilità");
+                Console.WriteLine("  /move <X> <Y> <Z>                     - Spostati nello spazio 3D");
+                Console.WriteLine("  /attack <Bersaglio>                   - Attacca con l'arma equipaggiata");
+                Console.WriteLine("  /attack <Bersaglio> <Arma/Abilità>    - Attacca specificando arma o abilità (es. /attack Jackie ArtiMarziali)");
+                Console.WriteLine("  /roll <Espressione> [Motivazione]     - Effettua un tiro di dadi (es. /roll 1d10+4 Iniziativa)");
+                Console.WriteLine("  /skill <NomeAbilità> [TN]             - Effettua un test di abilità (es. /skill Percezione 15)");
+                Console.WriteLine("  /help                                 - Mostra questo menu");
+                Console.WriteLine("  /exit                                 - Disconnettiti ed esci");
+                Console.WriteLine("========================================\n");
+            }
         }
         private static void PrintSkillList(PlayerState character)
         {
@@ -150,11 +188,11 @@ namespace RPG.Client
 
                 if (!loginResp.Success)
                 {
-                    Console.WriteLine($"[!] Login rifiutato: {loginResp.Message}");
+                    PrintServerOutput(() => Console.WriteLine($"[!] Login rifiutato: {loginResp.Message}"));
                     continue; // ripete il prompt con un nuovo handle
                 }
 
-                Console.WriteLine($"\n[SERVER] {loginResp.Message}");
+                PrintServerOutput(() => Console.WriteLine($"[SERVER] {loginResp.Message}"));
                 loggedIn = true;
             }
 
@@ -162,11 +200,16 @@ namespace RPG.Client
 
             PrintHelpMenu();
 
+            // D'ora in poi i messaggi del server ripristinano il prompt quando arrivano
+            _commandLoopActive = true;
+
             while (_isRunning)
             {
-                PrintPrompt();
+                ShowPromptIfIdle();
 
                 string? input = Console.ReadLine();
+                // La riga del prompt è stata "consumata" dall'input utente
+                _promptPending = false;
 
                 if (string.IsNullOrWhiteSpace(input)) { continue; }
 
@@ -232,7 +275,9 @@ namespace RPG.Client
 
                 if (trimmedInput.StartsWith("/attack", StringComparison.OrdinalIgnoreCase))
                 {
-                    string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    // Parsing dall'input ORIGINALE (non lowercased) per preservare il case
+                    // di handle, armi e abilità (es. "ArtiMarziali").
+                    string[] parts = input.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
                     if (parts.Length >= 2)
                     {
                         string targetHandle = parts[1];
@@ -269,7 +314,9 @@ namespace RPG.Client
 
                 if (trimmedInput.StartsWith("/skill", StringComparison.OrdinalIgnoreCase))
                 {
-                    string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    // Parsing dall'input ORIGINALE (non lowercased) per preservare il case
+                    // del nome dell'abilità (es. "Pistola", "ArtiMarziali").
+                    string[] parts = input.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
                     if (parts.Length >= 2)
                     {
                         string skillName = parts[1];
@@ -319,8 +366,8 @@ namespace RPG.Client
             {
                 if (_isRunning)
                 {
-                    Console.WriteLine("\n[!] Connessione al server persa.");
                     _isRunning = false;
+                    PrintServerOutput(() => Console.WriteLine("[!] Connessione al server persa."));
                 }
             }
         }
@@ -343,7 +390,7 @@ namespace RPG.Client
                     {
                         // Salva lo stato in memoria locale per i comandi /skills e consultazione rapida
                         _lastKnownCharacter = statePayload.Character;
-                        PrintCharacterStatus(_lastKnownCharacter);
+                        PrintServerOutput(() => PrintCharacterStatus(_lastKnownCharacter));
                     }
                     break;
 
@@ -351,13 +398,16 @@ namespace RPG.Client
                     var attackResp = packet.DeserializePayload<AttackResponsePayload>();
                     if (attackResp != null)
                     {
-                        Console.WriteLine($"\n⚔️ [COMBAT] {attackResp.AttackerHandle} vs {attackResp.TargetHandle}");
-                        Console.WriteLine($"   Tiro Attacco: {attackResp.AttackTotal} vs Difesa TN: {attackResp.DefenseTN}");
-                        Console.WriteLine($"   Esito       : {attackResp.Message}");
-                        if (attackResp.IsHit)
+                        PrintServerOutput(() =>
                         {
-                            Console.WriteLine($"   Stato {attackResp.TargetHandle}: {attackResp.TargetRemainingHealth} HP ({attackResp.TargetWoundStatus})");
-                        }
+                            Console.WriteLine($"⚔️ [COMBAT] {attackResp.AttackerHandle} vs {attackResp.TargetHandle}");
+                            Console.WriteLine($"   Tiro Attacco: {attackResp.AttackTotal} vs Difesa TN: {attackResp.DefenseTN}");
+                            Console.WriteLine($"   Esito       : {attackResp.Message}");
+                            if (attackResp.IsHit)
+                            {
+                                Console.WriteLine($"   Stato {attackResp.TargetHandle}: {attackResp.TargetRemainingHealth} HP ({attackResp.TargetWoundStatus})");
+                            }
+                        });
                     }
                     break;
 
@@ -365,7 +415,8 @@ namespace RPG.Client
                     var notif = packet.DeserializePayload<JsonElement>();
                     if (notif.TryGetProperty("Message", out var msgProp))
                     {
-                        Console.WriteLine($"\n📢 [NOTIFICA] {msgProp.GetString()}");
+                        string msg = msgProp.GetString() ?? string.Empty;
+                        PrintServerOutput(() => Console.WriteLine($"📢 [NOTIFICA] {msg}"));
                     }
                     break;
 
@@ -373,7 +424,7 @@ namespace RPG.Client
                     var rollResp = packet.DeserializePayload<RollResponsePayload>();
                     if (rollResp != null)
                     {
-                        Console.WriteLine($"\n🎲 [TIRO DADI] {rollResp.Message}");
+                        PrintServerOutput(() => Console.WriteLine($"🎲 [TIRO DADI] {rollResp.Message}"));
                     }
                     break;
 
@@ -382,9 +433,12 @@ namespace RPG.Client
                     if (skillResp != null)
                     {
                         string icon = skillResp.IsSuccess ? "✅" : "❌";
-                        Console.WriteLine($"\n🧠 [PROVA ABILITÀ] {skillResp.CharacterHandle} -> {skillResp.SkillName} ({skillResp.StatName})");
-                        Console.WriteLine($"   Tiro: {skillResp.TotalResult} (Stat:{skillResp.StatValue} + Lvl:{skillResp.SkillLevel} + d10:{skillResp.DiceRoll}) vs TN: {skillResp.TargetNumber}");
-                        Console.WriteLine($"   Esito: {icon} {skillResp.Message}");
+                        PrintServerOutput(() =>
+                        {
+                            Console.WriteLine($"🧠 [PROVA ABILITÀ] {skillResp.CharacterHandle} -> {skillResp.SkillName} ({skillResp.StatName})");
+                            Console.WriteLine($"   Tiro: {skillResp.TotalResult} (Stat:{skillResp.StatValue} + Lvl:{skillResp.SkillLevel} + d10:{skillResp.DiceRoll}) vs TN: {skillResp.TargetNumber}");
+                            Console.WriteLine($"   Esito: {icon} {skillResp.Message}");
+                        });
                     }
                     break;
 
@@ -399,20 +453,23 @@ namespace RPG.Client
                         if (_lastKnownCharacter != null)
                         {
                             _lastKnownCharacter.Skills = skillListResp.Skills;
-                            PrintSkillList(_lastKnownCharacter);
+                            PrintServerOutput(() => PrintSkillList(_lastKnownCharacter));
                         }
                         else
                         {
                             // Fallback se la scheda completa non è ancora in memoria
-                            Console.WriteLine("\n========================================");
-                            Console.WriteLine($"🧠 ELENCO ABILITÀ - {skillListResp.Character}");
-                            Console.WriteLine("----------------------------------------");
-                            foreach (var kv in skillListResp.Skills)
+                            PrintServerOutput(() =>
                             {
-                                string statAssoc = Skills.GetStatForSkill(kv.Key);
-                                Console.WriteLine($"  - {kv.Key,-20} : Livello {kv.Value} (Stat: {statAssoc})");
-                            }
-                            Console.WriteLine("========================================");
+                                Console.WriteLine("========================================");
+                                Console.WriteLine($"🧠 ELENCO ABILITÀ - {skillListResp.Character}");
+                                Console.WriteLine("----------------------------------------");
+                                foreach (var kv in skillListResp.Skills)
+                                {
+                                    string statAssoc = Skills.GetStatForSkill(kv.Key);
+                                    Console.WriteLine($"  - {kv.Key,-20} : Livello {kv.Value} (Stat: {statAssoc})");
+                                }
+                                Console.WriteLine("========================================");
+                            });
                         }
                     }
                     break;
@@ -424,27 +481,30 @@ namespace RPG.Client
                         bool isSelf = _lastKnownCharacter != null
                             && string.Equals(_lastKnownCharacter.Handle, movePayload.PlayerHandle, StringComparison.OrdinalIgnoreCase);
 
-                        if (movePayload.Result == GameMap.MovementResult.Success)
+                        PrintServerOutput(() =>
                         {
-                            var pos = movePayload.ActualPosition;
-                            if (isSelf)
+                            if (movePayload.Result == GameMap.MovementResult.Success)
                             {
-                                Console.WriteLine($"\n✅ [MOVIMENTO] {movePayload.Message}");
+                                var pos = movePayload.ActualPosition;
+                                if (isSelf)
+                                {
+                                    Console.WriteLine($"✅ [MOVIMENTO] {movePayload.Message}");
+                                }
+                                else
+                                {
+                                    Console.WriteLine($"📍 [MOVIMENTO] {movePayload.PlayerHandle} si è spostato a ({pos.X}, {pos.Y}, {pos.Z})");
+                                }
                             }
                             else
                             {
-                                Console.WriteLine($"\n📍 [MOVIMENTO] {movePayload.PlayerHandle} si è spostato a ({pos.X}, {pos.Y}, {pos.Z})");
+                                Console.WriteLine($"🚫 [MOVIMENTO] {movePayload.Message}");
                             }
-                        }
-                        else
-                        {
-                            Console.WriteLine($"\n🚫 [MOVIMENTO] {movePayload.Message}");
-                        }
+                        });
                     }
                     break;
-                
+
                 default:
-                    Console.WriteLine($"\n[PACKET] Ricevuto OpCode non gestito: {packet.OpCode}");
+                    PrintServerOutput(() => Console.WriteLine($"[PACKET] Ricevuto OpCode non gestito: {packet.OpCode}"));
                     break;
             }
         }

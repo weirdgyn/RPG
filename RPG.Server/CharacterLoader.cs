@@ -27,6 +27,7 @@ namespace RPG.Server.Services
                     var character = JsonSerializer.Deserialize<PlayerState>(json);
                     if (character != null)
                     {
+                        NormalizeSkills(character);
                         Console.WriteLine($"[CHAR] -> SUCCESSO: Scheda di '{handle}' caricata dal file di salvataggio esistente.");
                         return character;
                     }
@@ -71,6 +72,7 @@ namespace RPG.Server.Services
             newChar.Handle = handle;
             newChar.Health.MaxHealth = newChar.Stats.BODY * 5;
             newChar.Health.CurrentHealth = newChar.Health.MaxHealth;
+            NormalizeSkills(newChar);
 
             // 3. Salvataggio forzato e persistente su disco del nuovo personaggio
             SaveCharacter(newChar, directoryPath);
@@ -95,6 +97,23 @@ namespace RPG.Server.Services
                 Console.WriteLine($"[CHAR] -> ERRORE CRITICO salvataggio scheda di {character.Handle}: {ex.Message}");
             }
         }
+        // La deserializzazione JSON sostituisce il Dictionary delle abilità perdendo il
+        // comparer OrdinalIgnoreCase dell'initializer di PlayerState (diventa case-sensitive).
+        // Ricostruiamo il dizionario per garantire lookup case-insensitive in tutto il server.
+        private static void NormalizeSkills(PlayerState character)
+        {
+            if (character.Skills == null || character.Skills.Count == 0)
+            {
+                character.Skills = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                return;
+            }
+
+            if (character.Skills.Comparer is StringComparer { } sc && ReferenceEquals(sc, StringComparer.OrdinalIgnoreCase))
+                return;
+
+            character.Skills = new Dictionary<string, int>(character.Skills, StringComparer.OrdinalIgnoreCase);
+        }
+
         private static PlayerState GenerateRandomCharacterWithDice()
         {
             var character = new PlayerState();
