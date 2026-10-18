@@ -110,11 +110,12 @@ namespace RPG.Server.Services
             character.Stats.EMP = (int)GameDice.Roll("2d4+2").Total;
 
             character.Skills["Pistola"] = 2;
+            character.Skills["ArtiMarziali"] = 2;
             character.Skills["Schivare"] = 2;
             character.Skills["Streetwise"] = 1;
 
-            // Aggiungiamo un'arma di base alla lista Weapons
-            var defaultPistol = new Weapon
+            // Arma 1: Pistola da Fuoco
+            var pistol = new Weapon
             {
                 Id = "sternmeyer_35",
                 Name = "Sternmeyer 35",
@@ -124,8 +125,22 @@ namespace RPG.Server.Services
                 OptimalRangeMeters = 50
             };
 
-            character.Weapons.Add(defaultPistol);
-            character.EquippedWeapon = defaultPistol;
+            // Arma 2: Corpo a corpo / Arti Marziali
+            var unarmed = new Weapon
+            {
+                Id = "unarmed",
+                Name = "ArtiMarziali",
+                Type = WeaponType.Melee,
+                SkillName = "ArtiMarziali",
+                DamageDice = "1d6+2",
+                OptimalRangeMeters = 2
+            };
+
+            character.Weapons.Add(pistol);
+            character.Weapons.Add(unarmed);
+
+            // Di default parte con la pistola in pugno
+            character.EquippedWeapon = pistol;
 
             return character;
         }

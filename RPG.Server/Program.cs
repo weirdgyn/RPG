@@ -285,12 +285,12 @@ class Program
                 if (attackReq != null)
                 {
                     // 1. Identifica il bersaglio
-                    var targetClient = Clients.Values
+                    var targetClient = _connectedClients.Values
                         .FirstOrDefault(c => c.Character.Handle.Equals(attackReq.TargetHandle, StringComparison.OrdinalIgnoreCase));
 
                     if (targetClient == null)
                     {
-                        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"Bersaglio '{attackReq.TargetHandle}' non trovato o non online." }));
+                        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"Bersaglio '{attackReq.TargetHandle}' non trovato." }));
                         break;
                     }
 
@@ -300,51 +300,29 @@ class Program
                         break;
                     }
 
-                    // 2. Risoluzione dell'Arma da Utilizzare
-                    Weapon weaponToUse;
+                    // 2. Risoluzione pulita dall'elenco Weapons del personaggio
+                    Weapon? weaponToUse = null;
 
-                    if (string.IsNullOrWhiteSpace(attackReq.WeaponOrSkill))
+                    if (!string.IsNullOrWhiteSpace(attackReq.WeaponOrSkill))
                     {
-                        // Usa l'arma equipaggiata o fallback su corpo a corpo
-                        weaponToUse = client.Character.EquippedWeapon ?? GetUnarmedWeapon();
-                    }
-                    else
-                    {
-                        string searchKey = attackReq.WeaponOrSkill.Trim();
-
-                        // A) Cerca se il giocatore ha un'arma nell'inventario con questo nome/id
-                        var matchedWeapon = client.Character.Weapons?
-                            .FirstOrDefault(w => w.Name.Equals(searchKey, StringComparison.OrdinalIgnoreCase) ||
-                                                 w.Id.Equals(searchKey, StringComparison.OrdinalIgnoreCase));
-
-                        if (matchedWeapon != null)
-                        {
-                            weaponToUse = matchedWeapon;
-                        }
-                        else
-                        {
-                            // B) Se non è un'arma fisica in inventario, interpretiamola come Attacco con Abilità (es. ArtiMarziali, Pugni, Coltello)
-                            string statForRequestedSkill = Skills.GetStatForSkill(searchKey);
-
-                            // Determiniamo se è Melee o Ranged in base all'abilità
-                            bool isMeleeSkill = searchKey.Equals("ArtiMarziali", StringComparison.OrdinalIgnoreCase) ||
-                                                searchKey.Equals("Scherma", StringComparison.OrdinalIgnoreCase) ||
-                                                searchKey.Equals("Rissa", StringComparison.OrdinalIgnoreCase) ||
-                                                searchKey.Equals("Pugni", StringComparison.OrdinalIgnoreCase);
-
-                            weaponToUse = new Weapon
-                            {
-                                Id = $"temp_{searchKey.ToLower()}",
-                                Name = searchKey,
-                                Type = isMeleeSkill ? WeaponType.Melee : WeaponType.Ranged,
-                                SkillName = searchKey,
-                                DamageDice = isMeleeSkill ? "1d6+2" : "2d6",
-                                OptimalRangeMeters = isMeleeSkill ? 2 : 25
-                            };
-                        }
+                        string key = attackReq.WeaponOrSkill.Trim();
+                        // Cerca prima per nome dell'arma o per SkillName associata (es. "ArtiMarziali" o "Pistola")
+                        weaponToUse = client.Character.Weapons.FirstOrDefault(w =>
+                            w.Name.Equals(key, StringComparison.OrdinalIgnoreCase) ||
+                            w.Id.Equals(key, StringComparison.OrdinalIgnoreCase) ||
+                            w.SkillName.Equals(key, StringComparison.OrdinalIgnoreCase));
                     }
 
-                    // 3. Lettura Statistica e Livello Abilità per l'attacco
+                    // Fallback sull'arma equipaggiata o sulla prima arma disponibile
+                    weaponToUse ??= client.Character.EquippedWeapon ?? client.Character.Weapons.FirstOrDefault();
+
+                    if (weaponToUse == null)
+                    {
+                        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Non hai alcuna arma o opzione d'attacco disponibile!" }));
+                        break;
+                    }
+
+                    // 3. Statistica e Abilità
                     string skillName = weaponToUse.SkillName;
                     string statName = Skills.GetStatForSkill(skillName);
 
@@ -358,7 +336,7 @@ class Program
                         break;
                     }
 
-                    // 4. Calcolo Distanza 3D e TN (Distanza vs Mischia)
+                    // 4. Distanza e Calcolo TN
                     double distance = CombatRules.CalculateDistance(client.Character.Position, targetClient.Character.Position);
                     int targetNumber = 15;
                     string attackTypeDescription = "";
@@ -368,7 +346,7 @@ class Program
                         targetNumber = CombatRules.GetRangedTargetNumber(distance);
                         attackTypeDescription = $"A Distanza con {weaponToUse.Name} ({distance:F1}m) -> TN Fisso: {targetNumber}";
                     }
-                    else // WeaponType.Melee
+                    else // Melee
                     {
                         if (distance > 2.5)
                         {
@@ -384,7 +362,7 @@ class Program
                         attackTypeDescription = $"In Mischia con {weaponToUse.Name} -> Difesa Bersaglio (REF {targetRef} + Schivare {targetDodge}): TN {targetNumber}";
                     }
 
-                    // 5. Tiro Attacco e Calcolo Danno
+                    // 5. Tiro Attacco e Danno
                     var roll = GameDice.Roll("1d10");
                     int diceVal = (int)roll.Total;
                     int attackTotal = attackerStat + attackerSkillLvl + attackerPenalty + diceVal;
@@ -403,7 +381,7 @@ class Program
 
                     Console.WriteLine($"[COMBAT] {client.Character.Handle} attacca {targetClient.Character.Handle} usando '{weaponToUse.Name}'. {attackTypeDescription}. Tiro: {attackTotal} vs TN {targetNumber} -> {(isHit ? $"COLPITO ({damageDealt} dmg)" : "MANCATO")}");
 
-                    // 6. Notifica Esito a entrambi i giocatori
+                    // 6. Invio Risultati
                     var respPayload = new AttackResponsePayload
                     {
                         AttackerHandle = client.Character.Handle,

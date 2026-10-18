@@ -17,5 +17,31 @@
     "ArtiMarziali": 2,
     "Streetwise": 2,
     "RiparareArmi": 1
+  },
+  "Weapons": [
+    {
+      "Id": "sternmeyer_35",
+      "Name": "Pistola Sternmeyer 35",
+      "Type": 0,
+      "SkillName": "Pistola",
+      "DamageDice": "2d6",
+      "OptimalRangeMeters": 50
+    },
+    {
+      "Id": "unarmed",
+      "Name": "ArtiMarziali",
+      "Type": 1,
+      "SkillName": "ArtiMarziali",
+      "DamageDice": "1d6+2",
+      "OptimalRangeMeters": 2
+    }
+  ],
+  "EquippedWeapon": {
+    "Id": "sternmeyer_35",
+    "Name": "Pistola Sternmeyer 35",
+    "Type": 0,
+    "SkillName": "Pistola",
+    "DamageDice": "2d6",
+    "OptimalRangeMeters": 50
   }
 }
