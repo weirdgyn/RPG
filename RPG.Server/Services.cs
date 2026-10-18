@@ -412,6 +412,43 @@ namespace RPG.Server.Services
                     }
                     break;
 
+                // --- SOTTO SWITCH (packet.OpCode) NEL SERVER ---
+
+                case OpCode.C2S_Roll:
+                    {
+                        var rollReq = packet.DeserializePayload<RollRequestPayload>();
+                        string expr = string.IsNullOrWhiteSpace(rollReq?.DiceExpression) ? "1d10" : rollReq.DiceExpression;
+                        string reason = rollReq?.Reason ?? "Tiro generico";
+
+                        var rollResult = GameDice.Roll(expr);
+                        int total = (int)rollResult.Total;
+
+                        Console.WriteLine($"[ROLL] {client.Character.Handle} tira {expr} ({reason}): {total}");
+
+                        var resp = new RollResponsePayload
+                        {
+                            RollerHandle = client.Character.Handle,
+                            DiceExpression = expr,
+                            TotalResult = total,
+                            Message = $"{client.Character.Handle} tira [{expr}] ({reason}) ed ottiene: {total}"
+                        };
+
+                        var packetResp = NetworkPacket.Create(OpCode.S2C_RollResult, resp);
+                        // Notifica a tutti i client nella stanza (inclusi gli altri)
+                        await BroadcastPacketAsync(packetResp);
+                    }
+                    break;
+
+                case OpCode.C2S_GetSkills:
+                    {
+                        // Invia la lista delle skill del personaggio corrente
+                        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_PlayerStateUpdate, new PlayerStatePayload
+                        {
+                            Character = client.Character
+                        }));
+                    }
+                    break;
+
                 default:
                     Console.WriteLine($"[SERVER] OpCode sconosciuto ricevuto: {packet.OpCode}");
                     break;

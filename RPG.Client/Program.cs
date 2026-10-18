@@ -1,5 +1,4 @@
-﻿// Importiamo l'assembly condiviso con i contratti
-using CommandLine;
+﻿using CommandLine;
 
 namespace RPG.Client;
 

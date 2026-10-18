@@ -93,3 +93,16 @@ public class AttackResponsePayload
     public string TargetWoundStatus { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
 }
+public class RollRequestPayload
+{
+    public string DiceExpression { get; set; } = "1d10";
+    public string Reason { get; set; } = string.Empty;
+}
+public class RollResponsePayload
+{
+    public string RollerHandle { get; set; } = string.Empty;
+    public string DiceExpression { get; set; } = string.Empty;
+    public int TotalResult { get; set; }
+    public string Details { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+}
