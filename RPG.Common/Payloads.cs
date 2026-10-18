@@ -76,11 +76,11 @@ public class SkillCheckResponsePayload
 
 public class AttackRequestPayload
 {
-    public string TargetHandle { get; set; } = string.Empty; // Nome del bersaglio
-    public string SkillName { get; set; } = "Pistola";       // Abilità usata per l'arma
-    public string WeaponDice { get; set; } = "2d6";           // Dadi danno dell'arma (es. "2d6", "3d6")
-}
+    public string TargetHandle { get; set; } = string.Empty; // Nome del bersaglio!
 
+    // Opzionale: specifica l'arma o l'abilità da usare per questo attacco
+    public string? WeaponOrSkill { get; set; }
+}
 public class AttackResponsePayload
 {
     public string AttackerHandle { get; set; } = string.Empty;

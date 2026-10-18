@@ -47,17 +47,42 @@ class Program
                 break;
 
             case OpCode.S2C_PlayerStateUpdate:
-                var stateResp = packet.DeserializePayload<PlayerStatePayload>();
-                var c = stateResp?.Character;
-                if (c != null)
+                var statePayload = packet.DeserializePayload<PlayerStatePayload>();
+                if (statePayload?.Character != null)
                 {
-                    Console.WriteLine("\n=== [SCHEDA PERSONAGGIO] ===");
-                    Console.WriteLine($" Nome/Handle : {c.Handle} ({c.Role})");
-                    Console.WriteLine($" Salute      : {c.Health.CurrentHealth}/{c.Health.MaxHealth} HP -> Stato: {c.Health.GetWoundStatusDescription()}");
-                    Console.WriteLine($" Statistiche : INT:{c.Stats.INT} | REF:{c.Stats.REF} | TECH:{c.Stats.TECH} | COOL:{c.Stats.COOL}");
-                    Console.WriteLine($"               ATTR:{c.Stats.ATTR} | MA:{c.Stats.MA} | BODY:{c.Stats.BODY} | EMP:{c.Stats.EMP}");
-                    Console.WriteLine($" Posizione   : X: {c.Position.X}, Y: {c.Position.Y}. Z: {c.Position.Z}");
-                    Console.WriteLine("=============================");
+                    var c = statePayload.Character;
+                    Console.WriteLine("\n========================================");
+                    Console.WriteLine($"📋 SCHEDA PERSONAGGIO: {c.Handle}");
+                    Console.WriteLine("----------------------------------------");
+                    Console.WriteLine($" Stats -> INT:{c.Stats.INT} | REF:{c.Stats.REF} | TECH:{c.Stats.TECH} | COOL:{c.Stats.COOL}");
+                    Console.WriteLine($"          ATTR:{c.Stats.ATTR} | MA:{c.Stats.MA} | BODY:{c.Stats.BODY} | EMP:{c.Stats.EMP}");
+                    Console.WriteLine($" Salute -> {c.Health.CurrentHealth} / {c.Health.MaxHealth} ({c.Health.GetWoundStatusDescription()})");
+
+                    // Stampa Arma Equipaggiata
+                    if (c.EquippedWeapon != null)
+                    {
+                        Console.WriteLine($" ⚔️ Arma Impugnata: {c.EquippedWeapon.Name} [{c.EquippedWeapon.Type}] (Danno: {c.EquippedWeapon.DamageDice}, Skill: {c.EquippedWeapon.SkillName})");
+                    }
+                    else
+                    {
+                        Console.WriteLine(" ⚔️ Arma Impugnata: Nessuna (Corpo a corpo / Pugni)");
+                    }
+
+                    // Stampa Inventario Armi
+                    Console.WriteLine(" 🎒 Armi in Inventario:");
+                    if (c.Weapons != null && c.Weapons.Count > 0)
+                    {
+                        foreach (var w in c.Weapons)
+                        {
+                            string marker = (c.EquippedWeapon != null && c.EquippedWeapon.Id == w.Id) ? " (EQUIPAGGIATA)" : "";
+                            Console.WriteLine($"   - {w.Name} [{w.Type}] | Danno: {w.DamageDice} | Skill: {w.SkillName}{marker}");
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine("   (Nessuna arma nell'inventario)");
+                    }
+                    Console.WriteLine("========================================");
                 }
                 break;
 
@@ -96,6 +121,7 @@ class Program
                     Console.WriteLine("----------------------------------------");
                 }
                 break;
+            
             case OpCode.S2C_AttackResult:
                 var atkResp = packet.DeserializePayload<AttackResponsePayload>();
                 if (atkResp != null)
@@ -196,7 +222,7 @@ class Program
             Console.WriteLine(" - Scrivi '/roll <espressione>' per lanciare i dadi.\n");
             Console.WriteLine(" - Scrivi '/move <X,Y,Z>' per spostarti a una nuova posizione (es. /move 10,5,3).\n");
             Console.WriteLine(" - Scrivi '/skill <NomeAbilità> <TN>' per eseguire un controllo di abilità.\n");
-            Console.WriteLine(" - Scrivi '/attack <NomeBersaglio> <NomeAbilita> [Dadi]' per attaccare un bersaglio (es. /attack mike Pistola 2d6).\n");
+            Console.WriteLine(" - Scrivi '/attack <NomeBersaglio> [Arma|Abilità]' per attaccare un bersaglio (es. /attack mike [Pistola]).\n");
             Console.WriteLine(" - Scrivi 'exit' per disconnetterti.\n");
 
             while (!cts.IsCancellationRequested)
@@ -269,32 +295,32 @@ class Program
                     }
                 }
 
-                // Sintassi: /attack <Target> [Abilità] [Dadi]  (es. /attack Jackie Pistola 2d6)
+                // Sintassi: 
+                //   /attack <Bersaglio> 
+                //   /attack <Bersaglio> <Arma_o_Abilità>
                 if (input.StartsWith("/attack ", StringComparison.OrdinalIgnoreCase))
                 {
                     string[] parts = input.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                     if (parts.Length >= 2)
                     {
                         string targetHandle = parts[1];
-                        string skillName = parts.Length >= 3 ? parts[2] : "Pistola";
-                        string weaponDice = parts.Length >= 4 ? parts[3] : "2d6";
+                        string? weaponOrSkill = parts.Length >= 3 ? parts[2] : null;
 
                         var attackPacket = NetworkPacket.Create(OpCode.C2S_Attack, new AttackRequestPayload
                         {
                             TargetHandle = targetHandle,
-                            SkillName = skillName,
-                            WeaponDice = weaponDice
+                            WeaponOrSkill = weaponOrSkill
                         });
                         await writer.WriteLineAsync(JsonSerializer.Serialize(attackPacket));
                         continue;
                     }
                     else
                     {
-                        Console.WriteLine("[!] Sintassi non valida. Usa: /attack <Bersaglio> [NomeAbilità] [DadiArma] (es. /attack Jackie Pistola 2d6)");
+                        Console.WriteLine("[!] Sintassi non valida. Usa: /attack <Bersaglio> [Arma_o_Abilità]");
+                        Console.WriteLine("    Esempi: /attack Jackie  oppure  /attack Jackie ArtiMarziali");
                         continue;
                     }
                 }
-
                 // Ogni messaggio scritto dall'utente viene impacchettato in C2S_Chat
                 var chatPacket = NetworkPacket.Create(OpCode.C2S_Chat, new ChatPayload
                 {
