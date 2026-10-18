@@ -285,7 +285,7 @@ class Program
                 if (attackReq != null)
                 {
                     // 1. Identifica il bersaglio
-                    var targetClient = _connectedClients.Values
+                    var targetClient = Clients.Values
                         .FirstOrDefault(c => c.Character.Handle.Equals(attackReq.TargetHandle, StringComparison.OrdinalIgnoreCase));
 
                     if (targetClient == null)
