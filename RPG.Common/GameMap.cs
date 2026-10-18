@@ -1,6 +1,6 @@
 ﻿using RPG.Common.Model;
 
-namespace RPG.Server.World;
+namespace RPG.Common.World;
 
 public class GameMap
 {

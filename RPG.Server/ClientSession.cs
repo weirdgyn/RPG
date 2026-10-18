@@ -12,6 +12,8 @@ namespace RPG.Server.Services
         public TcpClient TcpClient { get; }
         public StreamReader Reader { get; }
         public StreamWriter Writer { get; }
+        // Diventa true solo dopo un login riuscito; i comandi di gioco sono bloccati prima.
+        public bool IsAuthenticated { get; set; }
         public PlayerState Character { get; set; } = new();
         public ClientSession(TcpClient tcpClient)
         {

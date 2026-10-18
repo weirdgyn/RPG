@@ -3,6 +3,7 @@ using RPG.Common.Model;
 using RPG.Common.Protocol;
 using RPG.Common.Protocol.Payloads;
 using RPG.Common.Utils;
+using RPG.Common.World;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
@@ -17,6 +18,10 @@ namespace RPG.Server.Services
         private readonly int _port = port;
         private TcpListener? _listener;
         private readonly ConcurrentDictionary<Guid, ClientSession> _connectedClients = new();
+        // Mappa del mondo: valida i movimenti (confini e ostacoli)
+        private readonly GameMap _gameMap = new();
+        // Serializza le operazioni di login per rendere atomico il controllo sull'unicità dell'handle
+        private readonly object _loginLock = new();
         private bool _isRunning;
         public async Task StartAsync()
         {
@@ -75,13 +80,23 @@ namespace RPG.Server.Services
                 string handleName = !string.IsNullOrEmpty(client.Character?.Handle) ? client.Character.Handle : client.IdShort;
                 Console.WriteLine($"[SERVER] Client disconnesso: {handleName}");
 
-                // Notifica gli altri utenti nella stanza
-                var leaveNotify = NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"{handleName} ha abbandonato la rete." });
-                await BroadcastPacketAsync(leaveNotify, excludeClientId: client.Id);
+                // Notifica gli altri utenti nella stanza (solo per client che avevano effettuato il login)
+                if (client.IsAuthenticated)
+                {
+                    var leaveNotify = NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"{handleName} ha abbandonato la rete." });
+                    await BroadcastPacketAsync(leaveNotify, excludeClientId: client.Id);
+                }
             }
         }
         private async Task ProcessPacketAsync(ClientSession client, NetworkPacket packet)
         {
+            // Gate di autenticazione: prima del login sono ammessi solo i pacchetti di login
+            if (packet.OpCode != OpCode.C2S_Login && !client.IsAuthenticated)
+            {
+                await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Devi effettuare il login prima di poter usare i comandi." }));
+                return;
+            }
+
             switch (packet.OpCode)
             {
                 case OpCode.C2S_Login:
@@ -93,9 +108,41 @@ namespace RPG.Server.Services
                             desiredHandle = $"Punk_{client.IdShort}";
                         }
 
-                        // Caricamento o generazione autoritativa tramite CharacterLoader e file JSON
-                        client.Character = CharacterLoader.LoadOrGenerateCharacter(desiredHandle);
-                        client.Character.PlayerId = client.Id.ToString();
+                        // Sezione sincrona nel lock: controllo unicità handle + caricamento scheda.
+                        // Gli await sono fuori dal lock (non ammessi al suo interno).
+                        LoginResponsePayload? denial = null;
+                        lock (_loginLock)
+                        {
+                            // Unicità dell'handle: rifiuta se un altro client online usa già lo stesso nome
+                            bool duplicateHandle = _connectedClients.Values.Any(c =>
+                                c.Id != client.Id &&
+                                !string.IsNullOrEmpty(c.Character.Handle) &&
+                                c.Character.Handle.Equals(desiredHandle, StringComparison.OrdinalIgnoreCase));
+
+                            if (duplicateHandle)
+                            {
+                                Console.WriteLine($"[LOGIN] RIFIUTATO: handle '{desiredHandle}' già in uso da un altro client.");
+                                denial = new LoginResponsePayload
+                                {
+                                    Success = false,
+                                    PlayerId = string.Empty,
+                                    Message = $"L'handle '{desiredHandle}' è già in uso da un altro giocatore. Scegli un altro nome."
+                                };
+                            }
+                            else
+                            {
+                                // Caricamento o generazione autoritativa tramite CharacterLoader e file JSON
+                                client.Character = CharacterLoader.LoadOrGenerateCharacter(desiredHandle);
+                                client.Character.PlayerId = client.Id.ToString();
+                                client.IsAuthenticated = true;
+                            }
+                        }
+
+                        if (denial != null)
+                        {
+                            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_LoginResponse, denial));
+                            break;
+                        }
 
                         Console.WriteLine($"[LOGIN] Client {client.IdShort} autenticato come '{client.Character.Handle}' (HP: {client.Character.Health.CurrentHealth}/{client.Character.Health.MaxHealth})");
 
@@ -125,7 +172,7 @@ namespace RPG.Server.Services
                         if (attackReq != null)
                         {
                             var targetClient = _connectedClients.Values
-                                .FirstOrDefault(c => c.Character.Handle.Equals(attackReq.TargetHandle, StringComparison.OrdinalIgnoreCase));
+                                .FirstOrDefault(c => c.IsAuthenticated && c.Character.Handle.Equals(attackReq.TargetHandle, StringComparison.OrdinalIgnoreCase));
 
                             if (targetClient == null)
                             {
@@ -333,26 +380,47 @@ namespace RPG.Server.Services
                         var moveReq = packet.DeserializePayload<MoveRequestPayload>();
                         if (moveReq?.Position != null)
                         {
-                            // Update della posizione autoritativa sul server
-                            client.Character.Position = moveReq.Position;
+                            var requested = moveReq.Position;
+                            GameMap.MovementResult result = _gameMap.GetMovementResult(requested);
 
-                            // Salvataggio della persistenza su JSON
-                            CharacterLoader.SaveCharacter(client.Character);
-
-                            Console.WriteLine($"[MOVE] {client.Character.Handle} si è spostato a ({client.Character.Position.X:F1}, {client.Character.Position.Y:F1}, {client.Character.Position.Z:F1})");
-
-                            // Notifica di conferma al client che si è mosso
-                            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
+                            string message;
+                            if (result == GameMap.MovementResult.Success)
                             {
-                                Message = $"Posizione aggiornata a ({client.Character.Position.X:F1}, {client.Character.Position.Y:F1}, {client.Character.Position.Z:F1})"
-                            }));
+                                // Update della posizione autoritativa sul server
+                                client.Character.Position = requested;
 
-                            // Broadcast del movimento agli altri client connessi
-                            var moveBroadcast = NetworkPacket.Create(OpCode.S2C_Notification, new
+                                // Salvataggio della persistenza su JSON
+                                CharacterLoader.SaveCharacter(client.Character);
+
+                                message = $"Posizione aggiornata a ({requested.X}, {requested.Y}, {requested.Z})";
+                                Console.WriteLine($"[MOVE] {client.Character.Handle} si è spostato a ({requested.X}, {requested.Y}, {requested.Z})");
+                            }
+                            else
                             {
-                                Message = $"{client.Character.Handle} si è spostato in posizione ({client.Character.Position.X:F1}, {client.Character.Position.Y:F1}, {client.Character.Position.Z:F1})"
-                            });
-                            await BroadcastPacketAsync(moveBroadcast, excludeClientId: client.Id);
+                                // Posizione non raggiungibile: lo stato non cambia, la posizione effettiva resta quella attuale
+                                message = result == GameMap.MovementResult.OutOfBounds
+                                    ? $"Movimento bloccato: ({requested.X}, {requested.Y}, {requested.Z}) è fuori dai confini della mappa."
+                                    : $"Movimento bloccato: c'è un ostacolo in ({requested.X}, {requested.Y}, {requested.Z}).";
+                                Console.WriteLine($"[MOVE] {client.Character.Handle} movimento negato ({result}) verso ({requested.X}, {requested.Y}, {requested.Z})");
+                            }
+
+                            var movePayload = new MoveResultPayload
+                            {
+                                PlayerHandle = client.Character.Handle,
+                                RequestedPosition = requested,
+                                ActualPosition = client.Character.Position,
+                                Result = result,
+                                Message = message
+                            };
+
+                            // Notifica dell'esito al client che si è mosso (posizione effettiva + valore MovementResult)
+                            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_PlayerMoved, movePayload));
+
+                            // Broadcast del movimento agli altri client connessi solo se è riuscito
+                            if (result == GameMap.MovementResult.Success)
+                            {
+                                await BroadcastPacketAsync(NetworkPacket.Create(OpCode.S2C_PlayerMoved, movePayload), excludeClientId: client.Id);
+                            }
                         }
                     }
                     break;

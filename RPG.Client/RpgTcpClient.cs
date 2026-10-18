@@ -1,6 +1,7 @@
 ﻿using RPG.Common.Model;
 using RPG.Common.Protocol;
 using RPG.Common.Protocol.Payloads;
+using RPG.Common.World;
 using System.Net.Sockets;
 using System.Text.Json;
 
@@ -13,6 +14,8 @@ namespace RPG.Client
         private StreamWriter? _writer;
         private bool _isRunning;
         private PlayerState? _lastKnownCharacter;
+        // Completato dal listener di rete quando arriva la risposta al login
+        private TaskCompletionSource<LoginResponsePayload> _loginTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private static void PrintPrompt()
         {
             Console.Write("\n> ");
@@ -47,6 +50,42 @@ namespace RPG.Client
             }
             Console.WriteLine("========================================");
         }
+        private static void PrintCharacterStatus(PlayerState c)
+        {
+            Console.WriteLine("\n========================================");
+            Console.WriteLine($"📋 SCHEDA PERSONAGGIO: {c.Handle}");
+            Console.WriteLine("----------------------------------------");
+            Console.WriteLine($" Posizione 3D -> X:{c.Position.X:F1} | Y:{c.Position.Y:F1} | Z:{c.Position.Z:F1}");
+            Console.WriteLine($" Stats        -> INT:{c.Stats.INT} | REF:{c.Stats.REF} | TECH:{c.Stats.TECH} | COOL:{c.Stats.COOL}");
+            Console.WriteLine($"                 ATTR:{c.Stats.ATTR} | MA:{c.Stats.MA} | BODY:{c.Stats.BODY} | EMP:{c.Stats.EMP}");
+            Console.WriteLine($" Salute       -> {c.Health.CurrentHealth} / {c.Health.MaxHealth} ({c.Health.GetWoundStatusDescription()})");
+
+            if (c.EquippedWeapon != null)
+            {
+                Console.WriteLine($" ⚔️ Arma Impugnata : {c.EquippedWeapon.Name} [{c.EquippedWeapon.Type}] (Danno: {c.EquippedWeapon.DamageDice}, Skill: {c.EquippedWeapon.SkillName})");
+            }
+            else
+            {
+                Console.WriteLine(" ⚔️ Arma Impugnata : Nessuna");
+            }
+
+            Console.WriteLine(" 🎒 Armi in Inventario:");
+            if (c.Weapons != null && c.Weapons.Count > 0)
+            {
+                foreach (var w in c.Weapons)
+                {
+                    string marker = (c.EquippedWeapon != null && c.EquippedWeapon.Id == w.Id) ? " (EQUIPAGGIATA)" : "";
+                    Console.WriteLine($"   - {w.Name} [{w.Type}] | Danno: {w.DamageDice} | Skill: {w.SkillName}{marker}");
+                }
+            }
+            else
+            {
+                Console.WriteLine("   (Inventario vuoto)");
+            }
+
+            Console.WriteLine("========================================");
+
+        }
         public async Task<bool> ConnectAsync(string host, int port)
         {
             try
@@ -74,20 +113,52 @@ namespace RPG.Client
             _ = Task.Run(() => ListenToServerAsync());
 
             Console.WriteLine("\n========================================");
-            Console.Write("Inserisci il tuo Handle (nome personaggio): ");
-            
-            string? handle = Console.ReadLine();
-            
-            if (string.IsNullOrWhiteSpace(handle))
+
+            // Loop di login con retry: si ripropone l'handle finché il server non accetta (es. handle già in uso)
+            bool loggedIn = false;
+            while (!loggedIn)
             {
-                handle = $"Punk_{Guid.NewGuid().ToString()[..4]}";
+                Console.Write("Inserisci il tuo Handle (nome personaggio): ");
+
+                string? handle = Console.ReadLine();
+                if (string.IsNullOrWhiteSpace(handle))
+                {
+                    handle = $"Punk_{Guid.NewGuid().ToString()[..4]}";
+                }
+
+                _loginTcs = new TaskCompletionSource<LoginResponsePayload>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+                var loginPacket = NetworkPacket.Create(OpCode.C2S_Login, new LoginRequestPayload
+                {
+                    Username = handle.Trim()
+                });
+
+                await _writer.WriteLineAsync(JsonSerializer.Serialize(loginPacket));
+
+                // Attende la risposta del server (con timeout per non restare appesi se la connessione cade)
+                LoginResponsePayload loginResp;
+                try
+                {
+                    loginResp = await _loginTcs.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                }
+                catch (TimeoutException)
+                {
+                    Console.WriteLine("[!] Nessuna risposta dal server. Verifica la connessione e riprova.");
+                    if (!_isRunning) break;
+                    continue;
+                }
+
+                if (!loginResp.Success)
+                {
+                    Console.WriteLine($"[!] Login rifiutato: {loginResp.Message}");
+                    continue; // ripete il prompt con un nuovo handle
+                }
+
+                Console.WriteLine($"\n[SERVER] {loginResp.Message}");
+                loggedIn = true;
             }
 
-            var loginPacket = NetworkPacket.Create(OpCode.C2S_Login, new LoginRequestPayload
-            {
-                Username = handle.Trim()
-            });
-            await _writer.WriteLineAsync(JsonSerializer.Serialize(loginPacket));
+            if (!loggedIn) return; // chiusura senza login (es. connessione persa)
 
             PrintHelpMenu();
 
@@ -132,15 +203,9 @@ namespace RPG.Client
 
                 if (trimmedInput.Equals("/skills", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (_lastKnownCharacter?.Skills != null && _lastKnownCharacter.Skills.Count > 0)
-                    {
-                        PrintSkillList(_lastKnownCharacter);
-                    }
-                    else
-                    {
-                        Console.WriteLine("[*] Scheda non presente in memoria. Richiesta al server in corso...");
-                        await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetStatus, new { })));
-                    }
+                    // Richiesta autoritativa delle abilità al server
+                    // (risposta gestita nel case S2C_SkillListResponse)
+                    await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetSkills, new { })));
                     continue;
                 }
 
@@ -267,7 +332,8 @@ namespace RPG.Client
                     var loginResp = packet.DeserializePayload<LoginResponsePayload>();
                     if (loginResp != null)
                     {
-                        Console.WriteLine($"\n[SERVER] {loginResp.Message}");
+                        // Sblocca il loop di login in RunLoopAsync, che gestisce la visualizzazione e il retry
+                        _loginTcs.TrySetResult(loginResp);
                     }
                     break;
 
@@ -276,39 +342,8 @@ namespace RPG.Client
                     if (statePayload?.Character != null)
                     {
                         // Salva lo stato in memoria locale per i comandi /skills e consultazione rapida
-                        
-                        var c = statePayload.Character;
-                        Console.WriteLine("\n========================================");
-                        Console.WriteLine($"📋 SCHEDA PERSONAGGIO: {c.Handle}");
-                        Console.WriteLine("----------------------------------------");
-                        Console.WriteLine($" Posizione 3D -> X:{c.Position.X:F1} | Y:{c.Position.Y:F1} | Z:{c.Position.Z:F1}");
-                        Console.WriteLine($" Stats        -> INT:{c.Stats.INT} | REF:{c.Stats.REF} | TECH:{c.Stats.TECH} | COOL:{c.Stats.COOL}");
-                        Console.WriteLine($"                 ATTR:{c.Stats.ATTR} | MA:{c.Stats.MA} | BODY:{c.Stats.BODY} | EMP:{c.Stats.EMP}");
-                        Console.WriteLine($" Salute       -> {c.Health.CurrentHealth} / {c.Health.MaxHealth} ({c.Health.GetWoundStatusDescription()})");
-
-                        if (c.EquippedWeapon != null)
-                        {
-                            Console.WriteLine($" ⚔️ Arma Impugnata : {c.EquippedWeapon.Name} [{c.EquippedWeapon.Type}] (Danno: {c.EquippedWeapon.DamageDice}, Skill: {c.EquippedWeapon.SkillName})");
-                        }
-                        else
-                        {
-                            Console.WriteLine(" ⚔️ Arma Impugnata : Nessuna");
-                        }
-
-                        Console.WriteLine(" 🎒 Armi in Inventario:");
-                        if (c.Weapons != null && c.Weapons.Count > 0)
-                        {
-                            foreach (var w in c.Weapons)
-                            {
-                                string marker = (c.EquippedWeapon != null && c.EquippedWeapon.Id == w.Id) ? " (EQUIPAGGIATA)" : "";
-                                Console.WriteLine($"   - {w.Name} [{w.Type}] | Danno: {w.DamageDice} | Skill: {w.SkillName}{marker}");
-                            }
-                        }
-                        else
-                        {
-                            Console.WriteLine("   (Inventario vuoto)");
-                        }
-                        Console.WriteLine("========================================");
+                        _lastKnownCharacter = statePayload.Character;
+                        PrintCharacterStatus(_lastKnownCharacter);
                     }
                     break;
 
@@ -378,6 +413,32 @@ namespace RPG.Client
                                 Console.WriteLine($"  - {kv.Key,-20} : Livello {kv.Value} (Stat: {statAssoc})");
                             }
                             Console.WriteLine("========================================");
+                        }
+                    }
+                    break;
+
+                case OpCode.S2C_PlayerMoved:
+                    var movePayload = packet.DeserializePayload<MoveResultPayload>();
+                    if (movePayload != null)
+                    {
+                        bool isSelf = _lastKnownCharacter != null
+                            && string.Equals(_lastKnownCharacter.Handle, movePayload.PlayerHandle, StringComparison.OrdinalIgnoreCase);
+
+                        if (movePayload.Result == GameMap.MovementResult.Success)
+                        {
+                            var pos = movePayload.ActualPosition;
+                            if (isSelf)
+                            {
+                                Console.WriteLine($"\n✅ [MOVIMENTO] {movePayload.Message}");
+                            }
+                            else
+                            {
+                                Console.WriteLine($"\n📍 [MOVIMENTO] {movePayload.PlayerHandle} si è spostato a ({pos.X}, {pos.Y}, {pos.Z})");
+                            }
+                        }
+                        else
+                        {
+                            Console.WriteLine($"\n🚫 [MOVIMENTO] {movePayload.Message}");
                         }
                     }
                     break;

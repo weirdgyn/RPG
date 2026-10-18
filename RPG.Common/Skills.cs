@@ -1,4 +1,5 @@
 ﻿using System.Text.Json;
+using RPG.Common.Utils;
 
 namespace RPG.Common.Model;
 
@@ -33,12 +34,12 @@ public static class Skills
 
         try
         {
-            string fullPath = Path.GetFullPath(filePath);
+            string fullPath = DataPaths.Resolve(filePath);
             Console.WriteLine($"[CONFIG] Tentativo di caricamento mappa abilità da: {fullPath}");
 
-            if (File.Exists(filePath))
+            if (File.Exists(fullPath))
             {
-                string json = File.ReadAllText(filePath);
+                string json = File.ReadAllText(fullPath);
                 var loadedMap = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
 
                 if (loadedMap != null && loadedMap.Count > 0)

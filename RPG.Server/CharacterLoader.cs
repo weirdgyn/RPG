@@ -7,11 +7,12 @@ namespace RPG.Server.Services
     public static class CharacterLoader
     {
         private const string CharactersFolder = "Data/Characters";
+        private const string DefaultTemplatePath = "Data/Archetypes/DefaultCharacter.json";
         private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
         public static PlayerState LoadOrGenerateCharacter(string handle, string directoryPath = CharactersFolder)
         {
             // Risolviamo i percorsi per avere chiarezza nei log
-            string absoluteDir = Path.GetFullPath(directoryPath);
+            string absoluteDir = DataPaths.Resolve(directoryPath);
             Directory.CreateDirectory(absoluteDir);
 
             string userFilePath = Path.Combine(absoluteDir, $"{handle}.json");
@@ -41,29 +42,28 @@ namespace RPG.Server.Services
             }
 
             // 2. Cerchiamo il template di default
-            string defaultTemplatePath = "Data/DefaultCharacter.json";
-            string absoluteTemplatePath = Path.GetFullPath(defaultTemplatePath);
+            string absoluteTemplatePath = DataPaths.Resolve(DefaultTemplatePath);
             PlayerState newChar;
 
             Console.WriteLine($"[CHAR] Ricerca template di default in: {absoluteTemplatePath}");
 
-            if (File.Exists(defaultTemplatePath))
+            if (File.Exists(absoluteTemplatePath))
             {
                 try
                 {
-                    string templateJson = File.ReadAllText(defaultTemplatePath);
+                    string templateJson = File.ReadAllText(absoluteTemplatePath);
                     newChar = JsonSerializer.Deserialize<PlayerState>(templateJson) ?? new PlayerState();
-                    Console.WriteLine($"[CHAR] -> SUCCESSO: Creato nuovo personaggio basato sul template '{defaultTemplatePath}'.");
+                    Console.WriteLine($"[CHAR] -> SUCCESSO: Creato nuovo personaggio basato sul template '{absoluteTemplatePath}'.");
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[CHAR] -> ERRORE lettura template '{defaultTemplatePath}': {ex.Message}. Utilizzo generazione dadi.");
+                    Console.WriteLine($"[CHAR] -> ERRORE lettura template '{absoluteTemplatePath}': {ex.Message}. Utilizzo generazione dadi.");
                     newChar = GenerateRandomCharacterWithDice();
                 }
             }
             else
             {
-                Console.WriteLine($"[CHAR] -> Template '{defaultTemplatePath}' non trovato. Generazione statistiche casuali con dadi.");
+                Console.WriteLine($"[CHAR] -> Template '{absoluteTemplatePath}' non trovato. Generazione statistiche casuali con dadi.");
                 newChar = GenerateRandomCharacterWithDice();
             }
 
@@ -81,7 +81,7 @@ namespace RPG.Server.Services
         {
             try
             {
-                string absoluteDir = Path.GetFullPath(directoryPath);
+                string absoluteDir = DataPaths.Resolve(directoryPath);
                 Directory.CreateDirectory(absoluteDir);
 
                 string filePath = Path.Combine(absoluteDir, $"{character.Handle}.json");

@@ -1,5 +1,5 @@
 ﻿using RPG.Common.Model;
-using static RPG.Server.World.GameMap;
+using static RPG.Common.World.GameMap;
 
 namespace RPG.Common.Protocol.Payloads;
 // Usato sia per C2S che per S2C
@@ -26,6 +26,18 @@ public class MoveRequestPayload
 {
     // Coordinate assolute o delta (qui usiamo coordinate di destinazione assolute per semplicità)
     public Position3D Position { get; set; } = new();
+}
+public class MoveResultPayload
+{
+    public string PlayerHandle { get; set; } = string.Empty;
+    // Posizione richiesta dal giocatore
+    public Position3D RequestedPosition { get; set; } = new();
+    // Posizione effettivamente raggiunta (== richiesta se il movimento è riuscito)
+    public Position3D ActualPosition { get; set; } = new();
+    // Esito della validazione lato server (Success / OutOfBounds / ObstacleInTheWay)
+    public MovementResult Result { get; set; } = MovementResult.Success;
+    public bool IsSuccess => Result == MovementResult.Success;
+    public string Message { get; set; } = string.Empty;
 }
 public class SkillCheckRequestPayload
 {
