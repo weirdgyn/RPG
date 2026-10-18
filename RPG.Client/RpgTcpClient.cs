@@ -71,13 +71,13 @@ namespace RPG.Client
         {
             if (_reader == null || _writer == null) return;
 
-            // 1. Avvia l'ascolto dei pacchetti dal server in background
             _ = Task.Run(() => ListenToServerAsync());
 
-            // 2. Login interattivo
             Console.WriteLine("\n========================================");
             Console.Write("Inserisci il tuo Handle (nome personaggio): ");
+            
             string? handle = Console.ReadLine();
+            
             if (string.IsNullOrWhiteSpace(handle))
             {
                 handle = $"Punk_{Guid.NewGuid().ToString()[..4]}";
@@ -89,17 +89,27 @@ namespace RPG.Client
             });
             await _writer.WriteLineAsync(JsonSerializer.Serialize(loginPacket));
 
-            // 3. Guida comandi
             PrintHelpMenu();
-            PrintPrompt();
 
-            // 4. Loop principale di input console
             while (_isRunning)
             {
-                string? input = Console.ReadLine();
-                if (string.IsNullOrWhiteSpace(input)) { PrintPrompt(); continue; }
+                PrintPrompt();
 
-                string trimmedInput = input.Trim();
+                string? input = Console.ReadLine();
+
+                if (string.IsNullOrWhiteSpace(input)) { continue; }
+
+                string trimmedInput = input.Trim().ToLower();
+
+                if(trimmedInput.Equals("/ping", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if(trimmedInput.Equals("/list", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
 
                 if (trimmedInput.Equals("/exit", StringComparison.OrdinalIgnoreCase))
                 {
@@ -110,11 +120,9 @@ namespace RPG.Client
                 if (trimmedInput.Equals("/help", StringComparison.OrdinalIgnoreCase))
                 {
                     PrintHelpMenu();
-                    PrintPrompt();
                     continue;
                 }
 
-                // --- COMANDO: /status (Richiede e mostra la scheda completa) ---
                 if (trimmedInput.Equals("/status", StringComparison.OrdinalIgnoreCase))
                 {
                     // Invia al server la richiesta esplicita di aggiornamento stato
@@ -122,13 +130,11 @@ namespace RPG.Client
                     continue;
                 }
 
-                // --- COMANDO: /skills (PLURALE: Mostra SOLTANTO la lista abilità) ---
                 if (trimmedInput.Equals("/skills", StringComparison.OrdinalIgnoreCase))
                 {
                     if (_lastKnownCharacter?.Skills != null && _lastKnownCharacter.Skills.Count > 0)
                     {
                         PrintSkillList(_lastKnownCharacter);
-                        PrintPrompt();
                     }
                     else
                     {
@@ -138,7 +144,6 @@ namespace RPG.Client
                     continue;
                 }
 
-                // --- COMANDO: /move X Y Z ---
                 if (trimmedInput.StartsWith("/move", StringComparison.OrdinalIgnoreCase))
                 {
                     string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -157,11 +162,9 @@ namespace RPG.Client
                     {
                         Console.WriteLine("[!] Sintassi non valida. Usa: /move <X> <Y> <Z> (es. /move 10 0 5)");
                     }
-                    PrintPrompt();
                     continue;
                 }
 
-                // --- COMANDO: /attack <Target> [WeaponOrSkill] ---
                 if (trimmedInput.StartsWith("/attack", StringComparison.OrdinalIgnoreCase))
                 {
                     string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -181,11 +184,9 @@ namespace RPG.Client
                     {
                         Console.WriteLine("[!] Sintassi non valida. Usa: /attack <Bersaglio> [Arma|Abilità]");
                     }
-                    PrintPrompt();
                     continue;
                 }
 
-                // --- COMANDO: /roll o /rool ---
                 if (trimmedInput.StartsWith("/roll", StringComparison.OrdinalIgnoreCase))
                 {
                     string[] parts = trimmedInput.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
@@ -198,11 +199,9 @@ namespace RPG.Client
                         Reason = reason
                     });
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(rollPacket));
-                    PrintPrompt();
                     continue;
                 }
 
-                // --- COMANDO: /skill (SINGOLARE: Test di Abilità, es. /skill Percezione 15) ---
                 if (trimmedInput.StartsWith("/skill", StringComparison.OrdinalIgnoreCase))
                 {
                     string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -227,13 +226,11 @@ namespace RPG.Client
                     {
                         Console.WriteLine("[!] Sintassi non valida. Usa: /skill <NomeAbilità> [Difficoltà/TN]");
                         Console.WriteLine("    Esempi: /skill Percezione 15  oppure  /skill Guidare");
-                        PrintPrompt();
                     }
                     continue;
                 }
 
                 Console.WriteLine($"[!] Comando non riconosciuto: '{trimmedInput}'. Digita /help per la lista comandi.");
-                PrintPrompt();
             }
 
             _tcpClient?.Close();
@@ -384,13 +381,11 @@ namespace RPG.Client
                         }
                     }
                     break;
+                
                 default:
                     Console.WriteLine($"\n[PACKET] Ricevuto OpCode non gestito: {packet.OpCode}");
                     break;
             }
-
-            // Ristampa il prompt per indicare che la console è in attesa di input
-            PrintPrompt();
         }
     }
 }
