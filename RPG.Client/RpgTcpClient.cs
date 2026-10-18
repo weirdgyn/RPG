@@ -264,6 +264,7 @@ namespace RPG.Client
                 if (trimmedInput.StartsWith("/move", StringComparison.OrdinalIgnoreCase))
                 {
                     string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    
                     if (parts.Length >= 4 &&
                         int.TryParse(parts[1], out int x) &&
                         int.TryParse(parts[2], out int y) &&
@@ -272,6 +273,16 @@ namespace RPG.Client
                         var movePacket = NetworkPacket.Create(OpCode.C2S_Move, new MoveRequestPayload
                         {
                             Position = new Position3D { X = x, Y = y, Z = z }
+                        });
+                        await _writer.WriteLineAsync(JsonSerializer.Serialize(movePacket));
+                    }
+                    else if(parts.Length==3 &&
+                        int.TryParse(parts[1], out int x1) &&
+                        int.TryParse(parts[2], out int y1))
+                    {
+                        var movePacket = NetworkPacket.Create(OpCode.C2S_Move, new MoveRequestPayload
+                        {
+                            Position = new Position3D { X = x1, Y = y1, Z = _lastKnownCharacter?.Position.Z ?? 0 }
                         });
                         await _writer.WriteLineAsync(JsonSerializer.Serialize(movePacket));
                     }
