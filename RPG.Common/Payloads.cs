@@ -96,3 +96,21 @@ public class SkillListResponsePayload
     // Mappa NomeAbilità -> Livello
     public Dictionary<string, int> Skills { get; set; } = [];
 }
+public class PongPayload
+{
+    public string Message { get; set; } = "Pong!";
+    // Timestamp server (UTC) utile per eventuali calcoli di latenza
+    public long ServerTimestampUtcMs { get; set; } = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+}
+public class PlayerInfoPayload
+{
+    public string Handle { get; set; } = string.Empty;
+    public string Role { get; set; } = string.Empty;
+    public int Health { get; set; }
+    public int MaxHealth { get; set; }
+    public Position3D Position { get; set; } = new();
+}
+public class PlayerListResponsePayload
+{
+    public List<PlayerInfoPayload> Players { get; set; } = new();
+}

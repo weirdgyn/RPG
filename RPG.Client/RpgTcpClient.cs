@@ -22,6 +22,8 @@ namespace RPG.Client
         // True solo quando il loop dei comandi è attivo: prima (es. durante il login)
         // i messaggi del server vengono stampati senza ripristinare il prompt.
         private bool _commandLoopActive;
+        // Timestamp dell'ultimo /ping inviato (per calcolare il RTT del Pong)
+        private DateTime _lastPingSentUtc;
         // Completato dal listener di rete quando arriva la risposta al login
         private TaskCompletionSource<LoginResponsePayload> _loginTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
         /// <summary>
@@ -69,7 +71,9 @@ namespace RPG.Client
                 Console.WriteLine("  /attack <Bersaglio> <Arma/Abilità>    - Attacca specificando arma o abilità (es. /attack Jackie ArtiMarziali)");
                 Console.WriteLine("  /roll <Espressione> [Motivazione]     - Effettua un tiro di dadi (es. /roll 1d10+4 Iniziativa)");
                 Console.WriteLine("  /skill <NomeAbilità> [TN]             - Effettua un test di abilità (es. /skill Percezione 15)");
+                Console.WriteLine("  /ping                                 - Verifica la latenza con il server (ping/pong)");
                 Console.WriteLine("  /help                                 - Mostra questo menu");
+                Console.WriteLine("  /list                                 - Elenca i giocatori online");
                 Console.WriteLine("  /exit                                 - Disconnettiti ed esci");
                 Console.WriteLine("========================================\n");
             }
@@ -215,13 +219,17 @@ namespace RPG.Client
 
                 string trimmedInput = input.Trim().ToLower();
 
-                if(trimmedInput.Equals("/ping", StringComparison.OrdinalIgnoreCase))
+                if (trimmedInput.Equals("/ping", StringComparison.OrdinalIgnoreCase))
                 {
+                    // Registra il momento dell'invio per calcolare il RTT quando arriva il Pong
+                    _lastPingSentUtc = DateTime.UtcNow;
+                    await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_Ping, new { })));
                     continue;
                 }
 
-                if(trimmedInput.Equals("/list", StringComparison.OrdinalIgnoreCase))
+                if (trimmedInput.Equals("/list", StringComparison.OrdinalIgnoreCase))
                 {
+                    await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetPlayerList, new { })));
                     continue;
                 }
 
@@ -384,6 +392,15 @@ namespace RPG.Client
                     }
                     break;
 
+                case OpCode.S2C_Pong:
+                    var pong = packet.DeserializePayload<PongPayload>();
+                    if (pong != null)
+                    {
+                        double rttMs = Math.Round((DateTime.UtcNow - _lastPingSentUtc).TotalMilliseconds, 1);
+                        PrintServerOutput(() => Console.WriteLine($"🏓 [PONG] {pong.Message} (RTT: {rttMs} ms)"));
+                    }
+                    break;
+
                 case OpCode.S2C_PlayerStateUpdate:
                     var statePayload = packet.DeserializePayload<PlayerStatePayload>();
                     if (statePayload?.Character != null)
@@ -499,6 +516,30 @@ namespace RPG.Client
                             {
                                 Console.WriteLine($"🚫 [MOVIMENTO] {movePayload.Message}");
                             }
+                        });
+                    }
+                    break;
+
+                case OpCode.S2C_PlayerList:
+                    var listResp = packet.DeserializePayload<PlayerListResponsePayload>();
+                    if (listResp != null)
+                    {
+                        PrintServerOutput(() =>
+                        {
+                            Console.WriteLine("👥 GIOCATORI ONLINE");
+                            Console.WriteLine("----------------------------------------");
+                            if (listResp.Players.Count == 0)
+                            {
+                                Console.WriteLine("  (Nessun giocatore online)");
+                            }
+                            foreach (var p in listResp.Players)
+                            {
+                                string marker = (_lastKnownCharacter != null
+                                    && string.Equals(_lastKnownCharacter.Handle, p.Handle, StringComparison.OrdinalIgnoreCase))
+                                    ? "  (tu)" : "";
+                                Console.WriteLine($"  - {p.Handle,-16}{marker,-8} [{p.Role}] HP {p.Health}/{p.MaxHealth} @ ({p.Position.X},{p.Position.Y},{p.Position.Z})");
+                            }
+                            Console.WriteLine("----------------------------------------");
                         });
                     }
                     break;

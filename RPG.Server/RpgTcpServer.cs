@@ -90,8 +90,8 @@ namespace RPG.Server.Services
         }
         private async Task ProcessPacketAsync(ClientSession client, NetworkPacket packet)
         {
-            // Gate di autenticazione: prima del login sono ammessi solo i pacchetti di login
-            if (packet.OpCode != OpCode.C2S_Login && !client.IsAuthenticated)
+            // Gate di autenticazione: prima del login sono ammessi solo login e ping (check di connettività)
+            if (packet.OpCode != OpCode.C2S_Login && packet.OpCode != OpCode.C2S_Ping && !client.IsAuthenticated)
             {
                 await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Devi effettuare il login prima di poter usare i comandi." }));
                 return;
@@ -99,6 +99,17 @@ namespace RPG.Server.Services
 
             switch (packet.OpCode)
             {
+                case OpCode.C2S_Ping:
+                    {
+                        var pong = new PongPayload
+                        {
+                            Message = $"Pong! ({DateTime.UtcNow:HH:mm:ss} UTC)"
+                        };
+                        Console.WriteLine($"[PING] Risposta Pong inviata a '{client.Character.Handle}'.");
+                        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Pong, pong));
+                    }
+                    break;
+
                 case OpCode.C2S_Login:
                     {
                         var loginReq = packet.DeserializePayload<LoginRequestPayload>();
@@ -331,6 +342,31 @@ namespace RPG.Server.Services
                         await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_PlayerStateUpdate, new PlayerStatePayload
                         {
                             Character = client.Character
+                        }));
+                    }
+                    break;
+
+                case OpCode.C2S_GetPlayerList:
+                    {
+                        // Elenco dei giocatori autenticati e online
+                        var players = _connectedClients.Values
+                            .Where(c => c.IsAuthenticated)
+                            .Select(c => new PlayerInfoPayload
+                            {
+                                Handle = c.Character.Handle,
+                                Role = c.Character.Role,
+                                Health = c.Character.Health.CurrentHealth,
+                                MaxHealth = c.Character.Health.MaxHealth,
+                                Position = c.Character.Position
+                            })
+                            .OrderBy(p => p.Handle, StringComparer.OrdinalIgnoreCase)
+                            .ToList();
+
+                        Console.WriteLine($"[LIST] {client.Character.Handle} richiede l'elenco: {players.Count} online.");
+
+                        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_PlayerList, new PlayerListResponsePayload
+                        {
+                            Players = players
                         }));
                     }
                     break;
