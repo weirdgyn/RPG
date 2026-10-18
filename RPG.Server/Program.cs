@@ -409,20 +409,6 @@ class Program
         }
     }
 
-    // Helper locale per attacchi nudi/senza armi
-    private static Weapon GetUnarmedWeapon()
-    {
-        return new Weapon
-        {
-            Id = "unarmed",
-            Name = "Pugni / Arti Marziali",
-            Type = WeaponType.Melee,
-            SkillName = "ArtiMarziali",
-            DamageDice = "1d6+2",
-            OptimalRangeMeters = 2
-        };
-    }
-
     // Funzione helper per inviare un pacchetto a tutti i client
     private static async Task BroadcastPacketAsync(NetworkPacket packet, Guid? excludeClientId = null)
     {
