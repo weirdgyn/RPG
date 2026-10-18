@@ -1,4 +1,5 @@
 ﻿// Importiamo le classi definite nell'assembly condiviso RPG.Common
+using RPG.Common;
 using RPG.Common.Model;
 using RPG.Common.Protocol;
 using RPG.Common.Protocol.Payloads;
@@ -283,35 +284,22 @@ class Program
                 var attackReq = packet.DeserializePayload<AttackRequestPayload>();
                 if (attackReq != null)
                 {
-                    // 1. Trova il bersaglio tra i client connessi
+                    // 1. Identifica il bersaglio
                     var targetClient = Clients.Values
                         .FirstOrDefault(c => c.Character.Handle.Equals(attackReq.TargetHandle, StringComparison.OrdinalIgnoreCase));
 
                     if (targetClient == null)
                     {
-                        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"Bersaglio '{attackReq.TargetHandle}' non trovato o non online." }));
+                        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"Bersaglio '{attackReq.TargetHandle}' non trovato." }));
                         break;
                     }
 
-                    if (targetClient.Id == client.Id)
-                    {
-                        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Non puoi attaccare te stesso!" }));
-                        break;
-                    }
+                    // 2. Prendi l'arma equipaggiata dall'attaccante
+                    var weapon = client.Character.EquippedWeapon ?? new Weapon();
+                    string skillName = weapon.SkillName;
+                    string statName = Skills.GetStatForSkill(skillName);
 
-                    // 2. Lettura Autoritativa Statistica + Abilità dell'Attaccante
-                    string skillName = string.IsNullOrWhiteSpace(attackReq.SkillName) ? "Pistola" : attackReq.SkillName.Trim();
-                    string statName = Skills.GetStatForSkill(skillName); // Es. Pistola -> REF
-
-                    int attackerStat = statName.ToUpper() switch
-                    {
-                        "REF" => client.Character.Stats.REF,
-                        "COOL" => client.Character.Stats.COOL,
-                        "INT" => client.Character.Stats.INT,
-                        _ => client.Character.Stats.REF
-                    };
-
-                    // Livello abilità dalla scheda salvata (0 se non la possiede)
+                    int attackerStat = client.Character.Stats.GetStatValue(statName); // REF
                     int attackerSkillLvl = client.Character.Skills.TryGetValue(skillName, out int lvl) ? lvl : 0;
                     int attackerPenalty = client.Character.Health.GetWoundPenalty();
 
@@ -321,53 +309,69 @@ class Program
                         break;
                     }
 
-                    // Tiro 1d10 per l'attacco
-                    var attackRoll = GameDice.Roll("1d10!");    // Tiro autorevole con esplosione (se 10, rilancia)
-                    int attackDiceVal = (int)attackRoll.Total;
+                    // Calcolo della distanza reale tra i due giocatori
+                    double distance = CombatRules.CalculateDistance(client.Character.Position, targetClient.Character.Position);
+                    int targetNumber = 15;
+                    string attackTypeDescription = "";
 
-                    // Formula Interlock: STAT + SKILL + WOUNDS + 1d10
-                    int attackTotal = attackerStat + attackerSkillLvl + attackerPenalty + attackDiceVal;
+                    // 3. DIRAMAZIONE REGOLE: DISTANZA VS MISCHIA
+                    if (weapon.Type == WeaponType.Ranged)
+                    {
+                        // ARMA A DISTANZA: Il TN dipende unicamente dalla distanza! Il difensore NON schiva.
+                        targetNumber = CombatRules.GetRangedTargetNumber(distance);
+                        attackTypeDescription = $"A Distanza ({distance:F1}m) -> TN Fisso: {targetNumber}";
+                    }
+                    else // WeaponType.Melee
+                    {
+                        // ARMA DA MISCHIA: Funziona solo a contatto (< 2 metri)
+                        if (distance > 2.5)
+                        {
+                            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"Troppo lontano per attaccare in mischia! Distanza: {distance:F1}m" }));
+                            break;
+                        }
 
-                    // 3. Calcolo Difesa del Bersaglio (Base 15 + REF + eventuale Schivare + Penalità Ferite)
-                    int targetRef = targetClient.Character.Stats.REF;
-                    int targetDodgeLvl = targetClient.Character.Skills.TryGetValue("Schivare", out int dLvl) ? dLvl : 0;
-                    int targetPenalty = targetClient.Character.Health.GetWoundPenalty();
+                        // In mischia il difensore applica Schivare (o Parry) + REF + Base
+                        int targetRef = targetClient.Character.Stats.REF;
+                        int targetDodge = targetClient.Character.Skills.TryGetValue("Schivare", out int dLvl) ? dLvl : 0;
+                        int targetPenalty = targetClient.Character.Health.GetWoundPenalty();
 
-                    int defenseTN = 15 + targetRef + targetDodgeLvl + targetPenalty;
+                        targetNumber = 10 + targetRef + targetDodge + targetPenalty;
+                        attackTypeDescription = $"In Mischia -> Difesa Bersaglio (REF {targetRef} + Schivare {targetDodge}): TN {targetNumber}";
+                    }
 
-                    bool isHit = attackTotal >= defenseTN;
+                    // 4. Tiro dell'Attaccante
+                    var roll = GameDice.Roll("1d10");
+                    int diceVal = (int)roll.Total;
+                    int attackTotal = attackerStat + attackerSkillLvl + attackerPenalty + diceVal;
+
+                    bool isHit = attackTotal >= targetNumber;
                     int damageDealt = 0;
 
                     if (isHit)
                     {
-                        // 4. Tiro Danno Arma
-                        string diceFormula = string.IsNullOrWhiteSpace(attackReq.WeaponDice) ? "2d6" : attackReq.WeaponDice;
-                        var damageRoll = GameDice.Roll(diceFormula);
+                        var damageRoll = GameDice.Roll(weapon.DamageDice);
                         damageDealt = (int)damageRoll.Total;
 
-                        // Applica il danno al bersaglio
                         targetClient.Character.Health.CurrentHealth = Math.Max(0, targetClient.Character.Health.CurrentHealth - damageDealt);
-
-                        // Salviamo lo stato aggiornato della salute del bersaglio su file JSON
                         CharacterLoader.SaveCharacter(targetClient.Character);
                     }
 
-                    Console.WriteLine($"[COMBAT] {client.Character.Handle} attacca {targetClient.Character.Handle} con {skillName} (Stat:{attackerStat} + Skill:{attackerSkillLvl} + Pen:{attackerPenalty} + d10:[{attackDiceVal}] = {attackTotal} vs TN {defenseTN}) -> {(isHit ? $"COLPITO per {damageDealt} danni" : "MANCATO")}");
+                    Console.WriteLine($"[COMBAT] {client.Character.Handle} usa '{weapon.Name}' [{weapon.Type}] contro {targetClient.Character.Handle}. {attackTypeDescription}. Tiro: {attackTotal} vs TN {targetNumber} -> {(isHit ? $"COLPITO ({damageDealt} dmg)" : "MANCATO")}");
 
-                    // 5. Invia esito sia all'attaccante che al bersaglio
+                    // 5. Notifica Esito
                     var respPayload = new AttackResponsePayload
                     {
                         AttackerHandle = client.Character.Handle,
                         TargetHandle = targetClient.Character.Handle,
                         AttackTotal = attackTotal,
-                        DefenseTN = defenseTN,
+                        DefenseTN = targetNumber,
                         IsHit = isHit,
                         DamageDealt = damageDealt,
                         TargetRemainingHealth = targetClient.Character.Health.CurrentHealth,
                         TargetWoundStatus = targetClient.Character.Health.GetWoundStatusDescription(),
                         Message = isHit
-                            ? $"COLPO A SEGNO! {client.Character.Handle} usa '{skillName}' e infligge {damageDealt} danni con {attackReq.WeaponDice}!"
-                            : $"MANCATO! {client.Character.Handle} fallisce l'attacco con '{skillName}' contro {targetClient.Character.Handle}."
+                            ? $"COLPO A SEGNO! {client.Character.Handle} usa {weapon.Name} e infligge {damageDealt} danni!"
+                            : $"MANCATO! {client.Character.Handle} fallisce l'attacco con {weapon.Name}."
                     };
 
                     var attackPacket = NetworkPacket.Create(OpCode.S2C_AttackResult, respPayload);

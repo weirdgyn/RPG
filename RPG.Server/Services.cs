@@ -113,6 +113,20 @@ namespace RPG.Server.Services
             character.Skills["Schivare"] = 2;
             character.Skills["Streetwise"] = 1;
 
+            // Aggiungiamo un'arma di base alla lista Weapons
+            var defaultPistol = new Weapon
+            {
+                Id = "sternmeyer_35",
+                Name = "Sternmeyer 35",
+                Type = WeaponType.Ranged,
+                SkillName = "Pistola",
+                DamageDice = "2d6",
+                OptimalRangeMeters = 50
+            };
+
+            character.Weapons.Add(defaultPistol);
+            character.EquippedWeapon = defaultPistol;
+
             return character;
         }
     }
