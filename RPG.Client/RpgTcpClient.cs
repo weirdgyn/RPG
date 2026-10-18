@@ -149,7 +149,7 @@ namespace RPG.Client
                     {
                         var movePacket = NetworkPacket.Create(OpCode.C2S_Move, new MoveRequestPayload
                         {
-                            TargetPosition = new Position3D { X = x, Y = y, Z = z }
+                            Position = new Position3D { X = x, Y = y, Z = z }
                         });
                         await _writer.WriteLineAsync(JsonSerializer.Serialize(movePacket));
                     }

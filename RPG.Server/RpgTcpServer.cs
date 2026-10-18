@@ -333,6 +333,35 @@ namespace RPG.Server.Services
                     }
                     break;
 
+                case OpCode.C2S_Move:
+                    {
+                        var moveReq = packet.DeserializePayload<MoveRequestPayload>();
+                        if (moveReq?.Position != null)
+                        {
+                            // Update della posizione autoritativa sul server
+                            client.Character.Position = moveReq.Position;
+
+                            // Salvataggio della persistenza su JSON
+                            CharacterLoader.SaveCharacter(client.Character);
+
+                            Console.WriteLine($"[MOVE] {client.Character.Handle} si è spostato a ({client.Character.Position.X:F1}, {client.Character.Position.Y:F1}, {client.Character.Position.Z:F1})");
+
+                            // Notifica di conferma al client che si è mosso
+                            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
+                            {
+                                Message = $"Posizione aggiornata a ({client.Character.Position.X:F1}, {client.Character.Position.Y:F1}, {client.Character.Position.Z:F1})"
+                            }));
+
+                            // Broadcast del movimento agli altri client connessi
+                            var moveBroadcast = NetworkPacket.Create(OpCode.S2C_Notification, new
+                            {
+                                Message = $"{client.Character.Handle} si è spostato in posizione ({client.Character.Position.X:F1}, {client.Character.Position.Y:F1}, {client.Character.Position.Z:F1})"
+                            });
+                            await BroadcastPacketAsync(moveBroadcast, excludeClientId: client.Id);
+                        }
+                    }
+                    break;
+
                 default:
                     Console.WriteLine($"[SERVER] OpCode sconosciuto ricevuto: {packet.OpCode}");
                     break;
