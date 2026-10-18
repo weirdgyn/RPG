@@ -13,6 +13,40 @@ namespace RPG.Client
         private StreamWriter? _writer;
         private bool _isRunning;
         private PlayerState? _lastKnownCharacter;
+        private static void PrintPrompt()
+        {
+            Console.Write("\n> ");
+        }
+        private static void PrintHelpMenu()
+        {
+            Console.WriteLine("\n========================================");
+            Console.WriteLine("🎮 COMANDI DISPONIBILI - NIGHT CITY RPG");
+            Console.WriteLine("----------------------------------------");
+            Console.WriteLine("  /status                               - Richiede la scheda personaggio completa");
+            Console.WriteLine("  /skills                               - Visualizza la lista delle tue abilità");
+            Console.WriteLine("  /move <X> <Y> <Z>                     - Spostati nello spazio 3D");
+            Console.WriteLine("  /attack <Bersaglio>                   - Attacca con l'arma equipaggiata");
+            Console.WriteLine("  /attack <Bersaglio> <Arma/Abilità>    - Attacca specificando arma o abilità (es. /attack Jackie ArtiMarziali)");
+            Console.WriteLine("  /roll <Espressione> [Motivazione]     - Effettua un tiro di dadi (es. /roll 1d10+4 Iniziativa)");
+            Console.WriteLine("  /skill <NomeAbilità> [TN]             - Effettua un test di abilità (es. /skill Percezione 15)");
+            Console.WriteLine("  /help                                 - Mostra questo menu");
+            Console.WriteLine("  /exit                                 - Disconnettiti ed esci");
+            Console.WriteLine("========================================\n");
+        }
+        private static void PrintSkillList(PlayerState character)
+        {
+            Console.WriteLine("\n========================================");
+            Console.WriteLine($"🧠 ELENCO ABILITÀ - {character.Handle}");
+            Console.WriteLine("----------------------------------------");
+            foreach (var kv in character.Skills)
+            {
+                string statAssoc = Skills.GetStatForSkill(kv.Key);
+                int statVal = character.Stats.GetStatValue(statAssoc);
+                int totalPool = statVal + kv.Value;
+                Console.WriteLine($"  - {kv.Key,-20} : Livello {kv.Value} ({statAssoc}: {statVal}) -> Pool Base: {totalPool}");
+            }
+            Console.WriteLine("========================================");
+        }
         public async Task<bool> ConnectAsync(string host, int port)
         {
             try
@@ -32,10 +66,6 @@ namespace RPG.Client
                 Console.WriteLine($"[!] Errore di connessione: {ex.Message}");
                 return false;
             }
-        }
-        private static void PrintPrompt()
-        {
-            Console.Write("\n> ");
         }
         public async Task RunLoopAsync()
         {
@@ -97,23 +127,14 @@ namespace RPG.Client
                 {
                     if (_lastKnownCharacter?.Skills != null && _lastKnownCharacter.Skills.Count > 0)
                     {
-                        Console.WriteLine("\n========================================");
-                        Console.WriteLine($"🧠 ELENCO ABILITÀ - {_lastKnownCharacter.Handle}");
-                        Console.WriteLine("----------------------------------------");
-                        foreach (var kv in _lastKnownCharacter.Skills)
-                        {
-                            string statAssoc = Skills.GetStatForSkill(kv.Key);
-                            int statVal = _lastKnownCharacter.Stats.GetStatValue(statAssoc);
-                            int totalPool = statVal + kv.Value;
-                            Console.WriteLine($"  - {kv.Key,-20} : Livello {kv.Value} ({statAssoc}: {statVal}) -> Pool Base: {totalPool}");
-                        }
-                        Console.WriteLine("========================================");
+                        PrintSkillList(_lastKnownCharacter);
+                        PrintPrompt();
                     }
                     else
                     {
-                        Console.WriteLine("[!] Nessuna abilità trovata o scheda non ancora caricata.");
+                        Console.WriteLine("[*] Scheda non presente in memoria. Richiesta al server in corso...");
+                        await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetStatus, new { })));
                     }
-                    PrintPrompt();
                     continue;
                 }
 
@@ -217,22 +238,6 @@ namespace RPG.Client
 
             _tcpClient?.Close();
         }
-        private static void PrintHelpMenu()
-        {
-            Console.WriteLine("\n========================================");
-            Console.WriteLine("🎮 COMANDI DISPONIBILI - NIGHT CITY RPG");
-            Console.WriteLine("----------------------------------------");
-            Console.WriteLine("  /status                               - Richiede la scheda personaggio completa");
-            Console.WriteLine("  /skills                               - Visualizza la lista delle tue abilità");
-            Console.WriteLine("  /move <X> <Y> <Z>                     - Spostati nello spazio 3D");
-            Console.WriteLine("  /attack <Bersaglio>                   - Attacca con l'arma equipaggiata");
-            Console.WriteLine("  /attack <Bersaglio> <Arma/Abilità>    - Attacca specificando arma o abilità (es. /attack Jackie ArtiMarziali)");
-            Console.WriteLine("  /roll <Espressione> [Motivazione]     - Effettua un tiro di dadi (es. /roll 1d10+4 Iniziativa)");
-            Console.WriteLine("  /skill <NomeAbilità> [TN]             - Effettua un test di abilità (es. /skill Percezione 15)");
-            Console.WriteLine("  /help                                 - Mostra questo menu");
-            Console.WriteLine("  /exit                                 - Disconnettiti ed esci");
-            Console.WriteLine("========================================\n");
-        }
         private async Task ListenToServerAsync()
         {
             try
@@ -257,7 +262,7 @@ namespace RPG.Client
                 }
             }
         }
-        private static void HandleServerPacket(NetworkPacket packet)
+        private void HandleServerPacket(NetworkPacket packet)
         {
             switch (packet.OpCode)
             {
