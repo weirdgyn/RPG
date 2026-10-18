@@ -74,6 +74,10 @@ public class AttackResponsePayload
     public int DefenseTN { get; set; }
     public bool IsHit { get; set; }
     public int DamageDealt { get; set; }
+    // Locazione di impatto (tavola d10): vuoto se l'attacco non è a segno o non applicabile
+    public string HitLocation { get; set; } = string.Empty;
+    // Moltiplicatore del danno per locazione (es. Testa = 2). 1 quando non applicabile.
+    public int DamageMultiplier { get; set; } = 1;
     public int TargetRemainingHealth { get; set; }
     public string TargetWoundStatus { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;

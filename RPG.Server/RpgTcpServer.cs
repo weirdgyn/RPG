@@ -13,8 +13,7 @@ namespace RPG.Server.Services
 {
     public class RpgTcpServer(string ipAddress, int port)
     {
-        private const string DefaultListenIpAddr = "0.0.0.0";
-        private readonly IPAddress _ipAddress = ipAddress == DefaultListenIpAddr ? IPAddress.Any : IPAddress.Parse(ipAddress);
+        private readonly IPAddress _ipAddress = ipAddress == "0.0.0.0" ? IPAddress.Any : IPAddress.Parse(ipAddress);
         private readonly int _port = port;
         private TcpListener? _listener;
         private readonly ConcurrentDictionary<Guid, ClientSession> _connectedClients = new();
@@ -241,8 +240,10 @@ namespace RPG.Server.Services
                                 targetNumber = CombatRules.GetRangedTargetNumber(distance);
                                 attackTypeDesc = $"A Distanza con {weaponToUse.Name} ({distance:F1}m) -> TN Fisso: {targetNumber}";
                             }
-                            else // Melee
+                            else if (weaponToUse.Type == Weapon.WeaponType.Melee)
                             {
+                                // TODO: la gestione dell'attacco in mischia non può essere consumata interamente in un unico scambio client/server. L'iterazione deve prevedere lo scambio di messaggi tra client e server di entrambe le parti. Chi difende deve decidere come reagire (schivare, parare, contrattaccare) e il server deve gestire la logica di risoluzione. Per ora, implementiamo un semplice check di distanza per consentire o meno l'attacco in mischia.
+
                                 if (distance > 2.5)
                                 {
                                     await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"Troppo lontano per la mischia con {weaponToUse.Name}! Distanza: {distance:F1}m" }));
@@ -256,27 +257,51 @@ namespace RPG.Server.Services
                                 targetNumber = 10 + targetRef + targetDodge + targetPenalty;
                                 attackTypeDesc = $"In Mischia con {weaponToUse.Name} -> Difesa Bersaglio (REF {targetRef} + Schivare {targetDodge}): TN {targetNumber}";
                             }
+                            else // Fallback attacco area
+                            {
+                                // TODO: gestione attacchi ad area o speciali
+                            }
 
-                            // Tiro d10 d'attacco
-                            var roll = GameDice.Roll("1d10");
-                            int diceVal = (int)roll.Total;
+                            // Tiro d10 d'attacco esplosivo (CP2020: il 10 si ritira e si somma)
+                            int diceVal = GameDice.RollExplodingD10();
                             int attackTotal = attackerStat + attackerSkillLvl + attackerPenalty + diceVal;
 
                             bool isHit = attackTotal >= targetNumber;
                             int damageDealt = 0;
+                            string hitLocationName = string.Empty;
+                            int hitMultiplier = 1;
 
                             if (isHit)
                             {
                                 var damageRoll = GameDice.Roll(weaponToUse.DamageDice);
-                                damageDealt = (int)damageRoll.Total;
+                                int rawDamage = (int)damageRoll.Total;
+
+                                // Locazione di impatto per armi a distanza (tavola d10, Testa x2)
+                                if (weaponToUse.Type == Weapon.WeaponType.Ranged)
+                                {
+                                    var loc = CombatRules.ResolveHitLocation((int)GameDice.Roll("1d10").Total);
+                                    hitLocationName = loc.Name;
+                                    hitMultiplier = loc.DamageMultiplier;
+                                }
+
+                                damageDealt = rawDamage * hitMultiplier;
 
                                 targetClient.Character.Health.CurrentHealth = Math.Max(0, targetClient.Character.Health.CurrentHealth - damageDealt);
                                 CharacterLoader.SaveCharacter(targetClient.Character); // Persistenza su JSON del bersaglio
                             }
 
-                            Console.WriteLine($"[COMBAT] {client.Character.Handle} attacca {targetClient.Character.Handle} con '{weaponToUse.Name}'. {attackTypeDesc}. Tiro: {attackTotal} vs TN {targetNumber} -> {(isHit ? $"COLPITO ({damageDealt} dmg)" : "MANCATO")}");
+                            string hitDesc = isHit
+                                ? hitLocationName.Length > 0
+                                    ? $"COLPITO ({damageDealt} dmg, Impatto: {hitLocationName}{(hitMultiplier > 1 ? $" x{hitMultiplier}" : "")})"
+                                    : $"COLPITO ({damageDealt} dmg)"
+                                : "MANCATO";
+
+                            Console.WriteLine($"[COMBAT] {client.Character.Handle} attacca {targetClient.Character.Handle} con '{weaponToUse.Name}'. {attackTypeDesc}. Tiro: {attackTotal} vs TN {targetNumber} -> {hitDesc}");
 
                             // Invio esito a entrambi
+                            string impactSuffix = hitLocationName.Length > 0
+                                ? $" Impatto: {hitLocationName}{(hitMultiplier > 1 ? $" (x{hitMultiplier})" : "")}"
+                                : "";
                             var respPayload = new AttackResponsePayload
                             {
                                 AttackerHandle = client.Character.Handle,
@@ -285,10 +310,12 @@ namespace RPG.Server.Services
                                 DefenseTN = targetNumber,
                                 IsHit = isHit,
                                 DamageDealt = damageDealt,
+                                HitLocation = hitLocationName,
+                                DamageMultiplier = hitMultiplier,
                                 TargetRemainingHealth = targetClient.Character.Health.CurrentHealth,
                                 TargetWoundStatus = targetClient.Character.Health.GetWoundStatusDescription(),
                                 Message = isHit
-                                    ? $"COLPO A SEGNO! {client.Character.Handle} usa '{weaponToUse.Name}' e infligge {damageDealt} danni ({weaponToUse.DamageDice})!"
+                                    ? $"COLPO A SEGNO! {client.Character.Handle} usa '{weaponToUse.Name}' e infligge {damageDealt} danni ({weaponToUse.DamageDice})!{impactSuffix}"
                                     : $"MANCATO! {client.Character.Handle} fallisce l'attacco con '{weaponToUse.Name}'."
                             };
 

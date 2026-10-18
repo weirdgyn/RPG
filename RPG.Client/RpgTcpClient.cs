@@ -479,6 +479,11 @@ namespace RPG.Client
                             Console.WriteLine($"   Esito       : {attackResp.Message}");
                             if (attackResp.IsHit)
                             {
+                                if (!string.IsNullOrEmpty(attackResp.HitLocation))
+                                {
+                                    string mult = attackResp.DamageMultiplier > 1 ? $" (danno x{attackResp.DamageMultiplier})" : "";
+                                    Console.WriteLine($"   Impatto     : {attackResp.HitLocation}{mult}");
+                                }
                                 Console.WriteLine($"   Stato {attackResp.TargetHandle}: {attackResp.TargetRemainingHealth} HP ({attackResp.TargetWoundStatus})");
                             }
                         });
