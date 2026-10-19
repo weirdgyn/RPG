@@ -25,7 +25,11 @@
       "Type": 1,
       "SkillName": "Pistola",
       "DamageDice": "2d6",
-      "OptimalRangeMeters": 50
+      "OptimalRangeMeters": 50,
+      "AccuracyBonus": 1,
+      "Caliber": "10mm",
+      "MagazineCapacity": 12,
+      "CurrentAmmo": 12
     },
     {
       "Id": "unarmed",
@@ -33,7 +37,9 @@
       "Type": 2,
       "SkillName": "ArtiMarziali",
       "DamageDice": "1d6+2",
-      "OptimalRangeMeters": 2
+      "OptimalRangeMeters": 2,
+      "AccuracyBonus": 1,
+      "CanParry": true
     }
   ],
   "EquippedWeapon": {
@@ -42,6 +48,46 @@
     "Type": 1,
     "SkillName": "Pistola",
     "DamageDice": "2d6",
-    "OptimalRangeMeters": 50
-  }
+    "OptimalRangeMeters": 50,
+    "AccuracyBonus": 1,
+    "Caliber": "10mm",
+    "MagazineCapacity": 12,
+    "CurrentAmmo": 12
+  },
+  "Armor": {
+    "Head": {
+      "Id": "helmet_motocross",
+      "Name": "Elmo da motocross",
+      "Location": 0,
+      "Material": 0,
+      "MaxStopPower": 4,
+      "CurrentStopPower": 4
+    },
+    "Torso": {
+      "Id": "vest_kevlar",
+      "Name": "Giubbotto antiproiettile in Kevlar",
+      "Location": 1,
+      "Material": 0,
+      "MaxStopPower": 14,
+      "CurrentStopPower": 14
+    }
+  },
+  "AmmoInventory": [
+    {
+      "Id": "ammo_10mm_std",
+      "Name": "Munizioni 10mm standard",
+      "Caliber": "10mm",
+      "Quantity": 48,
+      "Effect": 0
+    },
+    {
+      "Id": "ammo_10mm_ap",
+      "Name": "Munizioni 10mm perforanti",
+      "Caliber": "10mm",
+      "Quantity": 24,
+      "Effect": 1,
+      "DamageModifier": 0,
+      "HalvesArmorSP": true
+    }
+  ]
 }

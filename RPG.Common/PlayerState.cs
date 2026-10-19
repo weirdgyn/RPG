@@ -24,4 +24,10 @@ public class PlayerState
         DamageDice = "2d6",
         OptimalRangeMeters = 50
     };
+
+    // ARMATURA EQUIPAGGIATA (una voce per locazione, con ablazione SP)
+    public ArmorSet Armor { get; set; } = new();
+
+    // MUNIZIONI POSSEDUTE (consumabili per calibro/effetto)
+    public List<Ammo> AmmoInventory { get; set; } = new();
 }

@@ -139,7 +139,11 @@ namespace RPG.Server.Services
                 Type = Weapon.WeaponType.Ranged,
                 SkillName = "Pistola",
                 DamageDice = "2d6",
-                OptimalRangeMeters = 50
+                OptimalRangeMeters = 50,
+                AccuracyBonus = 1,
+                Caliber = "10mm",
+                MagazineCapacity = 12,
+                CurrentAmmo = 12
             };
 
             // Arma 2: Corpo a corpo / Arti Marziali
@@ -150,7 +154,9 @@ namespace RPG.Server.Services
                 Type = Weapon.WeaponType.Melee,
                 SkillName = "ArtiMarziali",
                 DamageDice = "1d6+2",
-                OptimalRangeMeters = 2
+                OptimalRangeMeters = 2,
+                AccuracyBonus = 1,
+                CanParry = true
             };
 
             character.Weapons.Add(pistol);
@@ -158,6 +164,44 @@ namespace RPG.Server.Services
 
             // Di default parte con la pistola in pugno
             character.EquippedWeapon = pistol;
+
+            // Armatura di base (per-locazione) con munizioni in inventario
+            character.Armor.SetPiece(new ArmorPiece
+            {
+                Id = "helmet_motocross",
+                Name = "Elmo da motocross",
+                Location = ArmorLocation.Head,
+                Material = ArmorMaterial.Soft,
+                MaxStopPower = 4,
+                CurrentStopPower = 4
+            });
+            character.Armor.SetPiece(new ArmorPiece
+            {
+                Id = "vest_kevlar",
+                Name = "Giubbotto antiproiettile in Kevlar",
+                Location = ArmorLocation.Torso,
+                Material = ArmorMaterial.Soft,
+                MaxStopPower = 14,
+                CurrentStopPower = 14
+            });
+
+            character.AmmoInventory.Add(new Ammo
+            {
+                Id = "ammo_10mm_std",
+                Name = "Munizioni 10mm standard",
+                Caliber = "10mm",
+                Quantity = 48,
+                Effect = AmmoEffect.Standard
+            });
+            character.AmmoInventory.Add(new Ammo
+            {
+                Id = "ammo_10mm_ap",
+                Name = "Munizioni 10mm perforanti",
+                Caliber = "10mm",
+                Quantity = 24,
+                Effect = AmmoEffect.ArmorPiercing,
+                HalvesArmorSP = true
+            });
 
             return character;
         }

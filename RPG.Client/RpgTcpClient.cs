@@ -93,6 +93,14 @@ namespace RPG.Client
             }
             Console.WriteLine("========================================");
         }
+        private static string FormatWeaponAmmo(Weapon w)
+        {
+            if (w != null && w.MagazineCapacity > 0 && !string.IsNullOrEmpty(w.Caliber))
+            {
+                return $" | Caricatore: {w.CurrentAmmo}/{w.MagazineCapacity} ({w.Caliber})";
+            }
+            return "";
+        }
         private static void PrintCharacterStatus(PlayerState c)
         {
             Console.WriteLine("\n========================================");
@@ -103,9 +111,28 @@ namespace RPG.Client
             Console.WriteLine($"                 ATTR:{c.Stats.ATTR} | MA:{c.Stats.MA} | BODY:{c.Stats.BODY} | EMP:{c.Stats.EMP}");
             Console.WriteLine($" Salute       -> {c.Health.CurrentHealth} / {c.Health.MaxHealth} ({c.Health.GetWoundStatusDescription()})");
 
+            Console.WriteLine(" 🛡️ Armatura:");
+            bool anyArmor = false;
+            if (c.Armor != null)
+            {
+                foreach (var loc in new[] { ArmorLocation.Head, ArmorLocation.Torso, ArmorLocation.Arms, ArmorLocation.Legs })
+                {
+                    var piece = c.Armor.GetPiece(loc);
+                    if (piece != null)
+                    {
+                        anyArmor = true;
+                        Console.WriteLine($"   - {loc,-5}: {piece.Name} [{piece.Material}] SP {piece.CurrentStopPower}/{piece.MaxStopPower}");
+                    }
+                }
+            }
+            if (!anyArmor)
+            {
+                Console.WriteLine("   (Nessuna armatura equipaggiata)");
+            }
+
             if (c.EquippedWeapon != null)
             {
-                Console.WriteLine($" ⚔️ Arma Impugnata : {c.EquippedWeapon.Name} [{c.EquippedWeapon.Type}] (Danno: {c.EquippedWeapon.DamageDice}, Skill: {c.EquippedWeapon.SkillName})");
+                Console.WriteLine($" ⚔️ Arma Impugnata : {c.EquippedWeapon.Name} [{c.EquippedWeapon.Type}] (Danno: {c.EquippedWeapon.DamageDice}, Skill: {c.EquippedWeapon.SkillName}{FormatWeaponAmmo(c.EquippedWeapon)})");
             }
             else
             {
@@ -118,12 +145,26 @@ namespace RPG.Client
                 foreach (var w in c.Weapons)
                 {
                     string marker = (c.EquippedWeapon != null && c.EquippedWeapon.Id == w.Id) ? " (EQUIPAGGIATA)" : "";
-                    Console.WriteLine($"   - {w.Name} [{w.Type}] | Danno: {w.DamageDice} | Skill: {w.SkillName}{marker}");
+                    Console.WriteLine($"   - {w.Name} [{w.Type}] | Danno: {w.DamageDice} | Skill: {w.SkillName}{FormatWeaponAmmo(w)}{marker}");
                 }
             }
             else
             {
                 Console.WriteLine("   (Inventario vuoto)");
+            }
+
+            Console.WriteLine(" 🔫 Munizioni:");
+            if (c.AmmoInventory != null && c.AmmoInventory.Count > 0)
+            {
+                foreach (var a in c.AmmoInventory)
+                {
+                    string effect = a.Effect == AmmoEffect.ArmorPiercing ? " (AP)" : (a.Effect == AmmoEffect.Expanding ? " (EX)" : "");
+                    Console.WriteLine($"   - {a.Name}{effect} | {a.Quantity} colpi");
+                }
+            }
+            else
+            {
+                Console.WriteLine("   (Nessuna munizione in inventario)");
             }
 
             Console.WriteLine("========================================");
