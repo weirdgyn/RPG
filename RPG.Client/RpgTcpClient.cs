@@ -772,9 +772,10 @@ namespace RPG.Client
                     });
 
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(joinPacket));
+                    continue;
                 }
 
-                if(trimmedInput.StartsWith("/link", StringComparison.OrdinalIgnoreCase))
+                if (trimmedInput.StartsWith("/link", StringComparison.OrdinalIgnoreCase))
                 {
                     string[] parts = input.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
