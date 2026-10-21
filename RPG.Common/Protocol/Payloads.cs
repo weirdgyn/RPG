@@ -19,6 +19,7 @@ public class LoginResponsePayload
 {
     public bool Success { get; set; }
     public string PlayerId { get; set; } = string.Empty;
+    public string PlayerName { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
 }
 public class CharacterStatePayload

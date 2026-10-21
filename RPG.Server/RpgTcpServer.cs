@@ -139,6 +139,7 @@ namespace RPG.Server.Services
                                 {
                                     Success = false,
                                     PlayerId = string.Empty,
+                                    PlayerName = string.Empty,
                                     Message = $"Lo username '{userName}' è già in uso da un altro giocatore. Scegli un altro nome."
                                 };
                             }
@@ -157,13 +158,16 @@ namespace RPG.Server.Services
                             break;
                         }
 
-                        Console.WriteLine($"[LOGIN] Client {client.IdShort} autenticato come '{client.Player.Username}'");
+                        Console.WriteLine($"[LOGIN] Client {client.IdShort} autenticato come '{userName}'");
+
+                        client.Player.Username = userName;
 
                         // Risposta di Login OK
                         await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_LoginResponse, new LoginResponsePayload
                         {
                             Success = true,
                             PlayerId = client.Player.PlayerId,
+                            PlayerName = client.Player.Username,
                             Message = $"Benvenuto a Night City, {client.Player.Username}!"
                         }));
 
