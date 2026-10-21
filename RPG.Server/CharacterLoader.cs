@@ -9,7 +9,7 @@ namespace RPG.Server.Services
         private const string CharactersFolder = "Data/Characters";
         private const string DefaultTemplatePath = "Data/Archetypes/DefaultCharacter.json";
         private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
-        public static PlayerState LoadOrGenerateCharacter(string handle, string directoryPath = CharactersFolder)
+        public static Character LoadOrGenerateCharacter(string handle, string directoryPath = CharactersFolder)
         {
             // Risolviamo i percorsi per avere chiarezza nei log
             string absoluteDir = DataPaths.Resolve(directoryPath);
@@ -24,7 +24,7 @@ namespace RPG.Server.Services
                 try
                 {
                     string json = File.ReadAllText(userFilePath);
-                    var character = JsonSerializer.Deserialize<PlayerState>(json);
+                    var character = JsonSerializer.Deserialize<Character>(json);
                     if (character != null)
                     {
                         NormalizeSkills(character);
@@ -44,7 +44,7 @@ namespace RPG.Server.Services
 
             // 2. Cerchiamo il template di default
             string absoluteTemplatePath = DataPaths.Resolve(DefaultTemplatePath);
-            PlayerState newChar;
+            Character newChar;
 
             Console.WriteLine($"[CHAR] Ricerca template di default in: {absoluteTemplatePath}");
 
@@ -53,7 +53,7 @@ namespace RPG.Server.Services
                 try
                 {
                     string templateJson = File.ReadAllText(absoluteTemplatePath);
-                    newChar = JsonSerializer.Deserialize<PlayerState>(templateJson) ?? new PlayerState();
+                    newChar = JsonSerializer.Deserialize<Character>(templateJson) ?? new Character();
                     Console.WriteLine($"[CHAR] -> SUCCESSO: Creato nuovo personaggio basato sul template '{absoluteTemplatePath}'.");
                 }
                 catch (Exception ex)
@@ -79,7 +79,7 @@ namespace RPG.Server.Services
 
             return newChar;
         }
-        public static void SaveCharacter(PlayerState character, string directoryPath = CharactersFolder)
+        public static void SaveCharacter(Character character, string directoryPath = CharactersFolder)
         {
             try
             {
@@ -98,9 +98,9 @@ namespace RPG.Server.Services
             }
         }
         // La deserializzazione JSON sostituisce il Dictionary delle abilità perdendo il
-        // comparer OrdinalIgnoreCase dell'initializer di PlayerState (diventa case-sensitive).
+        // comparer OrdinalIgnoreCase dell'initializer di Character (diventa case-sensitive).
         // Ricostruiamo il dizionario per garantire lookup case-insensitive in tutto il server.
-        private static void NormalizeSkills(PlayerState character)
+        private static void NormalizeSkills(Character character)
         {
             if (character.Skills == null || character.Skills.Count == 0)
             {
@@ -114,9 +114,9 @@ namespace RPG.Server.Services
             character.Skills = new Dictionary<string, int>(character.Skills, StringComparer.OrdinalIgnoreCase);
         }
 
-        private static PlayerState GenerateRandomCharacterWithDice()
+        private static Character GenerateRandomCharacterWithDice()
         {
-            var character = new PlayerState();
+            var character = new Character();
             character.Stats.INT = (int)GameDice.Roll("2d4+2").Total;
             character.Stats.REF = (int)GameDice.Roll("2d4+2").Total;
             character.Stats.TECH = (int)GameDice.Roll("2d4+2").Total;

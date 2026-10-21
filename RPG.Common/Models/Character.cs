@@ -2,13 +2,13 @@
 
 namespace RPG.Common.Models;
 
-public class PlayerState
+public class Character
 {
-    public string PlayerId { get; set; } = string.Empty;
+    public string CharacterId { get; set; } = string.Empty;
     public string Handle { get; set; } = "StreetPunk"; // Nome di strada del personaggio
     public string Role { get; set; } = "Solo";        // Solo, Netrunner, Techie, Nomad, Rockerboy, Fixer...
     // Statistiche Interlock principali (range standard 1-10)
-    public CoreStats Stats { get; set; } = new();
+    public Stats Stats { get; set; } = new();
     // Punti Ferita e Stato di Salute
     public HealthSystem Health { get; set; } = new();
     // Posizione nel mondo virtuale (per quando aggiungeremo il movimento)
@@ -16,7 +16,7 @@ public class PlayerState
     // NUOVO: Mappa delle abilità possedute (Es: "Pistola" -> 4, "RiparareArmi" -> 2)
     public Dictionary<string, int> Skills { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     // INVENTARIO ED EQUIPAGGIAMENTO
-    public List<Weapon> Weapons { get; set; } = new();
+    public List<Weapon> Weapons { get; set; } = [];
     public Weapon EquippedWeapon { get; set; } = new Weapon
     {
         Id = "default_pistol",
@@ -26,10 +26,8 @@ public class PlayerState
         DamageDice = "2d6",
         OptimalRangeMeters = 50
     };
-
     // ARMATURA EQUIPAGGIATA (una voce per locazione, con ablazione SP)
     public ArmorSet Armor { get; set; } = new();
-
     // MUNIZIONI POSSEDUTE (consumabili per calibro/effetto)
-    public List<Ammo> AmmoInventory { get; set; } = new();
+    public List<Ammo> AmmoInventory { get; set; } = [];
 }

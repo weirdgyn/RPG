@@ -1,6 +1,6 @@
 ﻿namespace RPG.Common.Models;
 
-public class CoreStats
+public class Stats
 {
     public int INT { get; set; } = 6; // Intelligenza
     public int REF { get; set; } = 6; // Riflessi (chiave per iniziativa e combattimento)
@@ -10,7 +10,6 @@ public class CoreStats
     public int MA { get; set; } = 5;   // Movimento (Movement Allowance)
     public int BODY { get; set; } = 6; // Costituzione / Forza Fisica
     public int EMP { get; set; } = 5;  // Empatia (scende con il Cyberware)
-
     /// <summary>
     /// Restituisce il valore della statistica in base al nome (es. "REF", "INT").
     /// </summary>

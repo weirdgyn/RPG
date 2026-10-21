@@ -12,7 +12,8 @@ namespace RPG.Client
         private StreamReader? _reader;
         private StreamWriter? _writer;
         private bool _isRunning;
-        private PlayerState? _lastKnownCharacter;
+        private Player? _player;
+        private Character? _lastKnownCharacter;
         // Serializza l'accesso alla console: il listener di rete e il loop dei comandi
         // scrivono entrambi, e il prompt deve restare in fondo senza essere "seppellito"
         // dai messaggi asincroni del server.
@@ -127,7 +128,7 @@ namespace RPG.Client
                     break;
 
                 case OpCode.S2C_PlayerStateUpdate:
-                    var statePayload = packet.DeserializePayload<PlayerStatePayload>();
+                    var statePayload = packet.DeserializePayload<CharacterStatePayload>();
                     if (statePayload?.Character != null)
                     {
                         // Salva lo stato in memoria locale per i comandi /skills e consultazione rapida
@@ -284,7 +285,7 @@ namespace RPG.Client
                                 string marker = (_lastKnownCharacter != null
                                     && string.Equals(_lastKnownCharacter.Handle, p.Handle, StringComparison.OrdinalIgnoreCase))
                                     ? "  (tu)" : "";
-                                Console.WriteLine($"  - {p.Handle,-16}{marker,-8} [{p.Role}] HP {p.Health}/{p.MaxHealth} @ ({p.Position.X},{p.Position.Y},{p.Position.Z})");
+                                Console.WriteLine($"  - {p.Handle,-16}{marker,-8} [{p.Role}])");
                             }
                             Console.WriteLine("----------------------------------------");
                         });
@@ -305,6 +306,21 @@ namespace RPG.Client
                         }
                     }
                     break;
+
+                case OpCode.S2C_LinkResponse:
+                    var linkResp = packet.DeserializePayload<LinkResponsePayload>();
+                    if(linkResp != null)
+                    {
+                        if (linkResp.Success)
+                        {
+                            PrintServerOutput(() => Console.WriteLine($"[LINK] Collegamento riuscito: Player '{linkResp.PlayerHandle}' con Character '{linkResp.CharacterHandle}'."));
+                        }
+                        else
+                        {
+                            PrintServerOutput(() => Console.WriteLine($"[LINK] Fallito: {linkResp.Message}"));
+                        }
+                    }
+                    break; 
 
                 default:
                     PrintServerOutput(() => Console.WriteLine($"[PACKET] Ricevuto OpCode non gestito: {packet.OpCode}"));
@@ -341,7 +357,7 @@ namespace RPG.Client
         /// Stampa la lista delle abilità del personaggio, mostrando il livello, la statistica associata e il pool totale calcolato.
         /// </summary>
         /// <param name="character"></param>
-        private static void PrintSkillList(PlayerState character)
+        private static void PrintSkillList(Character character)
         {
             Console.WriteLine("\n========================================");
             Console.WriteLine($"🧠 ELENCO ABILITÀ - {character.Handle}");
@@ -372,7 +388,7 @@ namespace RPG.Client
         /// Stampa lo stato completo del personaggio, inclusi posizione, statistiche, salute, armatura, armi e munizioni.
         /// </summary>
         /// <param name="c">Lo stato del personaggio da stampare</param>
-        private static void PrintCharacterStatus(PlayerState c)
+        private static void PrintCharacterStatus(Character c)
         {
             Console.WriteLine("\n========================================");
             Console.WriteLine($"📋 SCHEDA PERSONAGGIO: {c.Handle}");
@@ -453,24 +469,25 @@ namespace RPG.Client
 
             Console.WriteLine("\n========================================");
 
-            // Loop di login con retry: si ripropone l'handle finché il server non accetta (es. handle già in uso)
+            // Loop di login con retry: si ripropone l'player_name finché il server non accetta (es. player_name già in uso)
             bool loggedIn = false;
             
             while (!loggedIn)
             {
-                Console.Write("Inserisci il tuo Handle (nome personaggio): ");
+                Console.Write("Inserisci il tuo username: ");
 
-                string? handle = Console.ReadLine();
-                if (string.IsNullOrWhiteSpace(handle))
+                string? player_name = Console.ReadLine();
+ 
+                if (string.IsNullOrWhiteSpace(player_name))
                 {
-                    handle = $"Punk_{Guid.NewGuid().ToString()[..4]}";
+                    player_name = $"Punk_{Guid.NewGuid().ToString()[..4]}";
                 }
 
                 _loginTcs = new TaskCompletionSource<LoginResponsePayload>(TaskCreationOptions.RunContinuationsAsynchronously);
 
                 var loginPacket = NetworkPacket.Create(OpCode.C2S_Login, new LoginRequestPayload
                 {
-                    Username = handle.Trim()
+                    PlayerName = player_name.Trim()
                 });
 
                 await _writer.WriteLineAsync(JsonSerializer.Serialize(loginPacket));
@@ -491,10 +508,16 @@ namespace RPG.Client
                 if (!loginResp.Success)
                 {
                     PrintServerOutput(() => Console.WriteLine($"[!] Login rifiutato: {loginResp.Message}"));
-                    continue; // ripete il prompt con un nuovo handle
+                    continue; // ripete il prompt con un nuovo player_name
                 }
 
                 PrintServerOutput(() => Console.WriteLine($"[SERVER] {loginResp.Message}"));
+
+                _player = new Player
+                {
+                    Username = loginResp.PlayerId
+                };
+
                 loggedIn = true;
             }
 
@@ -593,7 +616,7 @@ namespace RPG.Client
                 if (trimmedInput.StartsWith("/attack", StringComparison.OrdinalIgnoreCase))
                 {
                     // Parsing dall'input ORIGINALE (non lowercased) per preservare il case
-                    // di handle, armi e abilità (es. "ArtiMarziali").
+                    // di player_name, armi e abilità (es. "ArtiMarziali").
                     string[] parts = input.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
                     if (parts.Length >= 2)
                     {
@@ -715,6 +738,27 @@ namespace RPG.Client
                     });
 
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(joinPacket));
+                }
+
+                if(trimmedInput.StartsWith("/link", StringComparison.OrdinalIgnoreCase))
+                {
+                    string[] parts = input.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+                    if (parts.Length >= 2)
+                    {
+                        var linkPacket = NetworkPacket.Create(OpCode.C2S_Link, new LinkRequestPayload
+                        {
+                            PlayerHandle = _player.Username,
+                            CharacterHandle = parts[2]
+                        });
+
+                        await _writer.WriteLineAsync(JsonSerializer.Serialize(linkPacket));
+                    }
+                    else
+                    {
+                        Console.WriteLine("[!] Sintassi non valida. Usa: /link <NomeCharacter>");
+                    }
+                    continue;
                 }
 
                 Console.WriteLine($"[!] Comando non riconosciuto: '{trimmedInput}'. Digita /help per la lista comandi.");

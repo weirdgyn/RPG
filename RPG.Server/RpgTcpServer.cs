@@ -75,13 +75,13 @@ namespace RPG.Server.Services
                 _connectedClients.TryRemove(client.Id, out _);
                 client.TcpClient.Close();
 
-                string handleName = !string.IsNullOrEmpty(client.Character?.Handle) ? client.Character.Handle : client.IdShort;
-                Console.WriteLine($"[SERVER] Client disconnesso: {handleName}");
+                string userName = !string.IsNullOrEmpty(client.Player.Username) ? client.Player.Username : client.IdShort;
+                Console.WriteLine($"[SERVER] Client disconnesso: {userName}");
 
                 // Notifica gli altri utenti nella stanza (solo per client che avevano effettuato il login)
                 if (client.IsAuthenticated)
                 {
-                    var leaveNotify = NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"{handleName} ha abbandonato la rete." });
+                    var leaveNotify = NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"{userName} ha abbandonato la rete." });
                     await BroadcastPacketAsync(leaveNotify, excludeClientId: client.Id);
                 }
             }
@@ -103,7 +103,7 @@ namespace RPG.Server.Services
                         {
                             Message = $"Pong! ({DateTime.UtcNow:HH:mm:ss} UTC)"
                         };
-                        Console.WriteLine($"[PING] Risposta Pong inviata a '{client.Character.Handle}'.");
+                        Console.WriteLine($"[PING] Risposta Pong inviata a '{client.Player.Username}'.");
                         await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Pong, pong));
                     }
                     break;
@@ -111,38 +111,44 @@ namespace RPG.Server.Services
                 case OpCode.C2S_Login:
                     {
                         var loginReq = packet.DeserializePayload<LoginRequestPayload>();
-                        string desiredHandle = loginReq?.Username?.Trim() ?? string.Empty;
-                        if (string.IsNullOrWhiteSpace(desiredHandle))
+                        string userName = loginReq?.PlayerName?.Trim() ?? string.Empty;
+
+                        // TODO: validazione userName/accesso presenza in player database (file JSON?)
+
+                        if (string.IsNullOrWhiteSpace(userName))
                         {
-                            desiredHandle = $"Punk_{client.IdShort}";
+                            userName = $"Punk_{client.IdShort}";
                         }
 
                         // Sezione sincrona nel lock: controllo unicità handle + caricamento scheda.
                         // Gli await sono fuori dal lock (non ammessi al suo interno).
                         LoginResponsePayload? denial = null;
+                        
                         lock (_loginLock)
                         {
                             // Unicità dell'handle: rifiuta se un altro client online usa già lo stesso nome
-                            bool duplicateHandle = _connectedClients.Values.Any(c =>
+                            bool duplicate = _connectedClients.Values.Any(c =>
                                 c.Id != client.Id &&
-                                !string.IsNullOrEmpty(c.Character.Handle) &&
-                                c.Character.Handle.Equals(desiredHandle, StringComparison.OrdinalIgnoreCase));
+                                !string.IsNullOrEmpty(c.Player.Username) &&
+                                c.Player.Username.Equals(userName, StringComparison.OrdinalIgnoreCase));
 
-                            if (duplicateHandle)
+                            if (duplicate)
                             {
-                                Console.WriteLine($"[LOGIN] RIFIUTATO: handle '{desiredHandle}' già in uso da un altro client.");
+                                Console.WriteLine($"[LOGIN] RIFIUTATO: username '{userName}' già in uso da un altro client.");
                                 denial = new LoginResponsePayload
                                 {
                                     Success = false,
                                     PlayerId = string.Empty,
-                                    Message = $"L'handle '{desiredHandle}' è già in uso da un altro giocatore. Scegli un altro nome."
+                                    Message = $"Lo username '{userName}' è già in uso da un altro giocatore. Scegli un altro nome."
                                 };
                             }
                             else
                             {
                                 // Caricamento o generazione autoritativa tramite CharacterLoader e file JSON
-                                client.Character = CharacterLoader.LoadOrGenerateCharacter(desiredHandle);
-                                client.Character.PlayerId = client.Id.ToString();
+
+                                //TODO: spostare nel comando di associazione player -> character
+                                //client.Player.Character = CharacterLoader.LoadOrGenerateCharacter(userName);
+                                //client.Player.Character.CharacterId = client.Id.ToString();
                                 client.IsAuthenticated = true;
                             }
                         }
@@ -153,24 +159,25 @@ namespace RPG.Server.Services
                             break;
                         }
 
-                        Console.WriteLine($"[LOGIN] Client {client.IdShort} autenticato come '{client.Character.Handle}' (HP: {client.Character.Health.CurrentHealth}/{client.Character.Health.MaxHealth})");
+                        Console.WriteLine($"[LOGIN] Client {client.IdShort} autenticato come '{client.Player.Username}'");
 
                         // Risposta di Login OK
                         await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_LoginResponse, new LoginResponsePayload
                         {
                             Success = true,
-                            PlayerId = client.Character.PlayerId,
-                            Message = $"Benvenuto a Night City, {client.Character.Handle}!"
+                            PlayerId = client.Player.PlayerId,
+                            Message = $"Benvenuto a Night City, {client.Player.Username}!"
                         }));
 
                         // Invio stato aggiornato del personaggio al client
-                        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_PlayerStateUpdate, new PlayerStatePayload
-                        {
-                            Character = client.Character
-                        }));
+                        //TODO: spostare nel comando di associazione player -> character
+                        //await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_PlayerStateUpdate, new CharacterStatePayload
+                        //{
+                        //    Character = client.Player.Character
+                        //}));
 
                         // Notifica globale agli altri
-                        var joinNotify = NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"{client.Character.Handle} è entrato nella rete." });
+                        var joinNotify = NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"{client.Player.Username} è entrato nella rete." });
                         await BroadcastPacketAsync(joinNotify, excludeClientId: client.Id);
                     }
                     break;
@@ -178,10 +185,11 @@ namespace RPG.Server.Services
                 case OpCode.C2S_Attack:
                     {
                         var attackReq = packet.DeserializePayload<AttackRequestPayload>();
+                        
                         if (attackReq != null)
                         {
                             var targetClient = _connectedClients.Values
-                                .FirstOrDefault(c => c.IsAuthenticated && c.Character.Handle.Equals(attackReq.TargetHandle, StringComparison.OrdinalIgnoreCase));
+                                .FirstOrDefault(c => c.IsAuthenticated && c.Player.Character.Handle.Equals(attackReq.TargetHandle, StringComparison.OrdinalIgnoreCase));
 
                             if (targetClient == null)
                             {
@@ -200,14 +208,14 @@ namespace RPG.Server.Services
                             if (!string.IsNullOrWhiteSpace(attackReq.WeaponOrSkill))
                             {
                                 string key = attackReq.WeaponOrSkill.Trim();
-                                weaponToUse = client.Character.Weapons.FirstOrDefault(w =>
+                                weaponToUse = client.Player.Character.Weapons.FirstOrDefault(w =>
                                     w.Name.Equals(key, StringComparison.OrdinalIgnoreCase) ||
                                     w.Id.Equals(key, StringComparison.OrdinalIgnoreCase) ||
                                     w.SkillName.Equals(key, StringComparison.OrdinalIgnoreCase));
                             }
 
                             // Fallback sull'arma equipaggiata o sulla prima disponibile
-                            weaponToUse ??= client.Character.EquippedWeapon ?? client.Character.Weapons.FirstOrDefault();
+                            weaponToUse ??= client.Player.Character.EquippedWeapon ?? client.Player.Character.Weapons.FirstOrDefault();
 
                             if (weaponToUse == null)
                             {
@@ -219,9 +227,9 @@ namespace RPG.Server.Services
                             string skillName = weaponToUse.SkillName;
                             string statName = Skills.GetStatForSkill(skillName);
 
-                            int attackerStat = client.Character.Stats.GetStatValue(statName);
-                            int attackerSkillLvl = client.Character.Skills.TryGetValue(skillName, out int lvl) ? lvl : 0;
-                            int attackerPenalty = client.Character.Health.GetWoundPenalty();
+                            int attackerStat = client.Player.Character.Stats.GetStatValue(statName);
+                            int attackerSkillLvl = client.Player.Character.Skills.TryGetValue(skillName, out int lvl) ? lvl : 0;
+                            int attackerPenalty = client.Player.Character.Health.GetWoundPenalty();
 
                             if (attackerPenalty <= -99)
                             {
@@ -230,7 +238,7 @@ namespace RPG.Server.Services
                             }
 
                             // Calcolo distanza e difficoltà (TN)
-                            double distance = CombatRules.CalculateDistance(client.Character.Position, targetClient.Character.Position);
+                            double distance = CombatRules.CalculateDistance(client.Player.Character.Position, targetClient.Player.Character.Position);
                             int targetNumber = 15;
                             string attackTypeDesc = "";
 
@@ -249,9 +257,9 @@ namespace RPG.Server.Services
                                     break;
                                 }
 
-                                int targetRef = targetClient.Character.Stats.REF;
-                                int targetDodge = targetClient.Character.Skills.TryGetValue("Schivare", out int dLvl) ? dLvl : 0;
-                                int targetPenalty = targetClient.Character.Health.GetWoundPenalty();
+                                int targetRef = targetClient.Player.Character.Stats.REF;
+                                int targetDodge = targetClient.Player.Character.Skills.TryGetValue("Schivare", out int dLvl) ? dLvl : 0;
+                                int targetPenalty = targetClient.Player.Character.Health.GetWoundPenalty();
 
                                 targetNumber = 10 + targetRef + targetDodge + targetPenalty;
                                 attackTypeDesc = $"In Mischia con {weaponToUse.Name} -> Difesa Bersaglio (REF {targetRef} + Schivare {targetDodge}): TN {targetNumber}";
@@ -285,8 +293,8 @@ namespace RPG.Server.Services
 
                                 damageDealt = rawDamage * hitMultiplier;
 
-                                targetClient.Character.Health.CurrentHealth = Math.Max(0, targetClient.Character.Health.CurrentHealth - damageDealt);
-                                CharacterLoader.SaveCharacter(targetClient.Character); // Persistenza su JSON del bersaglio
+                                targetClient.Player.Character.Health.CurrentHealth = Math.Max(0, targetClient.Player.Character.Health.CurrentHealth - damageDealt);
+                                CharacterLoader.SaveCharacter(targetClient.Player.Character); // Persistenza su JSON del bersaglio
                             }
 
                             string hitDesc = isHit
@@ -295,7 +303,7 @@ namespace RPG.Server.Services
                                     : $"COLPITO ({damageDealt} dmg)"
                                 : "MANCATO";
 
-                            Console.WriteLine($"[COMBAT] {client.Character.Handle} attacca {targetClient.Character.Handle} con '{weaponToUse.Name}'. {attackTypeDesc}. Tiro: {attackTotal} vs TN {targetNumber} -> {hitDesc}");
+                            Console.WriteLine($"[COMBAT] {client.Player.Character.Handle} attacca {targetClient.Player.Character.Handle} con '{weaponToUse.Name}'. {attackTypeDesc}. Tiro: {attackTotal} vs TN {targetNumber} -> {hitDesc}");
 
                             // Invio esito a entrambi
                             string impactSuffix = hitLocationName.Length > 0
@@ -303,19 +311,19 @@ namespace RPG.Server.Services
                                 : "";
                             var respPayload = new AttackResponsePayload
                             {
-                                AttackerHandle = client.Character.Handle,
-                                TargetHandle = targetClient.Character.Handle,
+                                AttackerHandle = client.Player.Character.Handle,
+                                TargetHandle = targetClient.Player.Character.Handle,
                                 AttackTotal = attackTotal,
                                 DefenseTN = targetNumber,
                                 IsHit = isHit,
                                 DamageDealt = damageDealt,
                                 HitLocation = hitLocationName,
                                 DamageMultiplier = hitMultiplier,
-                                TargetRemainingHealth = targetClient.Character.Health.CurrentHealth,
-                                TargetWoundStatus = targetClient.Character.Health.GetWoundStatusDescription(),
+                                TargetRemainingHealth = targetClient.Player.Character.Health.CurrentHealth,
+                                TargetWoundStatus = targetClient.Player.Character.Health.GetWoundStatusDescription(),
                                 Message = isHit
-                                    ? $"COLPO A SEGNO! {client.Character.Handle} usa '{weaponToUse.Name}' e infligge {damageDealt} danni ({weaponToUse.DamageDice})!{impactSuffix}"
-                                    : $"MANCATO! {client.Character.Handle} fallisce l'attacco con '{weaponToUse.Name}'."
+                                    ? $"COLPO A SEGNO! {client.Player.Character.Handle} usa '{weaponToUse.Name}' e infligge {damageDealt} danni ({weaponToUse.DamageDice})!{impactSuffix}"
+                                    : $"MANCATO! {client.Player.Character.Handle} fallisce l'attacco con '{weaponToUse.Name}'."
                             };
 
                             var attackPacket = NetworkPacket.Create(OpCode.S2C_AttackResult, respPayload);
@@ -334,14 +342,14 @@ namespace RPG.Server.Services
                         var rollResult = GameDice.Roll(expr);
                         int total = (int)rollResult.Total;
 
-                        Console.WriteLine($"[ROLL] {client.Character.Handle} tira {expr} ({reason}): {total}");
+                        Console.WriteLine($"[ROLL] {client.Player.Username} tira {expr} ({reason}): {total}");
 
                         var resp = new RollResponsePayload
                         {
-                            RollerHandle = client.Character.Handle,
+                            RollerHandle = client.Player.Username,
                             DiceExpression = expr,
                             TotalResult = total,
-                            Message = $"{client.Character.Handle} tira [{expr}] ({reason}) ed ottiene: {total}"
+                            Message = $"{client.Player.Username} tira [{expr}] ({reason}) ed ottiene: {total}"
                         };
 
                         var packetResp = NetworkPacket.Create(OpCode.S2C_RollResult, resp);
@@ -363,7 +371,7 @@ namespace RPG.Server.Services
                         {
                             var broadcast = NetworkPacket.Create(OpCode.S2C_ChatMessage, new ChatPayload
                             {
-                                Sender = client.Character.Handle,
+                                Sender = client.Player.Username,
                                 Message = message,
                                 Recipient = null
                             });
@@ -373,7 +381,7 @@ namespace RPG.Server.Services
                                 try { await c.SendPacketAsync(broadcast); } catch { }
                             }
 
-                            Console.WriteLine($"[CHAT] {client.Character.Handle} (broadcast): {message}");
+                            Console.WriteLine($"[CHAT] {client.Player.Username} (broadcast): {message}");
                             break;
                         }
 
@@ -381,27 +389,27 @@ namespace RPG.Server.Services
                         var target = _connectedClients.Values.FirstOrDefault(c =>
                             c.Id != client.Id &&
                             c.IsAuthenticated &&
-                            c.Character.Handle.Equals(recipient, StringComparison.OrdinalIgnoreCase));
+                            c.Player.Username.Equals(recipient, StringComparison.OrdinalIgnoreCase));
 
                         if (target == null)
                         {
                             // Nessun fallback a broadcast: un privato esplicito non deve "sfuggire" in chat pubblica
                             await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"Destinatario '{recipient}' non trovato o non online." }));
-                            Console.WriteLine($"[CHAT] {client.Character.Handle} -> '{recipient}': destinatario non trovato.");
+                            Console.WriteLine($"[CHAT] {client.Player.Username} -> '{recipient}': destinatario non trovato.");
                             break;
                         }
 
                         var priv = NetworkPacket.Create(OpCode.S2C_ChatMessage, new ChatPayload
                         {
-                            Sender = client.Character.Handle,
+                            Sender = client.Player.Username,
                             Message = message,
-                            Recipient = target.Character.Handle
+                            Recipient = target.Player.Username
                         });
 
                         await client.SendPacketAsync(priv);
                         await target.SendPacketAsync(priv);
 
-                        Console.WriteLine($"[CHAT] {client.Character.Handle} -> {target.Character.Handle} (privato): {message}");
+                        Console.WriteLine($"[CHAT] {client.Player.Username} -> {target.Player.Username} (privato): {message}");
                     }
                     break;
 
@@ -409,8 +417,8 @@ namespace RPG.Server.Services
                     {
                         var skillListPayload = new SkillListResponsePayload
                         {
-                            Character = client.Character.Handle,
-                            Skills = client.Character.Skills
+                            Character = client.Player.Character.Handle,
+                            Skills = client.Player.Character.Skills
                         };
 
                         await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_SkillListResponse, skillListPayload));
@@ -420,9 +428,9 @@ namespace RPG.Server.Services
                 case OpCode.C2S_GetStatus:
                     {
                         // Reinvia lo stato aggiornato del personaggio al client che lo ha richiesto
-                        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_PlayerStateUpdate, new PlayerStatePayload
+                        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_PlayerStateUpdate, new CharacterStatePayload
                         {
-                            Character = client.Character
+                            Character = client.Player.Character
                         }));
                     }
                     break;
@@ -434,16 +442,13 @@ namespace RPG.Server.Services
                             .Where(c => c.IsAuthenticated)
                             .Select(c => new PlayerInfoPayload
                             {
-                                Handle = c.Character.Handle,
-                                Role = c.Character.Role,
-                                Health = c.Character.Health.CurrentHealth,
-                                MaxHealth = c.Character.Health.MaxHealth,
-                                Position = c.Character.Position
+                                Handle = c.Player.Username,
+                                Role = c.Player.Role.ToString()
                             })
                             .OrderBy(p => p.Handle, StringComparer.OrdinalIgnoreCase)
                             .ToList();
 
-                        Console.WriteLine($"[LIST] {client.Character.Handle} richiede l'elenco: {players.Count} online.");
+                        Console.WriteLine($"[LIST] {client.Player.Username} richiede l'elenco: {players.Count} online.");
 
                         await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_PlayerList, new PlayerListResponsePayload
                         {
@@ -460,9 +465,9 @@ namespace RPG.Server.Services
                             string skillName = skillReq.SkillName.Trim();
                             string statName = Skills.GetStatForSkill(skillName);
 
-                            int statVal = client.Character.Stats.GetStatValue(statName);
-                            int skillLvl = client.Character.Skills.TryGetValue(skillName, out int lvl) ? lvl : 0;
-                            int penalty = client.Character.Health.GetWoundPenalty();
+                            int statVal = client.Player.Character.Stats.GetStatValue(statName);
+                            int skillLvl = client.Player.Character.Skills.TryGetValue(skillName, out int lvl) ? lvl : 0;
+                            int penalty = client.Player.Character.Health.GetWoundPenalty();
 
                             var roll = GameDice.Roll("1d10");
                             int diceVal = (int)roll.Total;
@@ -470,11 +475,11 @@ namespace RPG.Server.Services
                             bool isSuccess = totalResult >= skillReq.Difficulty;
 
                             string outcome = isSuccess ? "SUCCESSO" : "FALLIMENTO";
-                            Console.WriteLine($"[SKILL] {client.Character.Handle} prova '{skillName}' ({statName}:{statVal} + Lvl:{skillLvl} + d10:{diceVal} - Pen:{Math.Abs(penalty)}) = {totalResult} vs TN {skillReq.Difficulty} -> {outcome}");
+                            Console.WriteLine($"[SKILL] {client.Player.Character.Handle} prova '{skillName}' ({statName}:{statVal} + Lvl:{skillLvl} + d10:{diceVal} - Pen:{Math.Abs(penalty)}) = {totalResult} vs TN {skillReq.Difficulty} -> {outcome}");
 
                             var respPayload = new SkillCheckResponsePayload
                             {
-                                CharacterHandle = client.Character.Handle,
+                                CharacterHandle = client.Player.Character.Handle,
                                 SkillName = skillName,
                                 StatName = statName,
                                 StatValue = statVal,
@@ -483,7 +488,7 @@ namespace RPG.Server.Services
                                 TotalResult = totalResult,
                                 TargetNumber = skillReq.Difficulty,
                                 IsSuccess = isSuccess,
-                                Message = $"{client.Character.Handle} effettua una prova di {skillName} ({statName}): {totalResult} vs TN {skillReq.Difficulty} -> {outcome}!"
+                                Message = $"{client.Player.Character.Handle} effettua una prova di {skillName} ({statName}): {totalResult} vs TN {skillReq.Difficulty} -> {outcome}!"
                             };
 
                             // Notifica l'esito a tutti i client
@@ -504,13 +509,13 @@ namespace RPG.Server.Services
                             if (result == GameMap.MovementResult.Success)
                             {
                                 // Update della posizione autoritativa sul server
-                                client.Character.Position = requested;
+                                client.Player.Character.Position = requested;
 
                                 // Salvataggio della persistenza su JSON
-                                CharacterLoader.SaveCharacter(client.Character);
+                                CharacterLoader.SaveCharacter(client.Player.Character);
 
                                 message = $"Posizione aggiornata a ({requested.X}, {requested.Y}, {requested.Z})";
-                                Console.WriteLine($"[MOVE] {client.Character.Handle} si è spostato a ({requested.X}, {requested.Y}, {requested.Z})");
+                                Console.WriteLine($"[MOVE] {client.Player.Character.Handle} si è spostato a ({requested.X}, {requested.Y}, {requested.Z})");
                             }
                             else
                             {
@@ -518,14 +523,14 @@ namespace RPG.Server.Services
                                 message = result == GameMap.MovementResult.OutOfBounds
                                     ? $"Movimento bloccato: ({requested.X}, {requested.Y}, {requested.Z}) è fuori dai confini della mappa."
                                     : $"Movimento bloccato: c'è un ostacolo in ({requested.X}, {requested.Y}, {requested.Z}).";
-                                Console.WriteLine($"[MOVE] {client.Character.Handle} movimento negato ({result}) verso ({requested.X}, {requested.Y}, {requested.Z})");
+                                Console.WriteLine($"[MOVE] {client.Player.Character.Handle} movimento negato ({result}) verso ({requested.X}, {requested.Y}, {requested.Z})");
                             }
 
                             var movePayload = new MoveResultPayload
                             {
-                                PlayerHandle = client.Character.Handle,
+                                PlayerHandle = client.Player.Character.Handle,
                                 RequestedPosition = requested,
-                                ActualPosition = client.Character.Position,
+                                ActualPosition = client.Player.Character.Position,
                                 Result = result,
                                 Message = message
                             };

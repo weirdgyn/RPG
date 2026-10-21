@@ -13,6 +13,7 @@ public enum OpCode
     C2S_Attack = 70,        // Richiesta di attacco verso un altro player
     C2S_SkillCheck = 80,
     C2S_GetPlayerList = 90, // Richiesta della lista dei giocatori online
+    C2S_Link = 95,          // Collegare un player ad uno specifico personaggio (Character) già esistente
     C2S_Join = 100,        // Richiesta di entrare in una stanza di gioco
     // Server -> Client (S2C)
     S2C_Pong = 101,
@@ -26,5 +27,6 @@ public enum OpCode
     S2C_AttackResult = 180,  // Risultato dell'attacco (notificato a chi attacca, al bersaglio e alla stanza)
     S2C_SkillCheckResult = 190,
     S2C_PlayerList = 200,     // Elenco dei giocatori online
+    S2C_LinkResponse = 205,   // Risposta alla richiesta di collegare un player ad un personaggio
     S2C_JoinResponse = 210    // Risposta alla richiesta di entrare in un game
 }
