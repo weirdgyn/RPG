@@ -1,5 +1,5 @@
 ﻿using CommandLine;
-using RPG.Common.Model;
+using RPG.Common.Models;
 using RPG.Server.Services;
 
 namespace RPG.Server;

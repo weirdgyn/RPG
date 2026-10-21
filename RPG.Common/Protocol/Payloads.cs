@@ -1,7 +1,8 @@
-﻿using RPG.Common.Model;
+﻿using RPG.Common.Models;
+using RPG.Common.World;
 using static RPG.Common.World.GameMap;
 
-namespace RPG.Common.Protocol.Payloads;
+namespace RPG.Common.Protocol;
 // Usato sia per C2S che per S2C
 public class ChatPayload
 {
@@ -119,4 +120,16 @@ public class PlayerInfoPayload
 public class PlayerListResponsePayload
 {
     public List<PlayerInfoPayload> Players { get; set; } = new();
+}
+public class JoinRequestPayload
+{
+    public string GameName { get; set; } = string.Empty;
+    public string Role { get; set; } = string.Empty;
+}
+public class JoinResponsePayload
+{
+    public bool Success { get; set; }
+    public string Message { get; set; } = string.Empty; // Messaggio di errore o conferma
+    public string GameName { get; set; } = string.Empty;
+    public string Role { get; set; } = string.Empty;    // Ruolo assegnato al giocatore nel game
 }

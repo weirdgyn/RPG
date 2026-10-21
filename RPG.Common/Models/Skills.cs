@@ -1,7 +1,7 @@
 ﻿using System.Text.Json;
 using RPG.Common.Utils;
 
-namespace RPG.Common.Model;
+namespace RPG.Common.Models;
 
 public static class Skills
 {

@@ -1,4 +1,4 @@
-﻿using RPG.Common.Model;
+﻿using RPG.Common.Models;
 using RPG.Common.Protocol;
 using System.Net.Sockets;
 using System.Text.Json;

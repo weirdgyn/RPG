@@ -1,4 +1,4 @@
-namespace RPG.Common.Model;
+namespace RPG.Common.Models;
 
 /// <summary>
 /// Effetto balistico della munizione (CP2020). I modificatori numerici sono

@@ -1,4 +1,4 @@
-﻿using RPG.Common.Model;
+﻿using RPG.Common.World;
 
 namespace RPG.Common;
 

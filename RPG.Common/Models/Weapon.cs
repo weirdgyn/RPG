@@ -1,4 +1,4 @@
-﻿namespace RPG.Common.Model;
+﻿namespace RPG.Common.Models;
 
 public class Weapon
 {

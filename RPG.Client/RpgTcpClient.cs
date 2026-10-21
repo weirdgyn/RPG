@@ -1,6 +1,5 @@
-﻿using RPG.Common.Model;
+﻿using RPG.Common.Models;
 using RPG.Common.Protocol;
-using RPG.Common.Protocol.Payloads;
 using RPG.Common.World;
 using System.Net.Sockets;
 using System.Text.Json;
@@ -57,6 +56,264 @@ namespace RPG.Client
                 }
             }
         }
+        public async Task<bool> ConnectAsync(string host, int port)
+        {
+            try
+            {
+                _tcpClient = new TcpClient();
+                await _tcpClient.ConnectAsync(host, port);
+
+                var stream = _tcpClient.GetStream();
+                _reader = new StreamReader(stream);
+                _writer = new StreamWriter(stream) { AutoFlush = true };
+                _isRunning = true;
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[!] Errore di connessione: {ex.Message}");
+                return false;
+            }
+        }
+        private async Task ListenToServerAsync()
+        {
+            try
+            {
+                string? line;
+                while (_isRunning && _reader != null && (line = await _reader.ReadLineAsync()) != null)
+                {
+                    if (string.IsNullOrWhiteSpace(line)) continue;
+
+                    var packet = JsonSerializer.Deserialize<NetworkPacket>(line);
+                    if (packet == null) continue;
+
+                    HandleServerPacket(packet);
+                }
+            }
+            catch (Exception)
+            {
+                if (_isRunning)
+                {
+                    _isRunning = false;
+                    PrintServerOutput(() => Console.WriteLine("[!] Connessione al server persa."));
+                }
+            }
+        }
+        /// <summary>
+        /// Gestisce i pacchetti ricevuti dal server, deserializzando il payload e stampando le informazioni
+        /// </summary>
+        /// <param name="packet"></param>
+        private void HandleServerPacket(NetworkPacket packet)
+        {
+            switch (packet.OpCode)
+            {
+                case OpCode.S2C_LoginResponse:
+                    var loginResp = packet.DeserializePayload<LoginResponsePayload>();
+                    if (loginResp != null)
+                    {
+                        // Sblocca il loop di login in RunLoopAsync, che gestisce la visualizzazione e il retry
+                        _loginTcs.TrySetResult(loginResp);
+                    }
+                    break;
+
+                case OpCode.S2C_Pong:
+                    var pong = packet.DeserializePayload<PongPayload>();
+                    if (pong != null)
+                    {
+                        double rttMs = Math.Round((DateTime.UtcNow - _lastPingSentUtc).TotalMilliseconds, 1);
+                        PrintServerOutput(() => Console.WriteLine($"🏓 [PONG] {pong.Message} (RTT: {rttMs} ms)"));
+                    }
+                    break;
+
+                case OpCode.S2C_PlayerStateUpdate:
+                    var statePayload = packet.DeserializePayload<PlayerStatePayload>();
+                    if (statePayload?.Character != null)
+                    {
+                        // Salva lo stato in memoria locale per i comandi /skills e consultazione rapida
+                        _lastKnownCharacter = statePayload.Character;
+                        PrintServerOutput(() => PrintCharacterStatus(_lastKnownCharacter));
+                    }
+                    break;
+
+                case OpCode.S2C_AttackResult:
+                    var attackResp = packet.DeserializePayload<AttackResponsePayload>();
+                    if (attackResp != null)
+                    {
+                        PrintServerOutput(() =>
+                        {
+                            Console.WriteLine($"⚔️ [COMBAT] {attackResp.AttackerHandle} vs {attackResp.TargetHandle}");
+                            Console.WriteLine($"   Tiro Attacco: {attackResp.AttackTotal} vs Difesa TN: {attackResp.DefenseTN}");
+                            Console.WriteLine($"   Esito       : {attackResp.Message}");
+                            if (attackResp.IsHit)
+                            {
+                                if (!string.IsNullOrEmpty(attackResp.HitLocation))
+                                {
+                                    string mult = attackResp.DamageMultiplier > 1 ? $" (danno x{attackResp.DamageMultiplier})" : "";
+                                    Console.WriteLine($"   Impatto     : {attackResp.HitLocation}{mult}");
+                                }
+                                Console.WriteLine($"   Stato {attackResp.TargetHandle}: {attackResp.TargetRemainingHealth} HP ({attackResp.TargetWoundStatus})");
+                            }
+                        });
+                    }
+                    break;
+
+                case OpCode.S2C_Notification:
+                    var notif = packet.DeserializePayload<JsonElement>();
+                    if (notif.TryGetProperty("Message", out var msgProp))
+                    {
+                        string msg = msgProp.GetString() ?? string.Empty;
+                        PrintServerOutput(() => Console.WriteLine($"📢 [NOTIFICA] {msg}"));
+                    }
+                    break;
+
+                case OpCode.S2C_RollResult:
+                    var rollResp = packet.DeserializePayload<RollResponsePayload>();
+                    if (rollResp != null)
+                    {
+                        PrintServerOutput(() => Console.WriteLine($"🎲 [TIRO DADI] {rollResp.Message}"));
+                    }
+                    break;
+
+                case OpCode.S2C_SkillCheckResult:
+                    var skillResp = packet.DeserializePayload<SkillCheckResponsePayload>();
+                    if (skillResp != null)
+                    {
+                        string icon = skillResp.IsSuccess ? "✅" : "❌";
+                        PrintServerOutput(() =>
+                        {
+                            Console.WriteLine($"🧠 [PROVA ABILITÀ] {skillResp.CharacterHandle} -> {skillResp.SkillName} ({skillResp.StatName})");
+                            Console.WriteLine($"   Tiro: {skillResp.TotalResult} (Stat:{skillResp.StatValue} + Lvl:{skillResp.SkillLevel} + d10:{skillResp.DiceRoll}) vs TN: {skillResp.TargetNumber}");
+                            Console.WriteLine($"   Esito: {icon} {skillResp.Message}");
+                        });
+                    }
+                    break;
+
+                case OpCode.S2C_ChatMessage:
+                    var chat = packet.DeserializePayload<ChatPayload>();
+                    if (chat != null)
+                    {
+                        bool isMine = _lastKnownCharacter != null
+                            && string.Equals(_lastKnownCharacter.Handle, chat.Sender, StringComparison.OrdinalIgnoreCase);
+                        bool hasRecipient = !string.IsNullOrWhiteSpace(chat.Recipient);
+
+                        PrintServerOutput(() =>
+                        {
+                            if (hasRecipient && isMine)
+                                Console.WriteLine($"🤫 [PRIVATO → {chat.Recipient}] {chat.Message}");
+                            else if (hasRecipient)
+                                Console.WriteLine($"🤫 [PRIVATO da {chat.Sender}] {chat.Message}");
+                            else
+                                Console.WriteLine($"💬 [{chat.Sender}] {chat.Message}");
+                        });
+                    }
+                    break;
+
+                case OpCode.S2C_SkillListResponse:
+                    var skillListResp = packet.DeserializePayload<SkillListResponsePayload>();
+                    if (skillListResp?.Skills != null)
+                    {
+                        // Se abbiamo lo stato locale, aggiorniamo il dizionario
+                        if (_lastKnownCharacter != null)
+                        {
+                            _lastKnownCharacter.Skills = skillListResp.Skills;
+                            PrintServerOutput(() => PrintSkillList(_lastKnownCharacter));
+                        }
+                        else
+                        {
+                            // Fallback se la scheda completa non è ancora in memoria
+                            PrintServerOutput(() =>
+                            {
+                                Console.WriteLine("========================================");
+                                Console.WriteLine($"🧠 ELENCO ABILITÀ - {skillListResp.Character}");
+                                Console.WriteLine("----------------------------------------");
+                                foreach (var kv in skillListResp.Skills)
+                                {
+                                    string statAssoc = Skills.GetStatForSkill(kv.Key);
+                                    Console.WriteLine($"  - {kv.Key,-20} : Livello {kv.Value} (Stat: {statAssoc})");
+                                }
+                                Console.WriteLine("========================================");
+                            });
+                        }
+                    }
+                    break;
+
+                case OpCode.S2C_PlayerMoved:
+                    var movePayload = packet.DeserializePayload<MoveResultPayload>();
+                    if (movePayload != null)
+                    {
+                        bool isSelf = _lastKnownCharacter != null
+                            && string.Equals(_lastKnownCharacter.Handle, movePayload.PlayerHandle, StringComparison.OrdinalIgnoreCase);
+
+                        PrintServerOutput(() =>
+                        {
+                            if (movePayload.Result == GameMap.MovementResult.Success)
+                            {
+                                var pos = movePayload.ActualPosition;
+                                if (isSelf)
+                                {
+                                    Console.WriteLine($"✅ [MOVIMENTO] {movePayload.Message}");
+                                }
+                                else
+                                {
+                                    Console.WriteLine($"📍 [MOVIMENTO] {movePayload.PlayerHandle} si è spostato a ({pos.X}, {pos.Y}, {pos.Z})");
+                                }
+                            }
+                            else
+                            {
+                                Console.WriteLine($"🚫 [MOVIMENTO] {movePayload.Message}");
+                            }
+                        });
+                    }
+                    break;
+
+                case OpCode.S2C_PlayerList:
+                    var listResp = packet.DeserializePayload<PlayerListResponsePayload>();
+                    if (listResp != null)
+                    {
+                        PrintServerOutput(() =>
+                        {
+                            Console.WriteLine("👥 GIOCATORI ONLINE");
+                            Console.WriteLine("----------------------------------------");
+                            if (listResp.Players.Count == 0)
+                            {
+                                Console.WriteLine("  (Nessun giocatore online)");
+                            }
+                            foreach (var p in listResp.Players)
+                            {
+                                string marker = (_lastKnownCharacter != null
+                                    && string.Equals(_lastKnownCharacter.Handle, p.Handle, StringComparison.OrdinalIgnoreCase))
+                                    ? "  (tu)" : "";
+                                Console.WriteLine($"  - {p.Handle,-16}{marker,-8} [{p.Role}] HP {p.Health}/{p.MaxHealth} @ ({p.Position.X},{p.Position.Y},{p.Position.Z})");
+                            }
+                            Console.WriteLine("----------------------------------------");
+                        });
+                    }
+                    break;
+
+                case OpCode.S2C_JoinResponse:
+                    var joinResp = packet.DeserializePayload<JoinResponsePayload>();
+                    if (joinResp != null)
+                    {
+                        if(joinResp.Success)
+                        {
+                            PrintServerOutput(() => Console.WriteLine($"[JOIN] Sei entrato nel game '{joinResp.GameName}' come '{joinResp.Role}'."));
+                        }
+                        else
+                        {
+                            PrintServerOutput(() => Console.WriteLine($"[JOIN] Fallito: {joinResp.Message}"));
+                        }
+                    }
+                    break;
+
+                default:
+                    PrintServerOutput(() => Console.WriteLine($"[PACKET] Ricevuto OpCode non gestito: {packet.OpCode}"));
+                    break;
+            }
+        }
+        /// <summary>
+        /// Stampa il menu di aiuto con la lista dei comandi disponibili, formattata in modo leggibile.
+        /// </summary>
         private static void PrintHelpMenu()
         {
             lock (_consoleLock)
@@ -71,7 +328,8 @@ namespace RPG.Client
                 Console.WriteLine("  /attack <Bersaglio> <Arma/Abilità>    - Attacca specificando arma o abilità (es. /attack Jackie ArtiMarziali)");
                 Console.WriteLine("  /roll <Espressione> [Motivazione]     - Effettua un tiro di dadi (es. /roll 1d10+4 Iniziativa)");
                 Console.WriteLine("  /skill <NomeAbilità> [TN]             - Effettua un test di abilità (es. /skill Percezione 15)");
-                Console.WriteLine("  /chat \"<Messaggio>\" [userid]         - Chat broadcast, o privata aggiungendo l'userid dopo le virgolette");
+                Console.WriteLine("  /chat \"<Messaggio>\" [userid]        - Chat broadcast, o privata aggiungendo l'userid dopo le virgolette");
+                Console.WriteLine("  /join \"<Game>\" [master|player]      - Entra in un game esistente");
                 Console.WriteLine("  /ping                                 - Verifica la latenza con il server (ping/pong)");
                 Console.WriteLine("  /help                                 - Mostra questo menu");
                 Console.WriteLine("  /list                                 - Elenca i giocatori online");
@@ -79,6 +337,10 @@ namespace RPG.Client
                 Console.WriteLine("========================================\n");
             }
         }
+        /// <summary>
+        /// Stampa la lista delle abilità del personaggio, mostrando il livello, la statistica associata e il pool totale calcolato.
+        /// </summary>
+        /// <param name="character"></param>
         private static void PrintSkillList(PlayerState character)
         {
             Console.WriteLine("\n========================================");
@@ -93,6 +355,11 @@ namespace RPG.Client
             }
             Console.WriteLine("========================================");
         }
+        /// <summary>
+        /// Stampa le informazioni sul caricatore e il calibro dell'arma, se disponibili. Restituisce una stringa formattata da aggiungere alla descrizione dell'arma.
+        /// </summary>
+        /// <param name="w">L'arma di cui stampare le informazioni sul caricatore</param>
+        /// <returns>Una stringa formattata con le informazioni sul caricatore</returns>
         private static string FormatWeaponAmmo(Weapon w)
         {
             if (w != null && w.MagazineCapacity > 0 && !string.IsNullOrEmpty(w.Caliber))
@@ -101,6 +368,10 @@ namespace RPG.Client
             }
             return "";
         }
+        /// <summary>
+        /// Stampa lo stato completo del personaggio, inclusi posizione, statistiche, salute, armatura, armi e munizioni.
+        /// </summary>
+        /// <param name="c">Lo stato del personaggio da stampare</param>
         private static void PrintCharacterStatus(PlayerState c)
         {
             Console.WriteLine("\n========================================");
@@ -170,26 +441,10 @@ namespace RPG.Client
             Console.WriteLine("========================================");
 
         }
-        public async Task<bool> ConnectAsync(string host, int port)
-        {
-            try
-            {
-                _tcpClient = new TcpClient();
-                await _tcpClient.ConnectAsync(host, port);
-
-                var stream = _tcpClient.GetStream();
-                _reader = new StreamReader(stream);
-                _writer = new StreamWriter(stream) { AutoFlush = true };
-                _isRunning = true;
-
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[!] Errore di connessione: {ex.Message}");
-                return false;
-            }
-        }
+        /// <summary>
+        /// Loop principale di I/O: gestisce il login, i comandi dell'utente e l'ascolto dei messaggi del server.
+        /// </summary>
+        /// <returns></returns>
         public async Task RunLoopAsync()
         {
             if (_reader == null || _writer == null) return;
@@ -200,6 +455,7 @@ namespace RPG.Client
 
             // Loop di login con retry: si ripropone l'handle finché il server non accetta (es. handle già in uso)
             bool loggedIn = false;
+            
             while (!loggedIn)
             {
                 Console.Write("Inserisci il tuo Handle (nome personaggio): ");
@@ -448,226 +704,23 @@ namespace RPG.Client
                     continue;
                 }
 
+                if (trimmedInput.StartsWith("/join", StringComparison.OrdinalIgnoreCase))
+                {
+                    string[] parts = input.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+                    var joinPacket = NetworkPacket.Create(OpCode.C2S_Join, new JoinRequestPayload
+                    {
+                        GameName = parts.Length >= 2 ? parts[1] : "default",
+                        Role = parts.Length >= 3 ? parts[2] : "player"
+                    });
+
+                    await _writer.WriteLineAsync(JsonSerializer.Serialize(joinPacket));
+                }
+
                 Console.WriteLine($"[!] Comando non riconosciuto: '{trimmedInput}'. Digita /help per la lista comandi.");
             }
 
             _tcpClient?.Close();
-        }
-        private async Task ListenToServerAsync()
-        {
-            try
-            {
-                string? line;
-                while (_isRunning && _reader != null && (line = await _reader.ReadLineAsync()) != null)
-                {
-                    if (string.IsNullOrWhiteSpace(line)) continue;
-
-                    var packet = JsonSerializer.Deserialize<NetworkPacket>(line);
-                    if (packet == null) continue;
-
-                    HandleServerPacket(packet);
-                }
-            }
-            catch (Exception)
-            {
-                if (_isRunning)
-                {
-                    _isRunning = false;
-                    PrintServerOutput(() => Console.WriteLine("[!] Connessione al server persa."));
-                }
-            }
-        }
-        private void HandleServerPacket(NetworkPacket packet)
-        {
-            switch (packet.OpCode)
-            {
-                case OpCode.S2C_LoginResponse:
-                    var loginResp = packet.DeserializePayload<LoginResponsePayload>();
-                    if (loginResp != null)
-                    {
-                        // Sblocca il loop di login in RunLoopAsync, che gestisce la visualizzazione e il retry
-                        _loginTcs.TrySetResult(loginResp);
-                    }
-                    break;
-
-                case OpCode.S2C_Pong:
-                    var pong = packet.DeserializePayload<PongPayload>();
-                    if (pong != null)
-                    {
-                        double rttMs = Math.Round((DateTime.UtcNow - _lastPingSentUtc).TotalMilliseconds, 1);
-                        PrintServerOutput(() => Console.WriteLine($"🏓 [PONG] {pong.Message} (RTT: {rttMs} ms)"));
-                    }
-                    break;
-
-                case OpCode.S2C_PlayerStateUpdate:
-                    var statePayload = packet.DeserializePayload<PlayerStatePayload>();
-                    if (statePayload?.Character != null)
-                    {
-                        // Salva lo stato in memoria locale per i comandi /skills e consultazione rapida
-                        _lastKnownCharacter = statePayload.Character;
-                        PrintServerOutput(() => PrintCharacterStatus(_lastKnownCharacter));
-                    }
-                    break;
-
-                case OpCode.S2C_AttackResult:
-                    var attackResp = packet.DeserializePayload<AttackResponsePayload>();
-                    if (attackResp != null)
-                    {
-                        PrintServerOutput(() =>
-                        {
-                            Console.WriteLine($"⚔️ [COMBAT] {attackResp.AttackerHandle} vs {attackResp.TargetHandle}");
-                            Console.WriteLine($"   Tiro Attacco: {attackResp.AttackTotal} vs Difesa TN: {attackResp.DefenseTN}");
-                            Console.WriteLine($"   Esito       : {attackResp.Message}");
-                            if (attackResp.IsHit)
-                            {
-                                if (!string.IsNullOrEmpty(attackResp.HitLocation))
-                                {
-                                    string mult = attackResp.DamageMultiplier > 1 ? $" (danno x{attackResp.DamageMultiplier})" : "";
-                                    Console.WriteLine($"   Impatto     : {attackResp.HitLocation}{mult}");
-                                }
-                                Console.WriteLine($"   Stato {attackResp.TargetHandle}: {attackResp.TargetRemainingHealth} HP ({attackResp.TargetWoundStatus})");
-                            }
-                        });
-                    }
-                    break;
-
-                case OpCode.S2C_Notification:
-                    var notif = packet.DeserializePayload<JsonElement>();
-                    if (notif.TryGetProperty("Message", out var msgProp))
-                    {
-                        string msg = msgProp.GetString() ?? string.Empty;
-                        PrintServerOutput(() => Console.WriteLine($"📢 [NOTIFICA] {msg}"));
-                    }
-                    break;
-
-                case OpCode.S2C_RollResult:
-                    var rollResp = packet.DeserializePayload<RollResponsePayload>();
-                    if (rollResp != null)
-                    {
-                        PrintServerOutput(() => Console.WriteLine($"🎲 [TIRO DADI] {rollResp.Message}"));
-                    }
-                    break;
-
-                case OpCode.S2C_SkillCheckResult:
-                    var skillResp = packet.DeserializePayload<SkillCheckResponsePayload>();
-                    if (skillResp != null)
-                    {
-                        string icon = skillResp.IsSuccess ? "✅" : "❌";
-                        PrintServerOutput(() =>
-                        {
-                            Console.WriteLine($"🧠 [PROVA ABILITÀ] {skillResp.CharacterHandle} -> {skillResp.SkillName} ({skillResp.StatName})");
-                            Console.WriteLine($"   Tiro: {skillResp.TotalResult} (Stat:{skillResp.StatValue} + Lvl:{skillResp.SkillLevel} + d10:{skillResp.DiceRoll}) vs TN: {skillResp.TargetNumber}");
-                            Console.WriteLine($"   Esito: {icon} {skillResp.Message}");
-                        });
-                    }
-                    break;
-
-                case OpCode.S2C_ChatMessage:
-                    var chat = packet.DeserializePayload<ChatPayload>();
-                    if (chat != null)
-                    {
-                        bool isMine = _lastKnownCharacter != null
-                            && string.Equals(_lastKnownCharacter.Handle, chat.Sender, StringComparison.OrdinalIgnoreCase);
-                        bool hasRecipient = !string.IsNullOrWhiteSpace(chat.Recipient);
-
-                        PrintServerOutput(() =>
-                        {
-                            if (hasRecipient && isMine)
-                                Console.WriteLine($"🤫 [PRIVATO → {chat.Recipient}] {chat.Message}");
-                            else if (hasRecipient)
-                                Console.WriteLine($"🤫 [PRIVATO da {chat.Sender}] {chat.Message}");
-                            else
-                                Console.WriteLine($"💬 [{chat.Sender}] {chat.Message}");
-                        });
-                    }
-                    break;
-
-                case OpCode.S2C_SkillListResponse:
-                    var skillListResp = packet.DeserializePayload<SkillListResponsePayload>();
-                    if (skillListResp?.Skills != null)
-                    {
-                        // Se abbiamo lo stato locale, aggiorniamo il dizionario
-                        if (_lastKnownCharacter != null)
-                        {
-                            _lastKnownCharacter.Skills = skillListResp.Skills;
-                            PrintServerOutput(() => PrintSkillList(_lastKnownCharacter));
-                        }
-                        else
-                        {
-                            // Fallback se la scheda completa non è ancora in memoria
-                            PrintServerOutput(() =>
-                            {
-                                Console.WriteLine("========================================");
-                                Console.WriteLine($"🧠 ELENCO ABILITÀ - {skillListResp.Character}");
-                                Console.WriteLine("----------------------------------------");
-                                foreach (var kv in skillListResp.Skills)
-                                {
-                                    string statAssoc = Skills.GetStatForSkill(kv.Key);
-                                    Console.WriteLine($"  - {kv.Key,-20} : Livello {kv.Value} (Stat: {statAssoc})");
-                                }
-                                Console.WriteLine("========================================");
-                            });
-                        }
-                    }
-                    break;
-
-                case OpCode.S2C_PlayerMoved:
-                    var movePayload = packet.DeserializePayload<MoveResultPayload>();
-                    if (movePayload != null)
-                    {
-                        bool isSelf = _lastKnownCharacter != null
-                            && string.Equals(_lastKnownCharacter.Handle, movePayload.PlayerHandle, StringComparison.OrdinalIgnoreCase);
-
-                        PrintServerOutput(() =>
-                        {
-                            if (movePayload.Result == GameMap.MovementResult.Success)
-                            {
-                                var pos = movePayload.ActualPosition;
-                                if (isSelf)
-                                {
-                                    Console.WriteLine($"✅ [MOVIMENTO] {movePayload.Message}");
-                                }
-                                else
-                                {
-                                    Console.WriteLine($"📍 [MOVIMENTO] {movePayload.PlayerHandle} si è spostato a ({pos.X}, {pos.Y}, {pos.Z})");
-                                }
-                            }
-                            else
-                            {
-                                Console.WriteLine($"🚫 [MOVIMENTO] {movePayload.Message}");
-                            }
-                        });
-                    }
-                    break;
-
-                case OpCode.S2C_PlayerList:
-                    var listResp = packet.DeserializePayload<PlayerListResponsePayload>();
-                    if (listResp != null)
-                    {
-                        PrintServerOutput(() =>
-                        {
-                            Console.WriteLine("👥 GIOCATORI ONLINE");
-                            Console.WriteLine("----------------------------------------");
-                            if (listResp.Players.Count == 0)
-                            {
-                                Console.WriteLine("  (Nessun giocatore online)");
-                            }
-                            foreach (var p in listResp.Players)
-                            {
-                                string marker = (_lastKnownCharacter != null
-                                    && string.Equals(_lastKnownCharacter.Handle, p.Handle, StringComparison.OrdinalIgnoreCase))
-                                    ? "  (tu)" : "";
-                                Console.WriteLine($"  - {p.Handle,-16}{marker,-8} [{p.Role}] HP {p.Health}/{p.MaxHealth} @ ({p.Position.X},{p.Position.Y},{p.Position.Z})");
-                            }
-                            Console.WriteLine("----------------------------------------");
-                        });
-                    }
-                    break;
-
-                default:
-                    PrintServerOutput(() => Console.WriteLine($"[PACKET] Ricevuto OpCode non gestito: {packet.OpCode}"));
-                    break;
-            }
         }
     }
 }

@@ -1,4 +1,4 @@
-namespace RPG.Common.Model;
+namespace RPG.Common.Models;
 
 /// <summary>Locazioni coperte dall'armatura (tavola d'impatto CP2020).</summary>
 public enum ArmorLocation

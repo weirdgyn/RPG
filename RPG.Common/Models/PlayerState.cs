@@ -1,4 +1,6 @@
-﻿namespace RPG.Common.Model;
+﻿using RPG.Common.World;
+
+namespace RPG.Common.Models;
 
 public class PlayerState
 {
