@@ -4,7 +4,7 @@ namespace RPG.Common.Models;
 
 public class Character
 {
-    public string CharacterId { get; set; } = string.Empty;
+    public string ClientId { get; set; } = string.Empty;
     public string Handle { get; set; } = "StreetPunk"; // Nome di strada del personaggio
     public string Role { get; set; } = "Solo";        // Solo, Netrunner, Techie, Nomad, Rockerboy, Fixer...
     // Statistiche Interlock principali (range standard 1-10)

@@ -121,8 +121,9 @@ public class PlayerListResponsePayload
 }
 public class JoinRequestPayload
 {
-    public string GameName { get; set; } = string.Empty;
-    public string Role { get; set; } = string.Empty;
+    public string GameName  { get; set; } = string.Empty;
+    public string Role { get; set; } = "none";  //TODO: utilizzare enum RoleType invece di stringa per il ruolo del giocatore
+    public string Description { get; set; } = string.Empty; // Descrizione opzionale del gioco 
 }
 public class JoinResponsePayload
 {
@@ -144,4 +145,5 @@ public class LinkResponsePayload
     public string Message { get; set; } = string.Empty; // Messaggio di errore o conferma
     public string PlayerHandle { get; set; } = string.Empty;
     public string CharacterHandle { get; set; } = string.Empty;
+    public Player.RoleType Role { get; set; } = Player.RoleType.none;
 }

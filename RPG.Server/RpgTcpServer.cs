@@ -18,6 +18,7 @@ namespace RPG.Server.Services
         private readonly ConcurrentDictionary<Guid, ClientSession> _connectedClients = new();
         // Mappa del mondo: valida i movimenti (confini e ostacoli)
         private readonly GameMap _gameMap = new();
+        private List<Game> _games = new();
         // Serializza le operazioni di login per rendere atomico il controllo sull'unicità dell'handle
         private readonly object _loginLock = new();
         private bool _isRunning;
@@ -545,19 +546,23 @@ namespace RPG.Server.Services
                 case OpCode.C2S_Link:
                     {
                         var linkReq = packet.DeserializePayload<LinkRequestPayload>();
+
                         if(linkReq != null 
                             && !string.IsNullOrWhiteSpace(linkReq.PlayerHandle) 
                             && !string.IsNullOrWhiteSpace(linkReq.CharacterHandle))
                         {
                             client.Player.Character = CharacterLoader.LoadOrGenerateCharacter(linkReq.CharacterHandle);
-                            client.Player.Character.CharacterId = client.Id.ToString();
-
+                            client.Player.Character.ClientId = client.Id.ToString();
+                            client.Player.Role = Player.RoleType.player;
+                            
                             CharacterLoader.SaveCharacter(client.Player.Character);
 
                             await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_LinkResponse, new LinkResponsePayload
                             {
                                 Success = true,
-                                Message = $"Personaggio '{linkReq.CharacterHandle}' associato a '{linkReq.PlayerHandle}'."
+                                Message = $"Personaggio '{linkReq.CharacterHandle}' associato a '{linkReq.PlayerHandle}'.",
+                                Role = client.Player.Role,
+                                PlayerHandle = client.Player.Username,
                             }));
 
                             await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_PlayerStateUpdate, new CharacterStatePayload
@@ -572,6 +577,86 @@ namespace RPG.Server.Services
                                 Success = false,
                                 Message = "Richiesta di link non valida."
                             }));
+                        }
+                    }
+                    break;
+
+                case OpCode.C2S_Join:
+                    {
+                        var joinReq = packet.DeserializePayload<JoinRequestPayload>();
+                        if (joinReq != null && !string.IsNullOrWhiteSpace(joinReq.GameName))
+                        {
+                            string denialMessage = string.Empty;
+                            bool success = false;
+                            var game = _games.FirstOrDefault(g => g.Name.Equals(joinReq.GameName, StringComparison.OrdinalIgnoreCase));
+
+                            if (joinReq.Role.ToLower().Equals("master"))   //TODO: utiizzare enum RoleType invece di stringa per il controllo del ruolo
+                            {
+                                if (game == null)
+                                {
+                                    game = new Game
+                                    {
+                                        Name = joinReq.GameName,
+                                        Description = joinReq.Description ?? "Partita senza descrizione",
+                                    };
+                                    _games.Add(game);
+                                    success = true;
+                                }
+                                else
+                                {
+                                    bool masterExists = game.Players.Any(p => p.Role == Player.RoleType.master);
+
+                                    if (masterExists)
+                                    {
+                                        denialMessage = masterExists ? $"Il gioco '{joinReq.GameName}' ha già un master." : string.Empty;
+                                        success = false;
+                                    }
+                                    else
+                                        success = true;
+                                }
+                            }
+                            else
+                            {
+                                if (game == null)
+                                {
+                                    denialMessage = $"Il gioco '{joinReq.GameName}' non esiste. Solo un master può creare un nuovo gioco.";
+                                    success = false;
+                                }
+                                else
+                                {
+                                    bool playerExists = game.Players.Any(p => p == client.Player);
+
+                                    if (playerExists)
+                                    {
+                                        denialMessage = $"Sei già nel gioco '{joinReq.GameName}'.";
+                                        success = false;
+                                    }
+                                    else
+                                        success = true;
+                                }
+                            }
+
+                            if (success)
+                            {
+                                game.Players.Add(client.Player);
+                                await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_JoinResponse, new JoinResponsePayload
+                                {
+                                    Success = true,
+                                    Message = $"Sei entrato nel gioco '{joinReq.GameName}' come {joinReq.Role}.",
+                                    GameName = joinReq.GameName,
+                                    Role = joinReq.Role
+                                }));
+                            }
+                            else
+                            {
+                                await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_JoinResponse, new JoinResponsePayload
+                                {
+                                    Success = false,
+                                    Message = denialMessage,
+                                    GameName = joinReq.GameName,
+                                    Role = joinReq.Role
+                                }));
+                            }
                         }
                     }
                     break;

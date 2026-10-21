@@ -309,11 +309,13 @@ namespace RPG.Client
 
                 case OpCode.S2C_LinkResponse:
                     var linkResp = packet.DeserializePayload<LinkResponsePayload>();
+                    
                     if(linkResp != null)
                     {
                         if (linkResp.Success)
                         {
                             PrintServerOutput(() => Console.WriteLine($"[LINK] Collegamento riuscito: Player '{linkResp.PlayerHandle}' con Character '{linkResp.CharacterHandle}'."));
+                            _player.Role = linkResp.Role;
                         }
                         else
                         {
@@ -337,15 +339,16 @@ namespace RPG.Client
                 Console.WriteLine("\n========================================");
                 Console.WriteLine("🎮 COMANDI DISPONIBILI - NIGHT CITY RPG");
                 Console.WriteLine("----------------------------------------");
-                Console.WriteLine("  /status                               - Richiede la scheda personaggio completa");
-                Console.WriteLine("  /skills                               - Visualizza la lista delle tue abilità");
-                Console.WriteLine("  /move <X> <Y> [Z]                     - Spostati nello spazio 3D");
-                Console.WriteLine("  /attack <Bersaglio>                   - Attacca con l'arma equipaggiata");
-                Console.WriteLine("  /attack <Bersaglio> <Arma/Abilità>    - Attacca specificando arma o abilità (es. /attack Jackie ArtiMarziali)");
+                Console.WriteLine("  /status                               - Visualizza la scheda personaggio");
+                Console.WriteLine("  /status \"<Character>\"               - Visualizza la scheda personaggio (master only)");
+                Console.WriteLine("  /skills                               - Visualizza la lista delle abilità del personaggio");
+                Console.WriteLine("  /move <X> <Y> [Z]                     - Muova il personaggio nello spazio 3D");
+                Console.WriteLine("  /attack <Bersaglio>                   - Attacca il bersaglio con l'arma equipaggiata");
+                Console.WriteLine("  /attack <Bersaglio> <Arma/Abilità>    - Attacca il bersaglio specificando arma o abilità (es. /attack Jackie ArtiMarziali)");
                 Console.WriteLine("  /roll <Espressione> [Motivazione]     - Effettua un tiro di dadi (es. /roll 1d10+4 Iniziativa)");
                 Console.WriteLine("  /skill <NomeAbilità> [TN]             - Effettua un test di abilità (es. /skill Percezione 15)");
                 Console.WriteLine("  /chat \"<Messaggio>\" [userid]        - Chat broadcast, o privata aggiungendo l'userid dopo le virgolette");
-                Console.WriteLine("  /link  \"<Character>\"                - Collega il player ad un personaggio esistente");
+                Console.WriteLine("  /link \"<Character>\"                 - Collega il player ad un personaggio esistente");
                 Console.WriteLine("  /join \"<Game>\" [master|player]      - Entra in un game esistente");
                 Console.WriteLine("  /ping                                 - Verifica la latenza con il server (ping/pong)");
                 Console.WriteLine("  /help                                 - Mostra questo menu");
@@ -516,7 +519,7 @@ namespace RPG.Client
 
                 _player = new Player
                 {
-                    Username = loginResp.PlayerId
+                    Username = loginResp.PlayerName
                 };
 
                 loggedIn = true;
@@ -569,6 +572,12 @@ namespace RPG.Client
 
                 if (trimmedInput.Equals("/status", StringComparison.OrdinalIgnoreCase))
                 {
+                    if (_player.Character == null)
+                    {
+                        Console.WriteLine("[!] Questo tipo di comando può essere eseguito solo dopo il link al personaggio.");
+                        continue;
+                    }
+
                     // Invia al server la richiesta esplicita di aggiornamento stato
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetStatus, new { })));
                     continue;
@@ -576,6 +585,12 @@ namespace RPG.Client
 
                 if (trimmedInput.Equals("/skills", StringComparison.OrdinalIgnoreCase))
                 {
+                    if (_player.Character == null)
+                    {
+                        Console.WriteLine("[!] Questo tipo di comando può essere eseguito solo dopo il link al personaggio.");
+                        continue;
+                    }
+
                     // Richiesta autoritativa delle abilità al server
                     // (risposta gestita nel case S2C_SkillListResponse)
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetSkills, new { })));
@@ -584,6 +599,12 @@ namespace RPG.Client
 
                 if (trimmedInput.StartsWith("/move", StringComparison.OrdinalIgnoreCase))
                 {
+                    if (_player.Character == null)
+                    {
+                        Console.WriteLine("[!] Questo tipo di comando può essere eseguito solo dopo il link al personaggio.");
+                        continue;
+                    }
+
                     string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                     
                     if (parts.Length >= 4 &&
@@ -616,6 +637,12 @@ namespace RPG.Client
 
                 if (trimmedInput.StartsWith("/attack", StringComparison.OrdinalIgnoreCase))
                 {
+                    if(_player.Character == null)
+                    {
+                        Console.WriteLine("[!] Questo tipo di comando può essere eseguito solo dopo il link al personaggio.");
+                        continue;
+                    }
+
                     // Parsing dall'input ORIGINALE (non lowercased) per preservare il case
                     // di player_name, armi e abilità (es. "ArtiMarziali").
                     string[] parts = input.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -655,6 +682,12 @@ namespace RPG.Client
 
                 if (trimmedInput.StartsWith("/skill", StringComparison.OrdinalIgnoreCase))
                 {
+                    if (_player.Character == null)
+                    {
+                        Console.WriteLine("[!] Questo tipo di comando può essere eseguito solo dopo il link al personaggio.");
+                        continue;
+                    }
+
                     // Parsing dall'input ORIGINALE (non lowercased) per preservare il case
                     // del nome dell'abilità (es. "Pistola", "ArtiMarziali").
                     string[] parts = input.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
