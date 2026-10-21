@@ -116,7 +116,7 @@ public class PlayerInfoPayload
 }
 public class PlayerListResponsePayload
 {
-    public List<PlayerInfoPayload> Players { get; set; } = new();
+    public List<PlayerInfoPayload> Players { get; set; } = [];
 }
 public class JoinRequestPayload
 {

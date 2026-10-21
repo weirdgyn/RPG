@@ -345,6 +345,7 @@ namespace RPG.Client
                 Console.WriteLine("  /roll <Espressione> [Motivazione]     - Effettua un tiro di dadi (es. /roll 1d10+4 Iniziativa)");
                 Console.WriteLine("  /skill <NomeAbilità> [TN]             - Effettua un test di abilità (es. /skill Percezione 15)");
                 Console.WriteLine("  /chat \"<Messaggio>\" [userid]        - Chat broadcast, o privata aggiungendo l'userid dopo le virgolette");
+                Console.WriteLine("  /link  \"<Character>\"                - Collega il player ad un personaggio esistente");
                 Console.WriteLine("  /join \"<Game>\" [master|player]      - Entra in un game esistente");
                 Console.WriteLine("  /ping                                 - Verifica la latenza con il server (ping/pong)");
                 Console.WriteLine("  /help                                 - Mostra questo menu");
@@ -749,7 +750,7 @@ namespace RPG.Client
                         var linkPacket = NetworkPacket.Create(OpCode.C2S_Link, new LinkRequestPayload
                         {
                             PlayerHandle = _player.Username,
-                            CharacterHandle = parts[2]
+                            CharacterHandle = parts[1]
                         });
 
                         await _writer.WriteLineAsync(JsonSerializer.Serialize(linkPacket));

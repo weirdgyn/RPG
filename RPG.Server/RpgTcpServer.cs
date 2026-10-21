@@ -147,8 +147,6 @@ namespace RPG.Server.Services
                                 // Caricamento o generazione autoritativa tramite CharacterLoader e file JSON
 
                                 //TODO: spostare nel comando di associazione player -> character
-                                //client.Player.Character = CharacterLoader.LoadOrGenerateCharacter(userName);
-                                //client.Player.Character.CharacterId = client.Id.ToString();
                                 client.IsAuthenticated = true;
                             }
                         }
@@ -168,13 +166,6 @@ namespace RPG.Server.Services
                             PlayerId = client.Player.PlayerId,
                             Message = $"Benvenuto a Night City, {client.Player.Username}!"
                         }));
-
-                        // Invio stato aggiornato del personaggio al client
-                        //TODO: spostare nel comando di associazione player -> character
-                        //await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_PlayerStateUpdate, new CharacterStatePayload
-                        //{
-                        //    Character = client.Player.Character
-                        //}));
 
                         // Notifica globale agli altri
                         var joinNotify = NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"{client.Player.Username} è entrato nella rete." });
@@ -543,6 +534,40 @@ namespace RPG.Server.Services
                             {
                                 await BroadcastPacketAsync(NetworkPacket.Create(OpCode.S2C_PlayerMoved, movePayload), excludeClientId: client.Id);
                             }
+                        }
+                    }
+                    break;
+
+                case OpCode.C2S_Link:
+                    {
+                        var linkReq = packet.DeserializePayload<LinkRequestPayload>();
+                        if(linkReq != null 
+                            && !string.IsNullOrWhiteSpace(linkReq.PlayerHandle) 
+                            && !string.IsNullOrWhiteSpace(linkReq.CharacterHandle))
+                        {
+                            client.Player.Character = CharacterLoader.LoadOrGenerateCharacter(linkReq.CharacterHandle);
+                            client.Player.Character.CharacterId = client.Id.ToString();
+
+                            CharacterLoader.SaveCharacter(client.Player.Character);
+
+                            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_LinkResponse, new LinkResponsePayload
+                            {
+                                Success = true,
+                                Message = $"Personaggio '{linkReq.CharacterHandle}' associato a '{linkReq.PlayerHandle}'."
+                            }));
+
+                            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_PlayerStateUpdate, new CharacterStatePayload
+                            {
+                                Character = client.Player.Character
+                            }));
+                        }
+                        else
+                        {
+                            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_LinkResponse, new LinkResponsePayload
+                            {
+                                Success = false,
+                                Message = "Richiesta di link non valida."
+                            }));
                         }
                     }
                     break;
