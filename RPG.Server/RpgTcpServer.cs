@@ -563,6 +563,7 @@ namespace RPG.Server.Services
                                 Message = $"Personaggio '{linkReq.CharacterHandle}' associato a '{linkReq.PlayerHandle}'.",
                                 Role = client.Player.Role,
                                 PlayerHandle = client.Player.Username,
+                                CharacterHandle = linkReq.CharacterHandle
                             }));
 
                             await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_PlayerStateUpdate, new CharacterStatePayload

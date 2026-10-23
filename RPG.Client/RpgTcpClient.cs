@@ -798,10 +798,12 @@ namespace RPG.Client
 
                     if (parts.Length >= 2)
                     {
+                        var chartacterHandle = parts[1].Trim();
+
                         var linkPacket = NetworkPacket.Create(OpCode.C2S_Link, new LinkRequestPayload
                         {
                             PlayerHandle = _player.Username,
-                            CharacterHandle = parts[1]
+                            CharacterHandle = chartacterHandle
                         });
 
                         await _writer.WriteLineAsync(JsonSerializer.Serialize(linkPacket));
