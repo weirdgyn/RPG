@@ -8,5 +8,6 @@
         public RoleType Role { get; set; } = RoleType.none;
         public string Email { get; set; } = string.Empty;
         public Character? Character { get; set; } = null;
+        public string Handle { get; set; } = string.Empty;
     }
 }

@@ -286,7 +286,7 @@ namespace RPG.Client
                                 string marker = (_player != null
                                     && string.Equals(_player.Username, p.Handle, StringComparison.OrdinalIgnoreCase))
                                     ? "  (tu)" : "";
-                                Console.WriteLine($"  - {p.Handle,-16}{marker,-8} [{p.Role}])");
+                                Console.WriteLine($"  - {p.Handle,-16}{marker,-8} [{p.Role}]");
                             }
                             Console.WriteLine("----------------------------------------");
                         });
@@ -317,6 +317,7 @@ namespace RPG.Client
                         {
                             PrintServerOutput(() => Console.WriteLine($"[LINK] Collegamento riuscito: Player '{linkResp.PlayerHandle}' con Character '{linkResp.CharacterHandle}'."));
                             _player.Role = linkResp.Role;
+                            _player.Handle = linkResp.CharacterHandle;
                         }
                         else
                         {
@@ -545,6 +546,21 @@ namespace RPG.Client
 
                 string trimmedInput = input.Trim().ToLower();
 
+                if (string.IsNullOrWhiteSpace(trimmedInput)) { continue; }
+                else if (!trimmedInput.StartsWith("/"))
+                {
+                    Console.WriteLine("[!] I comandi devono iniziare con il caratter '/'.");
+                    continue;
+                }
+                else if (trimmedInput.StartsWith("/", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (_player == null)
+                    {
+                        Console.WriteLine("[!] Devi essere loggato per utilizzare i comandi.");
+                        continue;
+                    }
+                }
+
                 if (trimmedInput.Equals("/ping", StringComparison.OrdinalIgnoreCase))
                 {
                     // Registra il momento dell'invio per calcolare il RTT quando arriva il Pong
@@ -573,7 +589,7 @@ namespace RPG.Client
 
                 if (trimmedInput.Equals("/status", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (_player.Character == null)
+                    if (string.IsNullOrWhiteSpace(_player.Handle))
                     {
                         Console.WriteLine("[!] Questo tipo di comando può essere eseguito solo dopo il link al personaggio.");
                         continue;
@@ -586,7 +602,7 @@ namespace RPG.Client
 
                 if (trimmedInput.Equals("/skills", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (_player.Character == null)
+                    if (string.IsNullOrWhiteSpace(_player.Handle))
                     {
                         Console.WriteLine("[!] Questo tipo di comando può essere eseguito solo dopo il link al personaggio.");
                         continue;
@@ -600,7 +616,7 @@ namespace RPG.Client
 
                 if (trimmedInput.StartsWith("/move", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (_player != null && _player.Character == null)
+                    if (string.IsNullOrWhiteSpace(_player.Handle))
                     {
                         Console.WriteLine("[!] Questo tipo di comando può essere eseguito solo dopo il link al personaggio.");
                         continue;
@@ -638,7 +654,7 @@ namespace RPG.Client
 
                 if (trimmedInput.StartsWith("/attack", StringComparison.OrdinalIgnoreCase))
                 {
-                    if(_player.Character == null)
+                    if (string.IsNullOrWhiteSpace(_player.Handle))
                     {
                         Console.WriteLine("[!] Questo tipo di comando può essere eseguito solo dopo il link al personaggio.");
                         continue;
@@ -683,7 +699,7 @@ namespace RPG.Client
 
                 if (trimmedInput.StartsWith("/skill", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (_player.Character == null)
+                    if (string.IsNullOrWhiteSpace(_player.Handle))
                     {
                         Console.WriteLine("[!] Questo tipo di comando può essere eseguito solo dopo il link al personaggio.");
                         continue;
