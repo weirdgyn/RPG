@@ -113,7 +113,6 @@ namespace RPG.Server.Services
 
             character.Skills = new Dictionary<string, int>(character.Skills, StringComparer.OrdinalIgnoreCase);
         }
-
         private static Character GenerateRandomCharacterWithDice()
         {
             var character = new Character();

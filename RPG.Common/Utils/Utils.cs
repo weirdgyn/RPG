@@ -22,7 +22,6 @@ public static class GameDice
             Details = result.ToString() // Fornisce automaticamente il dettaglio dei singoli dadi e modificatori
         };
     }
-
     /// <summary>
     /// Tiro d10 "esplosivo" stile Cyberpunk 2020: se esce 10 si ritira e si somma,
     /// continuando finché escono altri 10. (La sintassi "1d10!" della libreria non è

@@ -132,13 +132,11 @@ public class JoinResponsePayload
     public string GameName { get; set; } = string.Empty;
     public string Role { get; set; } = string.Empty;    // Ruolo assegnato al giocatore nel game
 }
-
 public class LinkRequestPayload
 {
     public string PlayerHandle { get; set; } = string.Empty;
     public string CharacterHandle { get; set; } = string.Empty;
 }
-
 public class LinkResponsePayload
 {
     public bool Success { get; set; }

@@ -29,13 +29,10 @@ public class ArmorPiece
     public string Name { get; set; } = string.Empty;
     public ArmorLocation Location { get; set; }
     public ArmorMaterial Material { get; set; } = ArmorMaterial.Soft;
-
     /// <summary>Stopping Power massimo (SP pieno).</summary>
     public int MaxStopPower { get; set; } = 0;
-
     /// <summary>Stopping Power attuale (l'ablazione lo riduce quando assorbe danno).</summary>
     public int CurrentStopPower { get; set; } = 0;
-
     public override string ToString() => $"{Name} [{Location}] SP {CurrentStopPower}/{MaxStopPower}";
 }
 

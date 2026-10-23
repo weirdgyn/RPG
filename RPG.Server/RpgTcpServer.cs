@@ -18,7 +18,7 @@ namespace RPG.Server.Services
         private readonly ConcurrentDictionary<Guid, ClientSession> _connectedClients = new();
         // Mappa del mondo: valida i movimenti (confini e ostacoli)
         private readonly GameMap _gameMap = new();
-        private List<Game> _games = new();
+        private readonly List<Game> _games = [];
         // Serializza le operazioni di login per rendere atomico il controllo sull'unicità dell'handle
         private readonly object _loginLock = new();
         private bool _isRunning;

@@ -4,7 +4,6 @@ public class HealthSystem
 {
     public int MaxHealth { get; set; } = 40; // Di norma calcolato da BODY * 5 o simile
     public int CurrentHealth { get; set; } = 40;
-
     // In Cyberpunk le ferite applicano penalità ai tiri di dado
     public int GetWoundPenalty()
     {
@@ -15,7 +14,6 @@ public class HealthSystem
         if (ratio > 0.00) return -6;  // Mortale (-6 a tutte le azioni)
         return -99;                   // Inconscio / Morto
     }
-
     public string GetWoundStatusDescription()
     {
         double ratio = (double)CurrentHealth / MaxHealth;

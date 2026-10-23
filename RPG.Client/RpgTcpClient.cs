@@ -8,6 +8,7 @@ namespace RPG.Client
 {
     public class RpgTcpClient
     {
+        private const int CONNECTION_TIMEOUT = 15;
         private TcpClient? _tcpClient;
         private StreamReader? _reader;
         private StreamWriter? _writer;
@@ -194,8 +195,8 @@ namespace RPG.Client
                     var chat = packet.DeserializePayload<ChatPayload>();
                     if (chat != null)
                     {
-                        bool isMine = _lastKnownCharacter != null
-                            && string.Equals(_lastKnownCharacter.Handle, chat.Sender, StringComparison.OrdinalIgnoreCase);
+                        bool isMine = _player != null
+                            && string.Equals(_player.Username, chat.Sender, StringComparison.OrdinalIgnoreCase);
                         bool hasRecipient = !string.IsNullOrWhiteSpace(chat.Recipient);
 
                         PrintServerOutput(() =>
@@ -282,8 +283,8 @@ namespace RPG.Client
                             }
                             foreach (var p in listResp.Players)
                             {
-                                string marker = (_lastKnownCharacter != null
-                                    && string.Equals(_lastKnownCharacter.Handle, p.Handle, StringComparison.OrdinalIgnoreCase))
+                                string marker = (_player != null
+                                    && string.Equals(_player.Username, p.Handle, StringComparison.OrdinalIgnoreCase))
                                     ? "  (tu)" : "";
                                 Console.WriteLine($"  - {p.Handle,-16}{marker,-8} [{p.Role}])");
                             }
@@ -500,7 +501,7 @@ namespace RPG.Client
                 LoginResponsePayload loginResp;
                 try
                 {
-                    loginResp = await _loginTcs.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                    loginResp = await _loginTcs.Task.WaitAsync(TimeSpan.FromSeconds(CONNECTION_TIMEOUT));
                 }
                 catch (TimeoutException)
                 {
@@ -599,7 +600,7 @@ namespace RPG.Client
 
                 if (trimmedInput.StartsWith("/move", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (_player.Character == null)
+                    if (_player != null && _player.Character == null)
                     {
                         Console.WriteLine("[!] Questo tipo di comando può essere eseguito solo dopo il link al personaggio.");
                         continue;

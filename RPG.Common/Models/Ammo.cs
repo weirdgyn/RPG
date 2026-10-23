@@ -22,12 +22,9 @@ public class Ammo
     public string Caliber { get; set; } = string.Empty;
     public int Quantity { get; set; } = 0;
     public AmmoEffect Effect { get; set; } = AmmoEffect.Standard;
-
     /// <summary>Modificatore al danno (es. Expanding: +1).</summary>
     public int DamageModifier { get; set; } = 0;
-
     /// <summary>AP: l'SP dell'armatura viene dimezzato prima di applicare il danno.</summary>
     public bool HalvesArmorSP { get; set; }
-
     public override string ToString() => $"{Name} ({Caliber}, {Quantity} colpi, {Effect})";
 }
