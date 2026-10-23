@@ -14,7 +14,6 @@ namespace RPG.Client
         private StreamWriter? _writer;
         private bool _isRunning;
         private Player? _player;
-        private Character? _lastKnownCharacter;
         // Serializza l'accesso alla console: il listener di rete e il loop dei comandi
         // scrivono entrambi, e il prompt deve restare in fondo senza essere "seppellito"
         // dai messaggi asincroni del server.
@@ -133,8 +132,8 @@ namespace RPG.Client
                     if (statePayload?.Character != null)
                     {
                         // Salva lo stato in memoria locale per i comandi /skills e consultazione rapida
-                        _lastKnownCharacter = statePayload.Character;
-                        PrintServerOutput(() => PrintCharacterStatus(_lastKnownCharacter));
+                        _player.Character = statePayload.Character;
+                        PrintServerOutput(() => PrintCharacterStatus(_player.Character));
                     }
                     break;
 
@@ -211,15 +210,16 @@ namespace RPG.Client
                     }
                     break;
 
+                //TODO: Skill list should be gathered from server if the _player.Character is invalid
                 case OpCode.S2C_SkillListResponse:
                     var skillListResp = packet.DeserializePayload<SkillListResponsePayload>();
                     if (skillListResp?.Skills != null)
                     {
                         // Se abbiamo lo stato locale, aggiorniamo il dizionario
-                        if (_lastKnownCharacter != null)
+                        if (_player.Character != null)
                         {
-                            _lastKnownCharacter.Skills = skillListResp.Skills;
-                            PrintServerOutput(() => PrintSkillList(_lastKnownCharacter));
+                            _player.Character.Skills = skillListResp.Skills;
+                            PrintServerOutput(() => PrintSkillList(_player.Character));
                         }
                         else
                         {
@@ -244,8 +244,8 @@ namespace RPG.Client
                     var movePayload = packet.DeserializePayload<MoveResultPayload>();
                     if (movePayload != null)
                     {
-                        bool isSelf = _lastKnownCharacter != null
-                            && string.Equals(_lastKnownCharacter.Handle, movePayload.PlayerHandle, StringComparison.OrdinalIgnoreCase);
+                        bool isSelf = _player.Character != null
+                            && string.Equals(_player.Character.Handle, movePayload.PlayerHandle, StringComparison.OrdinalIgnoreCase);
 
                         PrintServerOutput(() =>
                         {
@@ -547,12 +547,12 @@ namespace RPG.Client
                 string trimmedInput = input.Trim().ToLower();
 
                 if (string.IsNullOrWhiteSpace(trimmedInput)) { continue; }
-                else if (!trimmedInput.StartsWith("/"))
+                else if (!trimmedInput.StartsWith('/'))
                 {
                     Console.WriteLine("[!] I comandi devono iniziare con il caratter '/'.");
                     continue;
                 }
-                else if (trimmedInput.StartsWith("/", StringComparison.OrdinalIgnoreCase))
+                else if (trimmedInput.StartsWith('/'))
                 {
                     if (_player == null)
                     {
@@ -641,7 +641,7 @@ namespace RPG.Client
                     {
                         var movePacket = NetworkPacket.Create(OpCode.C2S_Move, new MoveRequestPayload
                         {
-                            Position = new Position3D { X = x1, Y = y1, Z = _lastKnownCharacter?.Position.Z ?? 0 }
+                            Position = new Position3D { X = x1, Y = y1, Z = _player.Character?.Position.Z ?? 0 }
                         });
                         await _writer.WriteLineAsync(JsonSerializer.Serialize(movePacket));
                     }
