@@ -115,7 +115,7 @@ public class PlayerInfoPayload
     public string Handle { get; set; } = string.Empty;
     public Player.RoleType Role { get; set; } = Player.RoleType.none;
 }
-public class PlayerListResponsePayload
+public class PlayersResponsePayload
 {
     public List<PlayerInfoPayload> Players { get; set; } = [];
 }

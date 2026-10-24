@@ -418,6 +418,13 @@ public class RpgTcpServer(string ipAddress, int port)
 
                         await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_SkillListResponse, skillListPayload));
                     }
+                    else
+                    {
+                        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
+                        {
+                            Message = "Nessun personaggio associato: usa /link \"<Character>\" prima di richiedere le abilità."
+                        }));
+                    }
                 }
                 break;
 
@@ -434,7 +441,7 @@ public class RpgTcpServer(string ipAddress, int port)
                 }
                 break;
 
-            case OpCode.C2S_GetPlayerList:
+            case OpCode.C2S_GetPlayers:
                 {
                     // Elenco dei giocatori autenticati e online
                     var players = _connectedClients.Values
@@ -449,7 +456,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
                     Console.WriteLine($"[LIST] {client.Player.Username} richiede l'elenco: {players.Count} online.");
 
-                    await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_PlayerList, new PlayerListResponsePayload
+                    await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Players, new PlayersResponsePayload
                     {
                         Players = players
                     }));

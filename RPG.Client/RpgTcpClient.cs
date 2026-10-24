@@ -274,8 +274,8 @@ namespace RPG.Client
                     }
                     break;
 
-                case OpCode.S2C_PlayerList:
-                    var listResp = packet.DeserializePayload<PlayerListResponsePayload>();
+                case OpCode.S2C_Players:
+                    var listResp = packet.DeserializePayload<PlayersResponsePayload>();
                     if (listResp != null)
                     {
                         PrintServerOutput(() =>
@@ -636,7 +636,7 @@ namespace RPG.Client
 
                 if (trimmedInput.Equals("/list", StringComparison.OrdinalIgnoreCase))
                 {
-                    await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetPlayerList, new { })));
+                    await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetPlayers, new { })));
                     
                     continue;
                 }

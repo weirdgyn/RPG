@@ -18,8 +18,10 @@ public class Character
     }
     public class BonusType
     {
-        public string ApplyTo = "NONE"; // "STAT:BODY", "SKILL:GUNS", "HIT", "DAMAGE", "NONE", "ARMOR", "HEALTH", "INIT"
-        public int Value = 0;
+        // NB: proprietà con getter/setter: System.Text.Json serializza solo le proprietà,
+        // i campi puri verrebbero ignorati (e il bonus andrebbe perso in persistenza).
+        public string ApplyTo { get; set; } = "NONE"; // "STAT:BODY", "SKILL:GUNS", "HIT", "DAMAGE", "NONE", "ARMOR", "HEALTH", "INIT"
+        public int Value { get; set; } = 0;
     }
     public class CyberWare {
         public enum CyberType
@@ -38,7 +40,7 @@ public class Character
         public string ID { get; set; } = string.Empty;
         public CyberType Type { get; set; } = CyberType.Neuralware;
         public BonusType Bonus { get; set; } = new();
-        public string Description = string.Empty;
+        public string Description { get; set; } = string.Empty;
     }
     public string Handle { get; set; } = "StreetPunk"; // Nome di strada del personaggio
     public RoleType Role { get; set; } = RoleType.Solo;        // Solo, Netrunner, Techie, Nomad, Rockerboy, Fixer...

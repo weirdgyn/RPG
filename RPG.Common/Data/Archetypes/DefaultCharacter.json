@@ -1,6 +1,6 @@
 ﻿{
   "Handle": "Mercenario_Standard",
-  "Role": "Solo",
+  "Role": 0,
   "Stats": {
     "INT": 6,
     "REF": 8,
@@ -94,7 +94,7 @@
   "Cyberware": [
     {
       "ID": "Sandevistan",
-      "Type": "Neuralware",
+      "Type": 1,
       "Bonus": {
         "ApplyTo": "INIT",
         "Value": 3
