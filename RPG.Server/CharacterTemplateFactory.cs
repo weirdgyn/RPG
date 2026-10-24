@@ -1,52 +1,26 @@
-﻿using RPG.Common.Models;
+using RPG.Common.Models;
 using RPG.Common.Utils;
 using System.Text.Json;
-using static RPG.Common.Models.Character.CyberWare;
 
 namespace RPG.Server;
 
-public static class CharacterFactory
+/// <summary>
+/// Crea nuove istanze di <see cref="Character"/> partendo dall'archetipo JSON di default
+/// (<see cref="DefaultTemplatePath"/>) o, in ultima istanza, dalla generazione casuale con dadi.
+/// Non si occupa di persistenza: quella è compito di <see cref="CharacterRepository"/>.
+/// </summary>
+public static class CharacterTemplateFactory
 {
-    public const string CharactersFolder = "Data/Characters";
     public const string DefaultTemplatePath = "Data/Archetypes/DefaultCharacter.json";
-    private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
-    public static Character LoadOrGenerateCharacter(string handle, string directoryPath = CharactersFolder)
+
+    /// <summary>
+    /// Crea un nuovo personaggio dall'archetipo di default; se il template non è disponibile
+    /// o non è parsabile, ripiega sulla generazione casuale. L'Handle non è impostato qui:
+    /// lo decide il chiamante (es. CharacterRepository).
+    /// </summary>
+    public static Character CreateFromDefaultTemplateOrRandom()
     {
-        // Risolviamo i percorsi per avere chiarezza nei log
-        string absoluteDir = DataPaths.Resolve(directoryPath);
-        Directory.CreateDirectory(absoluteDir);
-
-        string userFilePath = Path.Combine(absoluteDir, $"{handle}.json");
-        Console.WriteLine($"[CHAR] Ricerca scheda utente per '{handle}' in: {userFilePath}");
-
-        // 1. Controllo se esiste già il salvataggio specifico dell'utente
-        if (File.Exists(userFilePath))
-        {
-            try
-            {
-                string json = File.ReadAllText(userFilePath);
-                var character = JsonSerializer.Deserialize<Character>(json);
-                if (character != null)
-                {
-                    NormalizeSkills(character);
-                    Console.WriteLine($"[CHAR] -> SUCCESSO: Scheda di '{handle}' caricata dal file di salvataggio esistente.");
-                    return character;
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[CHAR] -> ERRORE nella lettura della scheda '{userFilePath}': {ex.Message}");
-            }
-        }
-        else
-        {
-            Console.WriteLine($"[CHAR] -> Nessun salvataggio precedente trovato per '{handle}'. Procedo alla creazione.");
-        }
-
-        // 2. Cerchiamo il template di default
         string absoluteTemplatePath = DataPaths.Resolve(DefaultTemplatePath);
-        Character newChar;
-
         Console.WriteLine($"[CHAR] Ricerca template di default in: {absoluteTemplatePath}");
 
         if (File.Exists(absoluteTemplatePath))
@@ -54,66 +28,23 @@ public static class CharacterFactory
             try
             {
                 string templateJson = File.ReadAllText(absoluteTemplatePath);
-                newChar = JsonSerializer.Deserialize<Character>(templateJson) ?? new Character();
+                var character = JsonSerializer.Deserialize<Character>(templateJson) ?? new Character();
                 Console.WriteLine($"[CHAR] -> SUCCESSO: Creato nuovo personaggio basato sul template '{absoluteTemplatePath}'.");
+                return character;
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[CHAR] -> ERRORE lettura template '{absoluteTemplatePath}': {ex.Message}. Utilizzo generazione dadi.");
-                newChar = GenerateRandomCharacterWithDice();
             }
         }
         else
         {
             Console.WriteLine($"[CHAR] -> Template '{absoluteTemplatePath}' non trovato. Generazione statistiche casuali con dadi.");
-            newChar = GenerateRandomCharacterWithDice();
         }
 
-        // Inizializziamo/sovrascriviamo l'handle e calcoliamo i punti ferita
-        newChar.Handle = handle;
-        newChar.Health.MaxHealth = newChar.Stats.BODY * 5;
-        newChar.Health.CurrentHealth = newChar.Health.MaxHealth;
-        NormalizeSkills(newChar);
-
-        // 3. Salvataggio forzato e persistente su disco del nuovo personaggio
-        SaveCharacter(newChar, directoryPath);
-
-        return newChar;
+        return GenerateRandomCharacterWithDice();
     }
-    public static void SaveCharacter(Character character, string directoryPath = CharactersFolder)
-    {
-        try
-        {
-            string absoluteDir = DataPaths.Resolve(directoryPath);
-            Directory.CreateDirectory(absoluteDir);
 
-            string filePath = Path.Combine(absoluteDir, $"{character.Handle}.json");
-            string json = JsonSerializer.Serialize(character, JsonOpts);
-
-            File.WriteAllText(filePath, json);
-            Console.WriteLine($"[CHAR] -> PERSISTENZA: Scheda di '{character.Handle}' salvata con successo in '{filePath}'.");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[CHAR] -> ERRORE CRITICO salvataggio scheda di {character.Handle}: {ex.Message}");
-        }
-    }
-    // La deserializzazione JSON sostituisce il Dictionary delle abilità perdendo il
-    // comparer OrdinalIgnoreCase dell'initializer di Character (diventa case-sensitive).
-    // Ricostruiamo il dizionario per garantire lookup case-insensitive in tutto il server.
-    private static void NormalizeSkills(Character character)
-    {
-        if (character.Skills == null || character.Skills.Count == 0)
-        {
-            character.Skills = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            return;
-        }
-
-        if (character.Skills.Comparer is StringComparer { } sc && ReferenceEquals(sc, StringComparer.OrdinalIgnoreCase))
-            return;
-
-        character.Skills = new Dictionary<string, int>(character.Skills, StringComparer.OrdinalIgnoreCase);
-    }
     private static Character GenerateRandomCharacterWithDice()
     {
         var character = new Character();
@@ -130,7 +61,6 @@ public static class CharacterFactory
         character.Skills["ArtiMarziali"] = 2;
         character.Skills["Schivare"] = 2;
         character.Skills["Streetwise"] = 1;
-        character.Skills["CombatSense"] = 2;
 
         // Arma 1: Pistola da Fuoco
         var pistol = new Weapon
@@ -148,7 +78,7 @@ public static class CharacterFactory
         };
 
         character.Weapons.Add(pistol);
-        
+
         // Arma 2: Corpo a corpo / Arti Marziali
         character.Weapons.Add(new Weapon
         {
@@ -203,10 +133,12 @@ public static class CharacterFactory
             HalvesArmorSP = true
         });
 
-        character.Cyberware.Add( new Character.CyberWare() {
+        character.Cyberware.Add(new Character.CyberWare
+        {
             ID = "Sandevistan",
-            Type =  CyberType.Neuralware,
-            Bonus = new Character.BonusType { 
+            Type = Character.CyberWare.CyberType.Neuralware,
+            Bonus = new Character.BonusType
+            {
                 ApplyTo = "INIT",
                 Value = 3
             },

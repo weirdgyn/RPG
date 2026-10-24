@@ -67,27 +67,8 @@ public class Character
     public ArmorSet Armor { get; set; } = new();
     // MUNIZIONI POSSEDUTE (consumabili per calibro/effetto)
     public List<Ammo> Ammos { get; set; } = [];
-    public List<CyberWare> Cyberware { get; set; } = []; 
-    public int GetSkillValue(string skill)
-    {
-        // TODO: search for skill get value
-        //      check for appliable bonuses (stats, cyberware)
-        //      return result
-        return 0;
-    }
-    public int GetHitBonus(string weapon="")
-    {
-        // TODO: get hit bonus from weapon
-        //      check for appliable bonuses (weapon, stats, cyberware)
-        //      return result
-        return 0;
-    }
-    public int GetDamageBonus(string weapon="")
-    {
-        // TODO: get damage bonus from weapon
-        //      get damage from ammo
-        //      check for appliable bonuses (weapon, stats, cyberware, ammo)
-        //      return result
-        return 0;
-    }
+    public List<CyberWare> Cyberware { get; set; } = [];
+    // Nota: Character è un DTO puro. La risoluzione delle regole (bonus di abilità,
+    // iniziativa, hit/damage) vive nei service (es. futuro CombatResolver/InitiativeService),
+    // non qui, per mantenere il modello serializzabile e testabile.
 }

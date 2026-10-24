@@ -287,7 +287,7 @@ public class RpgTcpServer(string ipAddress, int port)
                             damageDealt = rawDamage * hitMultiplier;
 
                             targetClient.Player.Character.Health.CurrentHealth = Math.Max(0, targetClient.Player.Character.Health.CurrentHealth - damageDealt);
-                            CharacterFactory.SaveCharacter(targetClient.Player.Character); // Persistenza su JSON del bersaglio
+                            CharacterRepository.SaveCharacter(targetClient.Player.Character); // Persistenza su JSON del bersaglio
                         }
 
                         string hitDesc = isHit
@@ -527,7 +527,7 @@ public class RpgTcpServer(string ipAddress, int port)
                             client.Player.Character.Position = requested;
 
                             // Salvataggio della persistenza su JSON
-                            CharacterFactory.SaveCharacter(client.Player.Character);
+                            CharacterRepository.SaveCharacter(client.Player.Character);
 
                             message = $"Posizione aggiornata a ({requested.X}, {requested.Y}, {requested.Z})";
                             Console.WriteLine($"[MOVE] {client.Player.Character.Handle} si è spostato a ({requested.X}, {requested.Y}, {requested.Z})");
@@ -570,10 +570,10 @@ public class RpgTcpServer(string ipAddress, int port)
                         && !string.IsNullOrWhiteSpace(linkReq.PlayerHandle) 
                         && !string.IsNullOrWhiteSpace(linkReq.CharacterHandle))
                     {
-                        client.Player.Character = CharacterFactory.LoadOrGenerateCharacter(linkReq.CharacterHandle);
+                        client.Player.Character = CharacterRepository.LoadOrGenerateCharacter(linkReq.CharacterHandle);
                         client.Player.Role = Player.RoleType.player;
                         
-                        CharacterFactory.SaveCharacter(client.Player.Character);
+                        CharacterRepository.SaveCharacter(client.Player.Character);
 
                         await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_LinkResponse, new LinkResponsePayload
                         {
@@ -819,7 +819,7 @@ public class RpgTcpServer(string ipAddress, int port)
             case OpCode.C2S_GetCharacters:
                 var charactersResponsePayload = new CharactersResponsePayload();
 
-                string[] characters = Directory.GetFiles(CharacterFactory.CharactersFolder);
+                string[] characters = Directory.GetFiles(CharacterRepository.CharactersFolder);
 
                 foreach(var file in characters)
                 {
