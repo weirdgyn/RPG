@@ -508,6 +508,21 @@ namespace RPG.Client
                 Console.WriteLine("   (Nessuna munizione in inventario)");
             }
 
+            Console.WriteLine(" CyberWare:");
+            if (c.Cyberware != null && c.Cyberware.Count > 0)
+            {
+                foreach(var w in c.Cyberware)
+                {
+                    Console.WriteLine($"   - {w.ID} | {w.Type}");
+                    Console.WriteLine($"   - {w.Bonus.ApplyTo} | {w.Bonus.Value}");
+                    Console.WriteLine($"   - {w.Description}");
+                }
+            }
+            else
+            {
+                Console.WriteLine("   (Nessun cyberware in inventario)");
+            }
+
             Console.WriteLine("========================================");
 
         }
