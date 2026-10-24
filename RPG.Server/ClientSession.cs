@@ -3,29 +3,28 @@ using RPG.Common.Protocol;
 using System.Net.Sockets;
 using System.Text.Json;
 
-namespace RPG.Server.Services
+namespace RPG.Server;
+
+public class ClientSession
 {
-    public class ClientSession
+    public Guid Id { get; } = Guid.NewGuid();
+    public string IdShort => Id.ToString()[..6];
+    public TcpClient TcpClient { get; }
+    public StreamReader Reader { get; }
+    public StreamWriter Writer { get; }
+    // Diventa true solo dopo un login riuscito; i comandi di gioco sono bloccati prima.
+    public bool IsAuthenticated { get; set; }
+    public Player Player { get; set; } = new();
+    public ClientSession(TcpClient tcpClient)
     {
-        public Guid Id { get; } = Guid.NewGuid();
-        public string IdShort => Id.ToString()[..6];
-        public TcpClient TcpClient { get; }
-        public StreamReader Reader { get; }
-        public StreamWriter Writer { get; }
-        // Diventa true solo dopo un login riuscito; i comandi di gioco sono bloccati prima.
-        public bool IsAuthenticated { get; set; }
-        public Player Player { get; set; } = new();
-        public ClientSession(TcpClient tcpClient)
-        {
-            TcpClient = tcpClient;
-            var stream = tcpClient.GetStream();
-            Reader = new StreamReader(stream);
-            Writer = new StreamWriter(stream) { AutoFlush = true };
-        }
-        public async Task SendPacketAsync(NetworkPacket packet)
-        {
-            string json = JsonSerializer.Serialize(packet);
-            await Writer.WriteLineAsync(json);
-        }
+        TcpClient = tcpClient;
+        var stream = tcpClient.GetStream();
+        Reader = new StreamReader(stream);
+        Writer = new StreamWriter(stream) { AutoFlush = true };
+    }
+    public async Task SendPacketAsync(NetworkPacket packet)
+    {
+        string json = JsonSerializer.Serialize(packet);
+        await Writer.WriteLineAsync(json);
     }
 }

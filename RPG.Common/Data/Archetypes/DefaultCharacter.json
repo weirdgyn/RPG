@@ -1,5 +1,6 @@
 ﻿{
   "Handle": "Mercenario_Standard",
+  "Role": "Solo",
   "Stats": {
     "INT": 6,
     "REF": 8,
@@ -72,7 +73,7 @@
       "CurrentStopPower": 14
     }
   },
-  "AmmoInventory": [
+  "Ammos": [
     {
       "Id": "ammo_10mm_std",
       "Name": "Munizioni 10mm standard",
@@ -88,6 +89,17 @@
       "Effect": 1,
       "DamageModifier": 0,
       "HalvesArmorSP": true
+    }
+  ],
+  "Cyberware": [
+    {
+      "ID": "Sandevistan",
+      "Type": "Neuralware",
+      "Bonus": {
+        "ApplyTo": "INIT",
+        "Value": 3
+      },
+      "Description": "Sandestivan, si attiva solo quando l'utente lo desidera. L'utente deve impartire un comando mentale affinché il potenziamento si attivi."
     }
   ]
 }

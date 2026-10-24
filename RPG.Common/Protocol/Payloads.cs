@@ -113,7 +113,7 @@ public class PongPayload
 public class PlayerInfoPayload
 {
     public string Handle { get; set; } = string.Empty;
-    public string Role { get; set; } = string.Empty;
+    public Player.RoleType Role { get; set; } = Player.RoleType.none;
 }
 public class PlayerListResponsePayload
 {
@@ -122,7 +122,7 @@ public class PlayerListResponsePayload
 public class JoinRequestPayload
 {
     public string GameName  { get; set; } = string.Empty;
-    public string Role { get; set; } = "none";  //TODO: utilizzare enum RoleType invece di stringa per il ruolo del giocatore
+    public Player.RoleType Role { get; set; } = Player.RoleType.none;  //TODO: utilizzare enum RoleType invece di stringa per il ruolo del giocatore
     public string Description { get; set; } = string.Empty; // Descrizione opzionale del gioco 
 }
 public class JoinResponsePayload
@@ -130,7 +130,7 @@ public class JoinResponsePayload
     public bool Success { get; set; }
     public string Message { get; set; } = string.Empty; // Messaggio di errore o conferma
     public string GameName { get; set; } = string.Empty;
-    public string Role { get; set; } = string.Empty;    // Ruolo assegnato al giocatore nel game
+    public Player.RoleType Role { get; set; } = Player.RoleType.none;    // Ruolo assegnato al giocatore nel game
 }
 public class LinkRequestPayload
 {
@@ -144,4 +144,14 @@ public class LinkResponsePayload
     public string PlayerHandle { get; set; } = string.Empty;
     public string CharacterHandle { get; set; } = string.Empty;
     public Player.RoleType Role { get; set; } = Player.RoleType.none;
+}
+public class InitRequest
+{
+    public string PlayerName { get; set; } = string.Empty;
+    public string Modifiers { get; set; } = string.Empty;
+}
+/// <summary>Notifica S2C inviata dal master ai giocatori per avviare il tiro di iniziativa.</summary>
+public class InitRollRequestPayload
+{
+    public string Message { get; set; } = string.Empty;
 }

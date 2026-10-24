@@ -2,6 +2,7 @@
 using RPG.Common.Protocol;
 using RPG.Common.World;
 using System.Net.Sockets;
+using System.Reflection.Metadata.Ecma335;
 using System.Text.Json;
 
 namespace RPG.Client
@@ -129,7 +130,7 @@ namespace RPG.Client
 
                 case OpCode.S2C_PlayerStateUpdate:
                     var statePayload = packet.DeserializePayload<CharacterStatePayload>();
-                    if (statePayload?.Character != null)
+                    if (_player != null && statePayload?.Character != null)
                     {
                         // Salva lo stato in memoria locale per i comandi /skills e consultazione rapida
                         _player.Character = statePayload.Character;
@@ -210,34 +211,38 @@ namespace RPG.Client
                     }
                     break;
 
-                //TODO: Skill list should be gathered from server if the _player.Character is invalid
                 case OpCode.S2C_SkillListResponse:
                     var skillListResp = packet.DeserializePayload<SkillListResponsePayload>();
                     if (skillListResp?.Skills != null)
                     {
-                        // Se abbiamo lo stato locale, aggiorniamo il dizionario
-                        if (_player.Character != null)
+                        if (_player != null)
                         {
-                            _player.Character.Skills = skillListResp.Skills;
-                            PrintServerOutput(() => PrintSkillList(_player.Character));
-                        }
-                        else
-                        {
-                            // Fallback se la scheda completa non è ancora in memoria
-                            PrintServerOutput(() =>
+                            // Se abbiamo lo stato locale, aggiorniamo il dizionario
+                            if (_player.Character != null)
                             {
-                                Console.WriteLine("========================================");
-                                Console.WriteLine($"🧠 ELENCO ABILITÀ - {skillListResp.Character}");
-                                Console.WriteLine("----------------------------------------");
-                                foreach (var kv in skillListResp.Skills)
+                                _player.Character.Skills = skillListResp.Skills;
+                                PrintServerOutput(() => PrintSkillList(_player.Character));
+                            }
+                            else
+                            {
+                                // TODO: Skill list should be gathered from server if the _player.Character is invalid
+                                // Fallback se la scheda completa non è ancora in memoria
+                                PrintServerOutput(() =>
                                 {
-                                    string statAssoc = Skills.GetStatForSkill(kv.Key);
-                                    Console.WriteLine($"  - {kv.Key,-20} : Livello {kv.Value} (Stat: {statAssoc})");
-                                }
-                                Console.WriteLine("========================================");
-                            });
+                                    Console.WriteLine("========================================");
+                                    Console.WriteLine($"🧠 ELENCO ABILITÀ - {skillListResp.Character}");
+                                    Console.WriteLine("----------------------------------------");
+                                    foreach (var kv in skillListResp.Skills)
+                                    {
+                                        string statAssoc = Skills.GetStatForSkill(kv.Key);
+                                        Console.WriteLine($"  - {kv.Key,-20} : Livello {kv.Value} (Stat: {statAssoc})");
+                                    }
+                                    Console.WriteLine("========================================");
+                                });
+                            }
                         }
                     }
+
                     break;
 
                 case OpCode.S2C_PlayerMoved:
@@ -324,7 +329,19 @@ namespace RPG.Client
                             PrintServerOutput(() => Console.WriteLine($"[LINK] Fallito: {linkResp.Message}"));
                         }
                     }
-                    break; 
+                    break;
+
+                case OpCode.S2C_InitRollRequest:
+                    var initReq = packet.DeserializePayload<InitRollRequestPayload>();
+
+                    if (initReq != null)
+                    {
+                        string msg = string.IsNullOrWhiteSpace(initReq.Message)
+                            ? "Il master ha avviato un tiro di iniziativa."
+                            : initReq.Message;
+                        PrintServerOutput(() => Console.WriteLine($"[INIT] {msg}"));
+                    }
+                    break;
 
                 default:
                     PrintServerOutput(() => Console.WriteLine($"[PACKET] Ricevuto OpCode non gestito: {packet.OpCode}"));
@@ -447,9 +464,9 @@ namespace RPG.Client
             }
 
             Console.WriteLine(" 🔫 Munizioni:");
-            if (c.AmmoInventory != null && c.AmmoInventory.Count > 0)
+            if (c.Ammos != null && c.Ammos.Count > 0)
             {
-                foreach (var a in c.AmmoInventory)
+                foreach (var a in c.Ammos)
                 {
                     string effect = a.Effect == AmmoEffect.ArmorPiercing ? " (AP)" : (a.Effect == AmmoEffect.Expanding ? " (EX)" : "");
                     Console.WriteLine($"   - {a.Name}{effect} | {a.Quantity} colpi");
@@ -565,38 +582,48 @@ namespace RPG.Client
                 {
                     // Registra il momento dell'invio per calcolare il RTT quando arriva il Pong
                     _lastPingSentUtc = DateTime.UtcNow;
+                    
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_Ping, new { })));
+                    
                     continue;
                 }
 
                 if (trimmedInput.Equals("/list", StringComparison.OrdinalIgnoreCase))
                 {
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetPlayerList, new { })));
+                    
                     continue;
                 }
 
                 if (trimmedInput.Equals("/exit", StringComparison.OrdinalIgnoreCase))
                 {
                     _isRunning = false;
+                    
                     break;
                 }
 
                 if (trimmedInput.Equals("/help", StringComparison.OrdinalIgnoreCase))
                 {
                     PrintHelpMenu();
+                    
                     continue;
                 }
+
+                // Commands after this check need to be applied to valid players
+                if (_player == null) { continue; }
 
                 if (trimmedInput.Equals("/status", StringComparison.OrdinalIgnoreCase))
                 {
                     if (string.IsNullOrWhiteSpace(_player.Handle))
                     {
                         Console.WriteLine("[!] Questo tipo di comando può essere eseguito solo dopo il link al personaggio.");
+                        
                         continue;
                     }
 
                     // Invia al server la richiesta esplicita di aggiornamento stato
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetStatus, new { })));
+                    
                     continue;
                 }
 
@@ -605,12 +632,30 @@ namespace RPG.Client
                     if (string.IsNullOrWhiteSpace(_player.Handle))
                     {
                         Console.WriteLine("[!] Questo tipo di comando può essere eseguito solo dopo il link al personaggio.");
+                        
                         continue;
                     }
 
                     // Richiesta autoritativa delle abilità al server
                     // (risposta gestita nel case S2C_SkillListResponse)
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetSkills, new { })));
+                    
+                    continue;
+                }
+
+                if (trimmedInput.StartsWith("/init", StringComparison.OrdinalIgnoreCase))
+                {
+                    string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    string modifier = (parts.Length == 2 && !string.IsNullOrWhiteSpace(parts[1])) ? parts[1] : string.Empty;
+
+                    await _writer.WriteLineAsync(
+                        JsonSerializer.Serialize(
+                            NetworkPacket.Create( OpCode.C2S_Init, new InitRequest { 
+                                PlayerName = _player.Username,
+                                Modifiers = modifier
+                            }
+                    )));
+
                     continue;
                 }
 
@@ -619,6 +664,7 @@ namespace RPG.Client
                     if (string.IsNullOrWhiteSpace(_player.Handle))
                     {
                         Console.WriteLine("[!] Questo tipo di comando può essere eseguito solo dopo il link al personaggio.");
+                        
                         continue;
                     }
 
@@ -633,6 +679,7 @@ namespace RPG.Client
                         {
                             Position = new Position3D { X = x, Y = y, Z = z }
                         });
+                        
                         await _writer.WriteLineAsync(JsonSerializer.Serialize(movePacket));
                     }
                     else if(parts.Length==3 &&
@@ -643,12 +690,14 @@ namespace RPG.Client
                         {
                             Position = new Position3D { X = x1, Y = y1, Z = _player.Character?.Position.Z ?? 0 }
                         });
+                        
                         await _writer.WriteLineAsync(JsonSerializer.Serialize(movePacket));
                     }
                     else
                     {
                         Console.WriteLine("[!] Sintassi non valida. Usa: /move <X> <Y> [Z] (es. /move 10 0 5)");
                     }
+                    
                     continue;
                 }
 
@@ -657,6 +706,7 @@ namespace RPG.Client
                     if (string.IsNullOrWhiteSpace(_player.Handle))
                     {
                         Console.WriteLine("[!] Questo tipo di comando può essere eseguito solo dopo il link al personaggio.");
+                        
                         continue;
                     }
 
@@ -673,12 +723,14 @@ namespace RPG.Client
                             TargetHandle = targetHandle,
                             WeaponOrSkill = weaponOrSkill
                         });
+                        
                         await _writer.WriteLineAsync(JsonSerializer.Serialize(attackPacket));
                     }
                     else
                     {
                         Console.WriteLine("[!] Sintassi non valida. Usa: /attack <Bersaglio> [Arma|Abilità]");
                     }
+                    
                     continue;
                 }
 
@@ -693,7 +745,9 @@ namespace RPG.Client
                         DiceExpression = diceExpr,
                         Reason = reason
                     });
+                    
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(rollPacket));
+                    
                     continue;
                 }
 
@@ -702,6 +756,7 @@ namespace RPG.Client
                     if (string.IsNullOrWhiteSpace(_player.Handle))
                     {
                         Console.WriteLine("[!] Questo tipo di comando può essere eseguito solo dopo il link al personaggio.");
+                        
                         continue;
                     }
 
@@ -723,6 +778,7 @@ namespace RPG.Client
                             SkillName = skillName,
                             Difficulty = difficulty
                         });
+                       
                         await _writer.WriteLineAsync(JsonSerializer.Serialize(skillPacket));
                     }
                     else
@@ -730,6 +786,7 @@ namespace RPG.Client
                         Console.WriteLine("[!] Sintassi non valida. Usa: /skill <NomeAbilità> [Difficoltà/TN]");
                         Console.WriteLine("    Esempi: /skill Percezione 15  oppure  /skill Guidare");
                     }
+                    
                     continue;
                 }
 
@@ -741,6 +798,7 @@ namespace RPG.Client
                     if (string.IsNullOrWhiteSpace(rest))
                     {
                         Console.WriteLine("[!] Uso: /chat \"<messaggio>\" [userid]");
+                        
                         continue;
                     }
 
@@ -749,12 +807,14 @@ namespace RPG.Client
                     if (firstQuote < 0)
                     {
                         Console.WriteLine("[!] Il messaggio deve essere racchiuso tra virgolette. Es.: /chat \"Salve a tutti\" oppure /chat \"Ti cerco\" Nome");
+                        
                         continue;
                     }
                     int lastQuote = rest.LastIndexOf('"');
                     if (lastQuote == firstQuote)
                     {
                         Console.WriteLine("[!] Virgolette non chiuse. Es.: /chat \"Salve a tutti\"");
+                        
                         continue;
                     }
 
@@ -764,6 +824,7 @@ namespace RPG.Client
                     if (string.IsNullOrWhiteSpace(message))
                     {
                         Console.WriteLine("[!] Messaggio vuoto. Uso: /chat \"<messaggio>\" [userid]");
+                        
                         continue;
                     }
 
@@ -774,21 +835,30 @@ namespace RPG.Client
                         Message = message,
                         Recipient = recipient
                     });
+                   
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(chatPacket));
+                    
                     continue;
                 }
 
                 if (trimmedInput.StartsWith("/join", StringComparison.OrdinalIgnoreCase))
                 {
                     string[] parts = input.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    string roleInput = parts.Length >= 3 ? parts[2] : "player";
+
+                    // 2. Convertiamo la stringa nell'enum RoleType in modo sicuro (ignoreCase: true gestisce "Master", "PLAYER", ecc.)
+                    Player.RoleType parsedRole = Enum.TryParse<Player.RoleType>(roleInput, true, out var result)
+                        ? result
+                        : Player.RoleType.player;
 
                     var joinPacket = NetworkPacket.Create(OpCode.C2S_Join, new JoinRequestPayload
                     {
                         GameName = parts.Length >= 2 ? parts[1] : "default",
-                        Role = parts.Length >= 3 ? parts[2] : "player"
+                        Role = parsedRole
                     });
 
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(joinPacket));
+                    
                     continue;
                 }
 
@@ -812,6 +882,7 @@ namespace RPG.Client
                     {
                         Console.WriteLine("[!] Sintassi non valida. Usa: /link <NomeCharacter>");
                     }
+                    
                     continue;
                 }
 

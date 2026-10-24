@@ -4,9 +4,44 @@ namespace RPG.Common.Models;
 
 public class Character
 {
-    public string ClientId { get; set; } = string.Empty;
+    public enum RoleType {
+        Solo,
+        NetRunner,
+        Nomad,
+        Rocker,
+        Fixer,
+        Corporate,
+        Techie,
+        TechMed,
+        Cop,
+        Media
+    }
+    public class BonusType
+    {
+        public string ApplyTo = "NONE"; // "STAT:BODY", "SKILL:GUNS", "HIT", "DAMAGE", "NONE", "ARMOR", "HEALTH", "INIT"
+        public int Value = 0;
+    }
+    public class CyberWare {
+        public enum CyberType
+        {
+            Fashionware,
+            Neuralware,
+            ChipWare,
+            CyberOptics,
+            CyberAudio,
+            Implants,
+            Bioware,
+            CyberLimbs,
+            CyberWeapons, 
+            BodyPlating
+        }
+        public string ID { get; set; } = string.Empty;
+        public CyberType Type { get; set; } = CyberType.Neuralware;
+        public BonusType Bonus { get; set; } = new();
+        public string Description = string.Empty;
+    }
     public string Handle { get; set; } = "StreetPunk"; // Nome di strada del personaggio
-    public string Role { get; set; } = "Solo";        // Solo, Netrunner, Techie, Nomad, Rockerboy, Fixer...
+    public RoleType Role { get; set; } = RoleType.Solo;        // Solo, Netrunner, Techie, Nomad, Rockerboy, Fixer...
     // Statistiche Interlock principali (range standard 1-10)
     public Stats Stats { get; set; } = new();
     // Punti Ferita e Stato di Salute
@@ -29,5 +64,28 @@ public class Character
     // ARMATURA EQUIPAGGIATA (una voce per locazione, con ablazione SP)
     public ArmorSet Armor { get; set; } = new();
     // MUNIZIONI POSSEDUTE (consumabili per calibro/effetto)
-    public List<Ammo> AmmoInventory { get; set; } = [];
+    public List<Ammo> Ammos { get; set; } = [];
+    public List<CyberWare> Cyberware { get; set; } = []; 
+    public int GetSkillValue(string skill)
+    {
+        // TODO: search for skill get value
+        //      check for appliable bonuses (stats, cyberware)
+        //      return result
+        return 0;
+    }
+    public int GetHitBonus(string weapon="")
+    {
+        // TODO: get hit bonus from weapon
+        //      check for appliable bonuses (weapon, stats, cyberware)
+        //      return result
+        return 0;
+    }
+    public int GetDamageBonus(string weapon="")
+    {
+        // TODO: get damage bonus from weapon
+        //      get damage from ammo
+        //      check for appliable bonuses (weapon, stats, cyberware, ammo)
+        //      return result
+        return 0;
+    }
 }
