@@ -1,10 +1,11 @@
 ﻿using RPG.Common.Models;
 using RPG.Common.Utils;
 using System.Text.Json;
+using static RPG.Common.Models.Character.CyberWare;
 
 namespace RPG.Server;
 
-public static class CharacterLoader
+public static class CharacterFactory
 {
     public const string CharactersFolder = "Data/Characters";
     public const string DefaultTemplatePath = "Data/Archetypes/DefaultCharacter.json";
@@ -145,8 +146,10 @@ public static class CharacterLoader
             CurrentAmmo = 12
         };
 
+        character.Weapons.Add(pistol);
+        
         // Arma 2: Corpo a corpo / Arti Marziali
-        var unarmed = new Weapon
+        character.Weapons.Add(new Weapon
         {
             Id = "unarmed",
             Name = "ArtiMarziali",
@@ -156,10 +159,7 @@ public static class CharacterLoader
             OptimalRangeMeters = 2,
             AccuracyBonus = 1,
             CanParry = true
-        };
-
-        character.Weapons.Add(pistol);
-        character.Weapons.Add(unarmed);
+        });
 
         // Di default parte con la pistola in pugno
         character.EquippedWeapon = pistol;
@@ -200,6 +200,16 @@ public static class CharacterLoader
             Quantity = 24,
             Effect = AmmoEffect.ArmorPiercing,
             HalvesArmorSP = true
+        });
+
+        character.Cyberware.Add( new Character.CyberWare() {
+            ID = "Sandevistan",
+            Type =  CyberType.Neuralware,
+            Bonus = new Character.BonusType { 
+                ApplyTo = "INIT",
+                Value = 3
+            },
+            Description = "Sandestivan, si attiva solo quando l'utente lo desidera. L'utente deve impartire un comando mentale affinché il potenziamento si attivi."
         });
 
         return character;

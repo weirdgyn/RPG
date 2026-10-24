@@ -674,7 +674,7 @@ namespace RPG.Client
                     continue;
                 }
 
-                if(trimmedInput.Equals("/games", StringComparison.OrdinalIgnoreCase))
+                if (trimmedInput.Equals("/games", StringComparison.OrdinalIgnoreCase))
                 {
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetGames, new { })));
 
