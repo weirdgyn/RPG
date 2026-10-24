@@ -347,13 +347,22 @@ namespace RPG.Client
                     var gamesResp = packet.DeserializePayload<GamesResponsePayload>();
                     if (gamesResp != null)
                     {
-                        PrintServerOutput(() => {
-                            Console.WriteLine("👥 SESSIONI DI GIOCO");
-                            Console.WriteLine("----------------------------------------");
-                            foreach (var game in gamesResp.Games)
-                                Console.WriteLine($"{game}");
-                            Console.WriteLine("----------------------------------------");
-                        });
+                        if (gamesResp.Games.Count > 0)
+                        {
+                            PrintServerOutput(() =>
+                            {
+                                Console.WriteLine("👥 SESSIONI DI GIOCO");
+                                Console.WriteLine("----------------------------------------");
+                                foreach (var game in gamesResp.Games)
+                                    Console.WriteLine($"{game}");
+                                Console.WriteLine("----------------------------------------");
+                            });
+                        }
+                        else
+                            PrintServerOutput(() =>
+                            {
+                                Console.WriteLine("   (Nessuna sessione attiva)");
+                            });
                     }
                     break;
 
@@ -361,13 +370,22 @@ namespace RPG.Client
                     var charactersResp = packet.DeserializePayload<CharactersResponsePayload>();
                     if (charactersResp != null)
                     {
-                        PrintServerOutput(() => {
-                            Console.WriteLine("👥 PERSONAGGI DISPONIBILI");
-                            Console.WriteLine("----------------------------------------");
-                            foreach (var _char in charactersResp.Characters)
-                                Console.WriteLine($"{_char.Handle}\t{_char.Role}");
-                            Console.WriteLine("----------------------------------------");
-                        });
+                        if (charactersResp.Characters.Count > 0)
+                        {
+                            PrintServerOutput(() =>
+                            {
+                                Console.WriteLine("👥 PERSONAGGI DISPONIBILI");
+                                Console.WriteLine("----------------------------------------");
+                                foreach (var _char in charactersResp.Characters)
+                                    Console.WriteLine($"{_char.Handle}\t{_char.Role}");
+                                Console.WriteLine("----------------------------------------");
+                            });
+                        }
+                        else
+                            PrintServerOutput(() =>
+                            {
+                                Console.WriteLine("   (Nessun personaggio disponibile)");
+                            });
                     }
                     break;
 
@@ -386,18 +404,18 @@ namespace RPG.Client
                 Console.WriteLine("\n========================================");
                 Console.WriteLine("🎮 COMANDI DISPONIBILI - NIGHT CITY RPG");
                 Console.WriteLine("----------------------------------------");
-                Console.WriteLine("  /status                               - Visualizza la scheda personaggio");
-                Console.WriteLine("  /status \"<Character>\"               - Visualizza la scheda personaggio (master only)");
+                Console.WriteLine("  /status                               - Visualizza la scheda del personaggio collegato");
+                Console.WriteLine("  /status <Character>                   - Visualizza la scheda personaggio speficicato (master only)");
                 Console.WriteLine("  /skills                               - Visualizza la lista delle abilità del personaggio");
                 Console.WriteLine("  /move <X> <Y> [Z]                     - Muova il personaggio nello spazio 3D");
                 Console.WriteLine("  /attack <Bersaglio>                   - Attacca il bersaglio con l'arma equipaggiata");
                 Console.WriteLine("  /attack <Bersaglio> <Arma/Abilità>    - Attacca il bersaglio specificando arma o abilità (es. /attack Jackie ArtiMarziali)");
                 Console.WriteLine("  /roll <Espressione> [Motivazione]     - Effettua un tiro di dadi (es. /roll 1d10+4 Iniziativa)");
                 Console.WriteLine("  /skill <NomeAbilità> [TN]             - Effettua un test di abilità (es. /skill Percezione 15)");
-                Console.WriteLine("  /chat \"<Messaggio>\" [userid]        - Chat broadcast, o privata aggiungendo l'userid dopo le virgolette");
-                Console.WriteLine("  /link \"<Character>\"                 - Collega il player ad un personaggio esistente");
-                Console.WriteLine("  /join \"<Game>\" [master|player]      - Entra in un game esistente");
-                Console.WriteLine("  /init <Modifier>                      - Avvia tiro iniziativa (master) / Esegue tiro iniziativa (plasyer)");
+                Console.WriteLine("  /chat <Messaggio> [userid]            - Chat broadcast, o privata aggiungendo l'userid dopo le virgolette");
+                Console.WriteLine("  /link <Character>                     - Collega il player ad un personaggio esistente");
+                Console.WriteLine("  /join <Game> [master|player]          - Entra in un game esistente o lo crea (master only)");
+                Console.WriteLine("  /init <Modifier>                      - Avvia tiro iniziativa (master) / Esegue tiro iniziativa (player)");
                 Console.WriteLine("  /characters                           - Elenca i personaggi disponibili sul server");
                 Console.WriteLine("  /games                                - Elenca le sessioni di gioco attive");
                 Console.WriteLine("  /ping                                 - Verifica la latenza con il server (ping/pong)");
@@ -514,8 +532,9 @@ namespace RPG.Client
                 foreach(var w in c.Cyberware)
                 {
                     Console.WriteLine($"   - {w.ID} | {w.Type}");
-                    Console.WriteLine($"   - {w.Bonus.ApplyTo} | {w.Bonus.Value}");
                     Console.WriteLine($"   - {w.Description}");
+                    Console.WriteLine("    BONUS:");
+                    Console.WriteLine($"   - {w.Bonus.ApplyTo} | {w.Bonus.Value}");
                 }
             }
             else
