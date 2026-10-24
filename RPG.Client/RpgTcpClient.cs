@@ -343,6 +343,34 @@ namespace RPG.Client
                     }
                     break;
 
+                case OpCode.S2C_GamesResponse:
+                    var gamesResp = packet.DeserializePayload<GamesResponsePayload>();
+                    if (gamesResp != null)
+                    {
+                        PrintServerOutput(() => {
+                            Console.WriteLine("👥 SESSIONI DI GIOCO");
+                            Console.WriteLine("----------------------------------------");
+                            foreach (var game in gamesResp.Games)
+                                Console.WriteLine($"{game}");
+                            Console.WriteLine("----------------------------------------");
+                        });
+                    }
+                    break;
+
+                case OpCode.S2C_CharactersResponse:
+                    var charactersResp = packet.DeserializePayload<CharactersResponsePayload>();
+                    if (charactersResp != null)
+                    {
+                        PrintServerOutput(() => {
+                            Console.WriteLine("👥 PERSONAGGI DISPONIBILI");
+                            Console.WriteLine("----------------------------------------");
+                            foreach (var _char in charactersResp.Characters)
+                                Console.WriteLine($"{_char.Handle}\t{_char.Role}");
+                            Console.WriteLine("----------------------------------------");
+                        });
+                    }
+                    break;
+
                 default:
                     PrintServerOutput(() => Console.WriteLine($"[PACKET] Ricevuto OpCode non gestito: {packet.OpCode}"));
                     break;
@@ -369,9 +397,12 @@ namespace RPG.Client
                 Console.WriteLine("  /chat \"<Messaggio>\" [userid]        - Chat broadcast, o privata aggiungendo l'userid dopo le virgolette");
                 Console.WriteLine("  /link \"<Character>\"                 - Collega il player ad un personaggio esistente");
                 Console.WriteLine("  /join \"<Game>\" [master|player]      - Entra in un game esistente");
+                Console.WriteLine("  /init <Modifier>                      - Avvia tiro iniziativa (master) / Esegue tiro iniziativa (plasyer)");
+                Console.WriteLine("  /characters                           - Elenca i personaggi disponibili sul server");
+                Console.WriteLine("  /games                                - Elenca le sessioni di gioco attive");
                 Console.WriteLine("  /ping                                 - Verifica la latenza con il server (ping/pong)");
-                Console.WriteLine("  /help                                 - Mostra questo menu");
                 Console.WriteLine("  /list                                 - Elenca i giocatori online");
+                Console.WriteLine("  /help                                 - Mostra questo menu");
                 Console.WriteLine("  /exit                                 - Disconnettiti ed esci");
                 Console.WriteLine("========================================\n");
             }
@@ -640,6 +671,20 @@ namespace RPG.Client
                     // (risposta gestita nel case S2C_SkillListResponse)
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetSkills, new { })));
                     
+                    continue;
+                }
+
+                if(trimmedInput.Equals("/games", StringComparison.OrdinalIgnoreCase))
+                {
+                    await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetGames, new { })));
+
+                    continue;
+                }
+
+                if (trimmedInput.Equals("/characters", StringComparison.OrdinalIgnoreCase))
+                {
+                    await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetCharacters, new { })));
+
                     continue;
                 }
 

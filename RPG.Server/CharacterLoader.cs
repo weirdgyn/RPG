@@ -6,8 +6,8 @@ namespace RPG.Server;
 
 public static class CharacterLoader
 {
-    private const string CharactersFolder = "Data/Characters";
-    private const string DefaultTemplatePath = "Data/Archetypes/DefaultCharacter.json";
+    public const string CharactersFolder = "Data/Characters";
+    public const string DefaultTemplatePath = "Data/Archetypes/DefaultCharacter.json";
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
     public static Character LoadOrGenerateCharacter(string handle, string directoryPath = CharactersFolder)
     {

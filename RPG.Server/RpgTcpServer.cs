@@ -408,13 +408,16 @@ public class RpgTcpServer(string ipAddress, int port)
 
             case OpCode.C2S_GetSkills:
                 {
-                    var skillListPayload = new SkillListResponsePayload
-                    {
-                        Character = client.Player.Character.Handle,
-                        Skills = client.Player.Character.Skills
-                    };
+                    if(client.Player != null && client.Player.Character != null)
+                    { 
+                        var skillListPayload = new SkillListResponsePayload
+                        {
+                            Character = client.Player.Character.Handle,
+                            Skills = client.Player.Character.Skills
+                        };
 
-                    await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_SkillListResponse, skillListPayload));
+                        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_SkillListResponse, skillListPayload));
+                    }
                 }
                 break;
 
@@ -747,6 +750,35 @@ public class RpgTcpServer(string ipAddress, int port)
                         }));
                     }
                 }
+                break;
+
+            case OpCode.C2S_GetCharacters:
+                var charactersResponsePayload = new CharactersResponsePayload();
+
+                string[] characters = Directory.GetFiles(CharacterLoader.CharactersFolder);
+
+                foreach(var file in characters)
+                {
+                    var _char = JsonSerializer.Deserialize<Character>(File.ReadAllText(file));
+                    
+                    if (_char == null) continue;
+                    
+                    charactersResponsePayload.Characters.Add(new CharactersResponsePayload.CharacterNode {
+                        Handle = _char.Handle,
+                        Role = _char.Role
+                    });
+                }
+
+                await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_CharactersResponse, charactersResponsePayload));
+                break;
+
+            case OpCode.C2S_GetGames:
+                var gamesResponsePayload = new GamesResponsePayload();
+
+                foreach(var game in _games)
+                    gamesResponsePayload.Games.Add(game.Name);
+
+                await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_GamesResponse, gamesResponsePayload));
                 break;
 
             default:
