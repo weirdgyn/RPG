@@ -686,6 +686,8 @@ public class RpgTcpServer(string ipAddress, int port)
 
             case OpCode.C2S_Init:
                 {
+                    var initReq = packet.DeserializePayload<InitRequest>();
+
                     // Verifichiamo che il giocatore sia effettivamente il master
                     if (client.Player != null && client.Player.Role == Player.RoleType.master)
                     {
@@ -734,19 +736,74 @@ public class RpgTcpServer(string ipAddress, int port)
                         {
                             await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
                             {
-                                Message = "Nessun personaggio associato: usa /link \"<Character>\" prima del tiro di iniziativa."
+                                Message = "Nessun personaggio associato: usa /link <Character> prima del tiro di iniziativa."
                             }));
                             break;
                         }
 
-                        //TODO: risoluzione del tiro di iniziativa (InitiativeService):
-                        //      get init bonuses (solo class),
-                        //      roll 1D10,
-                        //      sum everything,
-                        //      add result to InitRolls, with username and current timestamp
-                        //      If InitRools is full (i.e. all users in game rolled their scores) the list is ordered by
-                        //      the play order is decided on the resulting order
-                        //      notify player his init score and order of play
+                        //==========================================================================
+                        // Risoluzione del tiro di iniziativa (lato giocatore)
+                        // Nota: ordinamento di InitRolls e notifica dell'ordine di gioco sono a
+                        // carico del futuro InitiativeService.
+                        //==========================================================================
+
+                        // Il giocatore deve essere associato a un game attivo
+                        Game? game = _games.FirstOrDefault(g =>
+                            g.Players.Any(p => p.Username.Equals(client.Player.Username, StringComparison.OrdinalIgnoreCase)));
+
+                        if (game == null)
+                        {
+                            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
+                            {
+                                Message = "Non sei in nessun game attivo: impossibile tirare l'iniziativa."
+                            }));
+                            break;
+                        }
+
+                        var character = client.Player.Character;
+                        int refStat = character.Stats.REF;
+
+                        // 1. Bonus di classe: Solo -> skill "Combat Sense"
+                        int combatSense = 0;
+                        if (character.Role == Character.RoleType.Solo)
+                        {
+                            combatSense = character.Skills.TryGetValue("CombatSense", out int csLvl) ? csLvl : 0;
+                        }
+
+                        // 2. Bonus da CyberWare con Bonus.ApplyTo == "INIT" (es. Sandevistan)
+                        int cyberInit = character.Cyberware
+                            .Where(cw => cw.Bonus != null && cw.Bonus.ApplyTo.Equals("INIT", StringComparison.OrdinalIgnoreCase))
+                            .Sum(cw => cw.Bonus.Value);
+
+                        // 3. Modificatore richiesto dal player (es. /init +3).
+                        //    I token non numerici (identificativi di effetti bonus) sono rinviati
+                        //    alla risoluzione futura di InitiativeService.
+                        int requestedMod = 0;
+                        if (initReq != null && !string.IsNullOrWhiteSpace(initReq.Modifiers))
+                        {
+                            int.TryParse(initReq.Modifiers.Trim(), out requestedMod);
+                        }
+
+                        // 4. Tiro 1d10
+                        int dice = (int)GameDice.Roll("1d10").Total;
+
+                        // 5. Somma: REF + CombatSense + Cyberware + Mod + d10
+                        int total = refStat + combatSense + cyberInit + requestedMod + dice;
+
+                        // 6. Registrazione del tiro nel gioco corrente (con timestamp server)
+                        game.InitRolls.Add(new Game.Roll
+                        {
+                            Value = total,
+                            PlayerName = character.Handle,
+                            Timestamp = TimeOnly.FromDateTime(DateTime.UtcNow)
+                        });
+
+                        Console.WriteLine($"[INIT] {client.Player.Username} ({character.Handle}) tira iniziativa: REF {refStat} + CombatSense {combatSense} + Cyberware {cyberInit} + Mod {requestedMod} + d10 {dice} = {total} (gioco '{game.Name}')");
+
+                        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
+                        {
+                            Message = $"Tiro di iniziativa registrato: {total} (REF {refStat} + CS {combatSense} + Cyber {cyberInit} + d10 {dice})."
+                        }));
                     }
                     else
                     {

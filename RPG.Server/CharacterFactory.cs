@@ -130,6 +130,7 @@ public static class CharacterFactory
         character.Skills["ArtiMarziali"] = 2;
         character.Skills["Schivare"] = 2;
         character.Skills["Streetwise"] = 1;
+        character.Skills["CombatSense"] = 2;
 
         // Arma 1: Pistola da Fuoco
         var pistol = new Weapon

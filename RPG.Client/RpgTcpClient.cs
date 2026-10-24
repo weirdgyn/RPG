@@ -631,7 +631,7 @@ namespace RPG.Client
                 if (string.IsNullOrWhiteSpace(trimmedInput)) { continue; }
                 else if (!trimmedInput.StartsWith('/'))
                 {
-                    Console.WriteLine("[!] I comandi devono iniziare con il caratter '/'.");
+                    Console.WriteLine("[!] I comandi devono iniziare con il carattere '/'.");
                     continue;
                 }
                 else if (trimmedInput.StartsWith('/'))
