@@ -87,19 +87,33 @@ namespace RPG.Client
                 {
                     if (string.IsNullOrWhiteSpace(line)) continue;
 
-                    var packet = JsonSerializer.Deserialize<NetworkPacket>(line);
-                    if (packet == null) continue;
+                    // Un pacchetto non valido, o un errore nel gestirlo, riguarda solo quel pacchetto:
+                    // non deve interrompere l'ascolto (e far passare per "connessione persa" un
+                    // semplice problema di parsing), quindi si segnala e si passa al successivo.
+                    try
+                    {
+                        var packet = JsonSerializer.Deserialize<NetworkPacket>(line);
+                        if (packet == null) continue;
 
-                    HandleServerPacket(packet);
+                        HandleServerPacket(packet);
+                    }
+                    catch (Exception ex)
+                    {
+                        PrintServerOutput(() => Console.WriteLine($"[!] Pacchetto dal server ignorato: {ex.Message}"));
+                    }
                 }
             }
             catch (Exception)
             {
-                if (_isRunning)
-                {
-                    _isRunning = false;
-                    PrintServerOutput(() => Console.WriteLine("[!] Connessione al server persa."));
-                }
+                // Errore di rete (connessione interrotta, socket chiuso): gestito qui sotto
+            }
+
+            // Si arriva qui solo a canale chiuso: errore di rete oppure fine dello stream (il server
+            // ha chiuso la connessione). Con /exit _isRunning è già false e non c'è nulla da segnalare.
+            if (_isRunning)
+            {
+                _isRunning = false;
+                PrintServerOutput(() => Console.WriteLine("[!] Connessione al server persa. Premi Invio per uscire."));
             }
         }
         /// <summary>
@@ -162,7 +176,8 @@ namespace RPG.Client
 
                 case OpCode.S2C_Notification:
                     var notif = packet.DeserializePayload<JsonElement>();
-                    if (notif.TryGetProperty("Message", out var msgProp))
+                    // Payload assente o non-oggetto: il JsonElement di default farebbe lanciare TryGetProperty
+                    if (notif.ValueKind == JsonValueKind.Object && notif.TryGetProperty("Message", out var msgProp))
                     {
                         string msg = msgProp.GetString() ?? string.Empty;
                         PrintServerOutput(() => Console.WriteLine($"📢 [NOTIFICA] {msg}"));
@@ -249,7 +264,7 @@ namespace RPG.Client
                     var movePayload = packet.DeserializePayload<MoveResultPayload>();
                     if (movePayload != null)
                     {
-                        bool isSelf = _player.Character != null
+                        bool isSelf = _player?.Character != null
                             && string.Equals(_player.Character.Handle, movePayload.PlayerHandle, StringComparison.OrdinalIgnoreCase);
 
                         PrintServerOutput(() =>
@@ -321,8 +336,11 @@ namespace RPG.Client
                         if (linkResp.Success)
                         {
                             PrintServerOutput(() => Console.WriteLine($"[LINK] Collegamento riuscito: Player '{linkResp.PlayerHandle}' con Character '{linkResp.CharacterHandle}'."));
-                            _player.Role = linkResp.Role;
-                            _player.Handle = linkResp.CharacterHandle;
+                            if (_player != null)
+                            {
+                                _player.Role = linkResp.Role;
+                                _player.Handle = linkResp.CharacterHandle;
+                            }
                         }
                         else
                         {
@@ -623,6 +641,10 @@ namespace RPG.Client
                 string? input = Console.ReadLine();
                 // La riga del prompt è stata "consumata" dall'input utente
                 _promptPending = false;
+
+                // Connessione caduta mentre si attendeva l'input: si esce invece di eseguire
+                // il comando su un socket ormai chiuso
+                if (!_isRunning) break;
 
                 if (string.IsNullOrWhiteSpace(input)) { continue; }
 
