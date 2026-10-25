@@ -109,6 +109,17 @@ public class RpgTcpServer(string ipAddress, int port)
 
             case OpCode.C2S_Login:
                 {
+                    // Un client già autenticato non può rifare il login: cambierebbe username
+                    // (e quindi identità) a sessione in corso senza che gli altri ne siano informati.
+                    if (client.IsAuthenticated)
+                    {
+                        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
+                        {
+                            Message = $"Sei già autenticato come '{client.Player.Username}'."
+                        }));
+                        break;
+                    }
+
                     var loginReq = packet.DeserializePayload<LoginRequestPayload>();
                     string userName = loginReq?.PlayerName?.Trim() ?? string.Empty;
 
@@ -119,7 +130,9 @@ public class RpgTcpServer(string ipAddress, int port)
                         userName = $"Punk_{client.IdShort}";
                     }
 
-                    // Sezione sincrona nel lock: controllo unicità handle + caricamento scheda.
+                    // Sezione sincrona nel lock: controllo unicità handle + riserva del nome.
+                    // Lo username va assegnato DENTRO il lock: se venisse assegnato dopo, due login
+                    // simultanei con lo stesso nome passerebbero entrambi il controllo di unicità.
                     // Gli await sono fuori dal lock (non ammessi al suo interno).
                     LoginResponsePayload? denial = null;
                     
@@ -147,6 +160,7 @@ public class RpgTcpServer(string ipAddress, int port)
                             // Caricamento o generazione autoritativa tramite CharacterLoader e file JSON
 
                             //TODO: spostare nel comando di associazione player -> character
+                            client.Player.Username = userName; // riserva il nome prima di rilasciare il lock
                             client.IsAuthenticated = true;
                         }
                     }
@@ -158,8 +172,6 @@ public class RpgTcpServer(string ipAddress, int port)
                     }
 
                     Console.WriteLine($"[LOGIN] Client {client.IdShort} autenticato come '{userName}'");
-
-                    client.Player.Username = userName;
 
                     // Risposta di Login OK
                     await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_LoginResponse, new LoginResponsePayload
