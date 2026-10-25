@@ -17,6 +17,9 @@ public class RpgTcpServer(string ipAddress, int port)
     private TcpListener? _listener;
     private readonly ConcurrentDictionary<Guid, ClientSession> _connectedClients = new();
     private readonly List<Game> _games = [];
+    // Protegge _games e Game.Players: vengono modificati da più task (join, disconnessioni).
+    // Gli await non sono ammessi dentro il lock: si copia ciò che serve e si invia fuori.
+    private readonly object _gamesLock = new();
     // Serializza le operazioni di login per rendere atomico il controllo sull'unicità dell'handle
     private readonly object _loginLock = new();
     private bool _isRunning;
@@ -73,6 +76,10 @@ public class RpgTcpServer(string ipAddress, int port)
             // Pulizia alla disconnessione
             _connectedClients.TryRemove(client.Id, out _);
             client.TcpClient.Close();
+
+            // Toglie il giocatore dai game: altrimenti resterebbe un "fantasma" nella lista
+            // e, se era il master, nessun altro potrebbe più assumerne il ruolo.
+            RemovePlayerFromGames(client.Player);
 
             string userName = !string.IsNullOrEmpty(client.Player.Username) ? client.Player.Username : client.IdShort;
             Console.WriteLine($"[SERVER] Client disconnesso: {userName}");
@@ -531,7 +538,11 @@ public class RpgTcpServer(string ipAddress, int port)
                         if (!await EnsureCharacterLinkedAsync(client)) break;
 
                         //Get map from player game context (player must be in a game) instead of using the default map
-                        var _map = _games.FirstOrDefault(g => g.Players.Contains(client.Player))?.Map;
+                        GameMap? _map;
+                        lock (_gamesLock)
+                        {
+                            _map = _games.FirstOrDefault(g => g.Players.Contains(client.Player))?.Map;
+                        }
 
                         if(_map == null)
                         {
@@ -629,61 +640,71 @@ public class RpgTcpServer(string ipAddress, int port)
                     {
                         string denialMessage = string.Empty;
                         bool success = false;
-                        var game = _games.FirstOrDefault(g => g.Name.Equals(joinReq.GameName, StringComparison.OrdinalIgnoreCase));
 
-                        if (joinReq.Role == Player.RoleType.master)   //TODO: utiizzare enum RoleType invece di stringa per il controllo del ruolo
+                        // Controllo e modifica di _games / Game.Players in un'unica sezione critica:
+                        // senza lock due /join simultanei potrebbero creare lo stesso game due volte
+                        // o assegnare due master, e la pulizia alla disconnessione tocca le stesse liste.
+                        lock (_gamesLock)
                         {
-                            if (game == null)
+                            var game = _games.FirstOrDefault(g => g.Name.Equals(joinReq.GameName, StringComparison.OrdinalIgnoreCase));
+
+                            if (joinReq.Role == Player.RoleType.master)   //TODO: utiizzare enum RoleType invece di stringa per il controllo del ruolo
                             {
-                                game = new Game
+                                if (game == null)
                                 {
-                                    Name = joinReq.GameName,
-                                    Description = joinReq.Description ?? "Partita senza descrizione",
-                                };
-                                _games.Add(game);
-                                success = true;
+                                    game = new Game
+                                    {
+                                        Name = joinReq.GameName,
+                                        Description = joinReq.Description ?? "Partita senza descrizione",
+                                    };
+                                    _games.Add(game);
+                                    success = true;
+                                }
+                                else
+                                {
+                                    bool masterExists = game.Players.Any(p => p.Role == Player.RoleType.master);
+
+                                    if (masterExists)
+                                    {
+                                        denialMessage = masterExists ? $"Il gioco '{joinReq.GameName}' ha già un master." : string.Empty;
+                                        success = false;
+                                    }
+                                    else
+                                        success = true;
+                                }
                             }
                             else
                             {
-                                bool masterExists = game.Players.Any(p => p.Role == Player.RoleType.master);
-
-                                if (masterExists)
+                                if (game == null)
                                 {
-                                    denialMessage = masterExists ? $"Il gioco '{joinReq.GameName}' ha già un master." : string.Empty;
+                                    denialMessage = $"Il gioco '{joinReq.GameName}' non esiste. Solo un master può creare un nuovo gioco.";
                                     success = false;
                                 }
                                 else
-                                    success = true;
-                            }
-                        }
-                        else
-                        {
-                            if (game == null)
-                            {
-                                denialMessage = $"Il gioco '{joinReq.GameName}' non esiste. Solo un master può creare un nuovo gioco.";
-                                success = false;
-                            }
-                            else
-                            {
-                                bool playerExists = game.Players.Any(p => p == client.Player);
-
-                                if (playerExists)
                                 {
-                                    denialMessage = $"Sei già nel gioco '{joinReq.GameName}'.";
-                                    success = false;
+                                    bool playerExists = game.Players.Any(p => p == client.Player);
+
+                                    if (playerExists)
+                                    {
+                                        denialMessage = $"Sei già nel gioco '{joinReq.GameName}'.";
+                                        success = false;
+                                    }
+                                    else
+                                        success = true;
                                 }
-                                else
-                                    success = true;
+                            }
+
+                            if (success)
+                            {
+                                game.Players.Add(client.Player);
+                                // Assegna il ruolo alla sessione del player: necessario perché i check
+                                // su client.Player.Role (es. /init, /list) e la ricerca nel Game funzionino
+                                client.Player.Role = joinReq.Role;
                             }
                         }
 
                         if (success)
                         {
-                            game.Players.Add(client.Player);
-                            // Assegna il ruolo alla sessione del player: necessario perché i check
-                            // su client.Player.Role (es. /init, /list) e la ricerca nel Game funzionino
-                            client.Player.Role = joinReq.Role;
-
                             await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_JoinResponse, new JoinResponsePayload
                             {
                                 Success = true,
@@ -714,8 +735,16 @@ public class RpgTcpServer(string ipAddress, int port)
                     if (client.Player != null && client.Player.Role == Player.RoleType.master)
                     {
                         // 1. Ricerca in _games del Game in cui il client.Player riveste il ruolo di master
-                        Game? game = _games.FirstOrDefault(g =>
-                            g.Players.Any(p => p.Username == client.Player.Username && p.Role == Player.RoleType.master));
+                        Game? game;
+                        List<Player> playersSnapshot = [];
+                        lock (_gamesLock)
+                        {
+                            game = _games.FirstOrDefault(g =>
+                                g.Players.Any(p => p.Username == client.Player.Username && p.Role == Player.RoleType.master));
+
+                            // Copia dei giocatori: sotto lock, perché il ciclo seguente contiene degli await
+                            if (game != null) playersSnapshot = [.. game.Players];
+                        }
 
                         if (game != null)
                         {
@@ -723,7 +752,7 @@ public class RpgTcpServer(string ipAddress, int port)
                             game.InitRolls.Clear();
 
                             // 3. Dispatch della richiesta InitRollRequest a ciascun giocatore (escludendo il master)
-                            foreach (var player in game.Players)
+                            foreach (var player in playersSnapshot)
                             {
                                 // Escludiamo il master stesso
                                 if (player.Role == Player.RoleType.master)
@@ -770,8 +799,12 @@ public class RpgTcpServer(string ipAddress, int port)
                         //==========================================================================
 
                         // Il giocatore deve essere associato a un game attivo
-                        Game? game = _games.FirstOrDefault(g =>
-                            g.Players.Any(p => p.Username.Equals(client.Player.Username, StringComparison.OrdinalIgnoreCase)));
+                        Game? game;
+                        lock (_gamesLock)
+                        {
+                            game = _games.FirstOrDefault(g =>
+                                g.Players.Any(p => p.Username.Equals(client.Player.Username, StringComparison.OrdinalIgnoreCase)));
+                        }
 
                         if (game == null)
                         {
@@ -861,8 +894,11 @@ public class RpgTcpServer(string ipAddress, int port)
             case OpCode.C2S_GetGames:
                 var gamesResponsePayload = new GamesResponsePayload();
 
-                foreach(var game in _games)
-                    gamesResponsePayload.Games.Add(game.Name);
+                lock (_gamesLock)
+                {
+                    foreach (var game in _games)
+                        gamesResponsePayload.Games.Add(game.Name);
+                }
 
                 await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_GamesResponse, gamesResponsePayload));
                 break;
@@ -887,6 +923,32 @@ public class RpgTcpServer(string ipAddress, int port)
             Message = "Nessun personaggio associato: usa /link <Character> prima di usare questo comando."
         }));
         return false;
+    }
+
+    /// <summary>
+    /// Toglie il player da tutti i game in cui compare (chiamato alla disconnessione).
+    /// Un game che resta senza giocatori viene eliminato; se a uscire è il master e restano
+    /// altri giocatori, il game continua senza master e chiunque può assumerne il ruolo con /join.
+    /// </summary>
+    private void RemovePlayerFromGames(Player player)
+    {
+        lock (_gamesLock)
+        {
+            foreach (var game in _games.Where(g => g.Players.Contains(player)).ToList())
+            {
+                game.Players.Remove(player);
+
+                if (game.Players.Count == 0)
+                {
+                    _games.Remove(game);
+                    Console.WriteLine($"[GAME] Game '{game.Name}' rimosso: nessun giocatore rimasto.");
+                }
+                else if (player.Role == Player.RoleType.master)
+                {
+                    Console.WriteLine($"[GAME] Il master '{player.Username}' ha lasciato '{game.Name}': il ruolo è di nuovo libero.");
+                }
+            }
+        }
     }
 
     private async Task BroadcastPacketAsync(NetworkPacket packet, Guid? excludeClientId = null)
