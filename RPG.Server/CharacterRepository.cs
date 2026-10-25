@@ -2,7 +2,6 @@ using RPG.Common.Models;
 using RPG.Common.Utils;
 using System.Security;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 
 namespace RPG.Server;
 
@@ -23,40 +22,15 @@ public static class CharacterRepository
     /// <exception cref="CharacterLoadException">Scheda presente su disco ma non caricabile.</exception>
     public static Character LoadOrGenerateCharacter(string handle, string directoryPath = CharactersFolder)
     {
-        if (string.IsNullOrWhiteSpace(handle))
-        {
-            throw new ArgumentException("Character handle cannot be null or empty.", nameof(handle));
-        }
-
-        // LAYER 1: Sanitization
-        // Path.GetFileName strips any directory separators. 
-        // If the original handle contained "../", safeHandle will differ from handle, and we reject it entirely.
-        string safeHandle = Path.GetFileName(handle);
-        if (safeHandle != handle || string.IsNullOrWhiteSpace(safeHandle))
-        {
-            throw new ArgumentException("Invalid character handle: contains invalid path characters.", nameof(handle));
-        }
-
-        // LAYER 2: Strict Validation
-        // Enforce a strict pattern: only alphanumeric and underscores, between 3 and 20 characters.
-        if (!Regex.IsMatch(safeHandle, @"^[a-zA-Z0-9_]{3,20}$"))
-        {
-            throw new ArgumentException("Invalid character handle: must be 3-20 alphanumeric characters or underscores.", nameof(handle));
-        }
+        // Regole sull'handle centralizzate in CharacterHandleValidator (lancia ArgumentException)
+        string safeHandle = CharacterHandleValidator.ValidateAndNormalize(handle, nameof(handle));
 
         // Resolve the base directory
         string absoluteDir = DataPaths.Resolve(directoryPath);
         Directory.CreateDirectory(absoluteDir);
 
-        // LAYER 3: Path Verification (Defense in Depth)
-        string userFilePath = Path.Combine(absoluteDir, $"{safeHandle}.json");
-        string fullUserFilePath = Path.GetFullPath(userFilePath);
-        string fullAbsoluteDir = Path.GetFullPath(absoluteDir).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-
-        if (!fullUserFilePath.StartsWith(fullAbsoluteDir, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new SecurityException("Invalid character handle: Path traversal detected.");
-        }
+        // Difesa in profondità: il percorso finale deve restare dentro la cartella dei personaggi
+        string fullUserFilePath = GetCharacterFilePath(absoluteDir, safeHandle);
 
         Console.WriteLine($"[CHAR] Ricerca scheda utente per '{safeHandle}' in: {fullUserFilePath}");
 
@@ -119,31 +93,15 @@ public static class CharacterRepository
             throw new ArgumentException("Character or character handle cannot be null or empty.");
         }
 
-        // Apply the exact same security layers to SaveCharacter
-        string safeHandle = Path.GetFileName(character.Handle);
-        if (safeHandle != character.Handle || string.IsNullOrWhiteSpace(safeHandle))
-        {
-            throw new ArgumentException("Invalid character handle: contains invalid path characters.");
-        }
-
-        if (!Regex.IsMatch(safeHandle, @"^[a-zA-Z0-9_]{3,20}$"))
-        {
-            throw new ArgumentException("Invalid character handle: must be 3-20 alphanumeric characters or underscores.");
-        }
+        // Stesse regole del caricamento, dallo stesso validatore
+        string safeHandle = CharacterHandleValidator.ValidateAndNormalize(character.Handle, nameof(character));
 
         try
         {
             string absoluteDir = DataPaths.Resolve(directoryPath);
             Directory.CreateDirectory(absoluteDir);
 
-            string filePath = Path.Combine(absoluteDir, $"{safeHandle}.json");
-            string fullFilePath = Path.GetFullPath(filePath);
-            string fullAbsoluteDir = Path.GetFullPath(absoluteDir).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-
-            if (!fullFilePath.StartsWith(fullAbsoluteDir, StringComparison.OrdinalIgnoreCase))
-            {
-                throw new SecurityException("Invalid character handle: Path traversal detected.");
-            }
+            string fullFilePath = GetCharacterFilePath(absoluteDir, safeHandle);
 
             string json = JsonSerializer.Serialize(character, JsonOpts);
 
@@ -160,6 +118,44 @@ public static class CharacterRepository
             Console.WriteLine($"[CHAR] -> ERRORE CRITICO salvataggio scheda di {safeHandle}: {ex.Message}");
             throw; // Don't swallow critical save errors silently
         }
+    }
+
+    /// <summary>
+    /// Come <see cref="SaveCharacter"/>, ma senza propagare le eccezioni: restituisce false e lo scrive
+    /// nel log. Va usata nei gestori dei comandi di gioco, dove un errore di scrittura (file in uso,
+    /// disco pieno) non deve interrompere il comando né far cadere la connessione del giocatore:
+    /// lo stato in memoria resta valido e il prossimo salvataggio riproverà.
+    /// </summary>
+    public static bool TrySaveCharacter(Character character, string directoryPath = CharactersFolder)
+    {
+        try
+        {
+            SaveCharacter(character, directoryPath);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[CHAR] -> ATTENZIONE: salvataggio non riuscito per '{character?.Handle}': {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Percorso completo del file di una scheda, con verifica che resti dentro la cartella dei
+    /// personaggi (difesa in profondità: <paramref name="safeHandle"/> è già validato).
+    /// </summary>
+    /// <exception cref="SecurityException">Il percorso risolto esce dalla cartella dei personaggi.</exception>
+    private static string GetCharacterFilePath(string absoluteDir, string safeHandle)
+    {
+        string fullFilePath = Path.GetFullPath(Path.Combine(absoluteDir, $"{safeHandle}.json"));
+        string fullDir = Path.GetFullPath(absoluteDir).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+
+        if (!fullFilePath.StartsWith(fullDir, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new SecurityException("Invalid character handle: Path traversal detected.");
+        }
+
+        return fullFilePath;
     }
     /// <summary>
     /// Elenca le schede salvate su disco, ordinate per handle. Usa lo stesso percorso risolto

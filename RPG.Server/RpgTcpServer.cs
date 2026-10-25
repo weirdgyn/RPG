@@ -325,7 +325,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
             damageDealt = rawDamage * hitMultiplier;
             targetClient.Player.Character.Health.CurrentHealth = Math.Max(0, targetClient.Player.Character.Health.CurrentHealth - damageDealt);
-            CharacterRepository.SaveCharacter(targetClient.Player.Character);
+            CharacterRepository.TrySaveCharacter(targetClient.Player.Character);
         }
 
         string hitDesc = isHit
@@ -554,7 +554,7 @@ public class RpgTcpServer(string ipAddress, int port)
         if (result == GameMap.MovementResult.Success)
         {
             client.Player.Character.Position = requested;
-            CharacterRepository.SaveCharacter(client.Player.Character);
+            CharacterRepository.TrySaveCharacter(client.Player.Character);
 
             message = $"Posizione aggiornata a ({requested.X}, {requested.Y}, {requested.Z})";
             Console.WriteLine($"[MOVE] {client.Player.Character.Handle} si è spostato a ({requested.X}, {requested.Y}, {requested.Z})");
@@ -592,6 +592,19 @@ public class RpgTcpServer(string ipAddress, int port)
             && !string.IsNullOrWhiteSpace(linkReq.PlayerHandle)
             && !string.IsNullOrWhiteSpace(linkReq.CharacterHandle))
         {
+            // Handle non conforme alle regole (compresi i tentativi di path traversal): rifiuto con un
+            // messaggio. Senza questo controllo l'ArgumentException del repository arriverebbe fino a
+            // HandleClientAsync e chiuderebbe la connessione del giocatore.
+            if (!CharacterHandleValidator.IsValid(linkReq.CharacterHandle))
+            {
+                await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_LinkResponse, new LinkResponsePayload
+                {
+                    Success = false,
+                    Message = CharacterHandleValidator.RulesDescription
+                }));
+                return;
+            }
+
             Character loadedCharacter;
             try
             {
@@ -606,11 +619,23 @@ public class RpgTcpServer(string ipAddress, int port)
                 }));
                 return;
             }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException
+                                          or System.Security.SecurityException)
+            {
+                // Errore di accesso al disco (o di validazione) nel caricare/creare la scheda
+                Console.WriteLine($"[LINK] Errore con la scheda '{linkReq.CharacterHandle}': {ex.Message}");
+                await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_LinkResponse, new LinkResponsePayload
+                {
+                    Success = false,
+                    Message = $"Impossibile caricare o creare la scheda di '{linkReq.CharacterHandle}': errore del server, riprova più tardi."
+                }));
+                return;
+            }
 
             client.Player.Character = loadedCharacter;
             client.Player.Role = Player.RoleType.player;
 
-            CharacterRepository.SaveCharacter(client.Player.Character);
+            CharacterRepository.TrySaveCharacter(client.Player.Character);
 
             await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_LinkResponse, new LinkResponsePayload
             {
