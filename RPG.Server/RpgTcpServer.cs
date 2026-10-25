@@ -874,14 +874,10 @@ public class RpgTcpServer(string ipAddress, int port)
             case OpCode.C2S_GetCharacters:
                 var charactersResponsePayload = new CharactersResponsePayload();
 
-                string[] characters = Directory.GetFiles(CharacterRepository.CharactersFolder);
-
-                foreach(var file in characters)
+                // Lettura delegata al repository: stesso percorso risolto di load/save, cartella
+                // inesistente = elenco vuoto, file corrotti saltati (un'eccezione qui disconnetterebbe il client)
+                foreach (var _char in CharacterRepository.ListCharacters())
                 {
-                    var _char = JsonSerializer.Deserialize<Character>(File.ReadAllText(file));
-                    
-                    if (_char == null) continue;
-                    
                     charactersResponsePayload.Characters.Add(new CharactersResponsePayload.CharacterNode {
                         Handle = _char.Handle,
                         Role = _char.Role

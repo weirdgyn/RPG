@@ -84,6 +84,35 @@ public static class CharacterRepository
         }
     }
 
+    /// <summary>
+    /// Elenca le schede salvate su disco, ordinate per handle. Usa lo stesso percorso risolto
+    /// di <see cref="LoadOrGenerateCharacter"/> / <see cref="SaveCharacter"/>. Una cartella
+    /// inesistente (nessun personaggio ancora creato) dà un elenco vuoto; un file illeggibile
+    /// o corrotto viene saltato e segnalato nel log, senza far fallire l'intero elenco.
+    /// </summary>
+    public static List<Character> ListCharacters(string directoryPath = CharactersFolder)
+    {
+        var characters = new List<Character>();
+
+        string absoluteDir = DataPaths.Resolve(directoryPath);
+        if (!Directory.Exists(absoluteDir)) return characters;
+
+        foreach (string file in Directory.EnumerateFiles(absoluteDir, "*.json").Order(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var character = JsonSerializer.Deserialize<Character>(File.ReadAllText(file));
+                if (character != null) characters.Add(character);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[CHAR] -> ATTENZIONE: scheda '{file}' ignorata nell'elenco: {ex.Message}");
+            }
+        }
+
+        return characters;
+    }
+
     // La deserializzazione JSON sostituisce il Dictionary delle abilità perdendo il
     // comparer OrdinalIgnoreCase dell'initializer di Character (diventa case-sensitive).
     // Ricostruiamo il dizionario per garantire lookup case-insensitive in tutto il server.
