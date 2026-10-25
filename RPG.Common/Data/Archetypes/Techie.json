@@ -1,0 +1,89 @@
+{
+  "Handle": "Archetipo_Techie",
+  "Role": 6,
+  "Stats": {
+    "INT": 8,
+    "REF": 6,
+    "TECH": 9,
+    "COOL": 6,
+    "ATTR": 4,
+    "MA": 6,
+    "BODY": 6,
+    "EMP": 5
+  },
+  "Skills": {
+    "JuryRig": 5,
+    "Cybertech": 5,
+    "Elettronica": 4,
+    "RiparareArmi": 4,
+    "Scassinare": 3,
+    "Pistola": 3,
+    "Schivare": 2
+  },
+  "Weapons": [
+    {
+      "Id": "fedarms_x9",
+      "Name": "Federated Arms X-9mm",
+      "Type": 1,
+      "SkillName": "Pistola",
+      "DamageDice": "2d6",
+      "OptimalRangeMeters": 50,
+      "AccuracyBonus": 1,
+      "Caliber": "9mm",
+      "MagazineCapacity": 12,
+      "CurrentAmmo": 12
+    },
+    {
+      "Id": "heavy_wrench",
+      "Name": "Chiave a Rullino Pesante",
+      "Type": 2,
+      "SkillName": "ArtiMarziali",
+      "DamageDice": "1d6+2",
+      "OptimalRangeMeters": 2,
+      "AccuracyBonus": 0,
+      "CanParry": true
+    }
+  ],
+  "EquippedWeapon": {
+    "Id": "fedarms_x9",
+    "Name": "Federated Arms X-9mm",
+    "Type": 1,
+    "SkillName": "Pistola",
+    "DamageDice": "2d6",
+    "OptimalRangeMeters": 50,
+    "AccuracyBonus": 1,
+    "Caliber": "9mm",
+    "MagazineCapacity": 12,
+    "CurrentAmmo": 12
+  },
+  "Armor": {
+    "Torso": {
+      "Id": "work_vest_armor",
+      "Name": "Gilet da Lavoro Tattico Rinforzato",
+      "Location": 1,
+      "Material": 0,
+      "MaxStopPower": 8,
+      "CurrentStopPower": 8
+    }
+  },
+  "Ammos": [
+    {
+      "Id": "ammo_9mm_std",
+      "Name": "Munizioni 9mm standard",
+      "Caliber": "9mm",
+      "Quantity": 36,
+      "Effect": 0
+    }
+  ],
+  "Cyberware": [
+    {
+      "ID": "CyberFingerTools",
+      "Type": 7,
+      "Bonus": {
+        "ApplyTo": "SKILL:Elettronica",
+        "Value": 1
+      },
+      "Description": "Dita cybernetiche modulari con cacciaviti, saldatore e pinze micrometriche."
+    }
+  ]
+}

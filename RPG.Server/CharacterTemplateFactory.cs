@@ -5,13 +5,89 @@ using System.Text.Json;
 namespace RPG.Server;
 
 /// <summary>
-/// Crea nuove istanze di <see cref="Character"/> partendo dall'archetipo JSON di default
-/// (<see cref="DefaultTemplatePath"/>) o, in ultima istanza, dalla generazione casuale con dadi.
+/// Crea nuove istanze di <see cref="Character"/> partendo da un archetipo JSON
+/// o, in ultima istanza, dalla generazione casuale con dadi.
 /// Non si occupa di persistenza: quella è compito di <see cref="CharacterRepository"/>.
 /// </summary>
 public static class CharacterTemplateFactory
 {
+    public const string ArchetypesFolder = "Data/Archetypes";
     public const string DefaultTemplatePath = "Data/Archetypes/DefaultCharacter.json";
+
+    /// <summary>
+    /// Restituisce l'elenco dei nomi di archetipi disponibili sul server.
+    /// </summary>
+    public static List<string> GetAvailableArchetypes(string folder = ArchetypesFolder)
+    {
+        string absoluteDir = DataPaths.Resolve(folder);
+        if (!Directory.Exists(absoluteDir)) return [];
+
+        return Directory.EnumerateFiles(absoluteDir, "*.json")
+            .Select(f => Path.GetFileNameWithoutExtension(f))
+            .Where(name => !name.Equals("DefaultCharacter", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Crea un personaggio a partire da un archetipo specifico (es. Solo, Netrunner, Cop...).
+    /// </summary>
+    /// <exception cref="FileNotFoundException">Se il file dell'archetipo non esiste.</exception>
+    public static Character CreateFromArchetype(string archetypeName, string folder = ArchetypesFolder)
+    {
+        string absoluteDir = DataPaths.Resolve(folder);
+        string targetFile = Path.Combine(absoluteDir, $"{archetypeName}.json");
+
+        if (!File.Exists(targetFile))
+        {
+            // Cerca ignorando maiuscole/minuscole
+            string? matched = Directory.EnumerateFiles(absoluteDir, "*.json")
+                .FirstOrDefault(f => Path.GetFileNameWithoutExtension(f).Equals(archetypeName, StringComparison.OrdinalIgnoreCase));
+
+            if (matched != null)
+            {
+                targetFile = matched;
+            }
+            else
+            {
+                throw new FileNotFoundException($"Archetipo '{archetypeName}' non trovato.");
+            }
+        }
+
+        string templateJson = File.ReadAllText(targetFile);
+        var character = JsonSerializer.Deserialize<Character>(templateJson);
+        if (character == null)
+        {
+            throw new InvalidOperationException($"L'archetipo in '{targetFile}' è vuoto o non valido.");
+        }
+
+        return character;
+    }
+
+    /// <summary>
+    /// Aggiunge una leggera variazione casuale alle statistiche del personaggio (-2..+2),
+    /// mantenendo i valori canonici CP2020 nel range 2-10, e aggiorna i punti ferita (BODY * 5).
+    /// </summary>
+    public static void RandomizeStats(Character character)
+    {
+        character.Stats.INT = RandomizeStatValue(character.Stats.INT);
+        character.Stats.REF = RandomizeStatValue(character.Stats.REF);
+        character.Stats.TECH = RandomizeStatValue(character.Stats.TECH);
+        character.Stats.COOL = RandomizeStatValue(character.Stats.COOL);
+        character.Stats.ATTR = RandomizeStatValue(character.Stats.ATTR);
+        character.Stats.MA = RandomizeStatValue(character.Stats.MA);
+        character.Stats.BODY = RandomizeStatValue(character.Stats.BODY);
+        character.Stats.EMP = RandomizeStatValue(character.Stats.EMP);
+
+        character.Health.MaxHealth = character.Stats.BODY * 5;
+        character.Health.CurrentHealth = character.Health.MaxHealth;
+    }
+
+    private static int RandomizeStatValue(int baseVal)
+    {
+        int delta = (int)GameDice.Roll("1d5-3").Total; // produce valori tra -2 e +2
+        return Math.Clamp(baseVal + delta, 2, 10);
+    }
 
     /// <summary>
     /// Crea un nuovo personaggio dall'archetipo di default; se il template non è disponibile
@@ -142,7 +218,7 @@ public static class CharacterTemplateFactory
                 ApplyTo = "INIT",
                 Value = 3
             },
-            Description = "Sandestivan, si attiva solo quando l'utente lo desidera. L'utente deve impartire un comando mentale affinché il potenziamento si attivi."
+            Description = "Sandevistan, si attiva solo quando l'utente lo desidera. L'utente deve impartire un comando mentale affinché il potenziamento si attivi."
         });
 
         return character;

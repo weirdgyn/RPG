@@ -1,0 +1,79 @@
+{
+  "Handle": "Archetipo_Corporate",
+  "Role": 5,
+  "Stats": {
+    "INT": 8,
+    "REF": 6,
+    "TECH": 4,
+    "COOL": 8,
+    "ATTR": 8,
+    "MA": 5,
+    "BODY": 6,
+    "EMP": 7
+  },
+  "Skills": {
+    "Risorse": 5,
+    "Persuasione": 4,
+    "Seduzione": 3,
+    "Intimidire": 3,
+    "Pistola": 3,
+    "Streetwise": 2,
+    "Guidare": 2
+  },
+  "Weapons": [
+    {
+      "Id": "fedarms_x9",
+      "Name": "Federated Arms X-9mm",
+      "Type": 1,
+      "SkillName": "Pistola",
+      "DamageDice": "2d6",
+      "OptimalRangeMeters": 50,
+      "AccuracyBonus": 1,
+      "Caliber": "9mm",
+      "MagazineCapacity": 12,
+      "CurrentAmmo": 12
+    }
+  ],
+  "EquippedWeapon": {
+    "Id": "fedarms_x9",
+    "Name": "Federated Arms X-9mm",
+    "Type": 1,
+    "SkillName": "Pistola",
+    "DamageDice": "2d6",
+    "OptimalRangeMeters": 50,
+    "AccuracyBonus": 1,
+    "Caliber": "9mm",
+    "MagazineCapacity": 12,
+    "CurrentAmmo": 12
+  },
+  "Armor": {
+    "Torso": {
+      "Id": "executive_armored_suit",
+      "Name": "Completo Aziendale Blindato (Corporate Suit)",
+      "Location": 1,
+      "Material": 0,
+      "MaxStopPower": 10,
+      "CurrentStopPower": 10
+    }
+  },
+  "Ammos": [
+    {
+      "Id": "ammo_9mm_std",
+      "Name": "Munizioni 9mm standard",
+      "Caliber": "9mm",
+      "Quantity": 24,
+      "Effect": 0
+    }
+  ],
+  "Cyberware": [
+    {
+      "ID": "InternalPhoneSplice",
+      "Type": 4,
+      "Bonus": {
+        "ApplyTo": "NONE",
+        "Value": 0
+      },
+      "Description": "Collegamento telefonico interno crittografato per comunicazioni dirigenziali dirette."
+    }
+  ]
+}

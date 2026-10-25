@@ -1,0 +1,97 @@
+{
+  "Handle": "Archetipo_Cop",
+  "Role": 8,
+  "Stats": {
+    "INT": 6,
+    "REF": 8,
+    "TECH": 5,
+    "COOL": 8,
+    "ATTR": 5,
+    "MA": 6,
+    "BODY": 7,
+    "EMP": 6
+  },
+  "Skills": {
+    "Autorita": 5,
+    "Pistola": 4,
+    "Fucile": 3,
+    "Interrogare": 4,
+    "Schivare": 3,
+    "Guidare": 3,
+    "Streetwise": 3
+  },
+  "Weapons": [
+    {
+      "Id": "sternmeyer_35",
+      "Name": "Pistola Sternmeyer 35",
+      "Type": 1,
+      "SkillName": "Pistola",
+      "DamageDice": "2d6",
+      "OptimalRangeMeters": 50,
+      "AccuracyBonus": 1,
+      "Caliber": "10mm",
+      "MagazineCapacity": 12,
+      "CurrentAmmo": 12
+    },
+    {
+      "Id": "police_baton",
+      "Name": "Manganello Tattico Polimerico",
+      "Type": 2,
+      "SkillName": "ArtiMarziali",
+      "DamageDice": "1d6+1",
+      "OptimalRangeMeters": 2,
+      "AccuracyBonus": 1,
+      "CanParry": true
+    }
+  ],
+  "EquippedWeapon": {
+    "Id": "sternmeyer_35",
+    "Name": "Pistola Sternmeyer 35",
+    "Type": 1,
+    "SkillName": "Pistola",
+    "DamageDice": "2d6",
+    "OptimalRangeMeters": 50,
+    "AccuracyBonus": 1,
+    "Caliber": "10mm",
+    "MagazineCapacity": 12,
+    "CurrentAmmo": 12
+  },
+  "Armor": {
+    "Head": {
+      "Id": "riot_helmet",
+      "Name": "Casco Antisommossa della Polizia",
+      "Location": 0,
+      "Material": 1,
+      "MaxStopPower": 10,
+      "CurrentStopPower": 10
+    },
+    "Torso": {
+      "Id": "ncpd_patrol_vest",
+      "Name": "Giubbotto d'Ordinanza NCPD in Kevlar",
+      "Location": 1,
+      "Material": 0,
+      "MaxStopPower": 14,
+      "CurrentStopPower": 14
+    }
+  },
+  "Ammos": [
+    {
+      "Id": "ammo_10mm_std",
+      "Name": "Munizioni 10mm standard",
+      "Caliber": "10mm",
+      "Quantity": 36,
+      "Effect": 0
+    }
+  ],
+  "Cyberware": [
+    {
+      "ID": "CyberOpticHUD",
+      "Type": 3,
+      "Bonus": {
+        "ApplyTo": "HIT",
+        "Value": 1
+      },
+      "Description": "Cyber-ottica con HUD per scansione volti e mirino balistico integrato."
+    }
+  ]
+}

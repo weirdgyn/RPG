@@ -1,0 +1,89 @@
+{
+  "Handle": "Archetipo_TechMed",
+  "Role": 7,
+  "Stats": {
+    "INT": 8,
+    "REF": 6,
+    "TECH": 8,
+    "COOL": 7,
+    "ATTR": 5,
+    "MA": 6,
+    "BODY": 6,
+    "EMP": 8
+  },
+  "Skills": {
+    "MedicalTech": 5,
+    "Medicina": 5,
+    "Diagnosi": 4,
+    "Cybertech": 3,
+    "Pistola": 3,
+    "Persuasione": 3,
+    "Schivare": 2
+  },
+  "Weapons": [
+    {
+      "Id": "fedarms_x9",
+      "Name": "Federated Arms X-9mm",
+      "Type": 1,
+      "SkillName": "Pistola",
+      "DamageDice": "2d6",
+      "OptimalRangeMeters": 50,
+      "AccuracyBonus": 1,
+      "Caliber": "9mm",
+      "MagazineCapacity": 12,
+      "CurrentAmmo": 12
+    },
+    {
+      "Id": "tactical_scalpel",
+      "Name": "Bisturi Monomolecolare",
+      "Type": 2,
+      "SkillName": "ArtiMarziali",
+      "DamageDice": "1d6+1",
+      "OptimalRangeMeters": 1,
+      "AccuracyBonus": 2,
+      "CanParry": false
+    }
+  ],
+  "EquippedWeapon": {
+    "Id": "fedarms_x9",
+    "Name": "Federated Arms X-9mm",
+    "Type": 1,
+    "SkillName": "Pistola",
+    "DamageDice": "2d6",
+    "OptimalRangeMeters": 50,
+    "AccuracyBonus": 1,
+    "Caliber": "9mm",
+    "MagazineCapacity": 12,
+    "CurrentAmmo": 12
+  },
+  "Armor": {
+    "Torso": {
+      "Id": "med_kevlar_vest",
+      "Name": "Pettorina Medica in Kevlar",
+      "Location": 1,
+      "Material": 0,
+      "MaxStopPower": 12,
+      "CurrentStopPower": 12
+    }
+  },
+  "Ammos": [
+    {
+      "Id": "ammo_9mm_std",
+      "Name": "Munizioni 9mm standard",
+      "Caliber": "9mm",
+      "Quantity": 24,
+      "Effect": 0
+    }
+  ],
+  "Cyberware": [
+    {
+      "ID": "Biomonitor",
+      "Type": 6,
+      "Bonus": {
+        "ApplyTo": "NONE",
+        "Value": 0
+      },
+      "Description": "Biomonitor sottocutaneo collegato al sistema cardiocircolatorio e metabolico."
+    }
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "Handle": "Archetipo_Media",
+  "Role": 9,
+  "Stats": {
+    "INT": 8,
+    "REF": 6,
+    "TECH": 6,
+    "COOL": 7,
+    "ATTR": 7,
+    "MA": 6,
+    "BODY": 5,
+    "EMP": 8
+  },
+  "Skills": {
+    "Credibilita": 5,
+    "Streetwise": 4,
+    "Persuasione": 4,
+    "Interrogare": 3,
+    "Pistola": 2,
+    "Schivare": 2,
+    "Seduzione": 3
+  },
+  "Weapons": [
+    {
+      "Id": "budgetarms_c13",
+      "Name": "BudgetArms C-13",
+      "Type": 1,
+      "SkillName": "Pistola",
+      "DamageDice": "1d6",
+      "OptimalRangeMeters": 50,
+      "AccuracyBonus": 0,
+      "Caliber": "5mm",
+      "MagazineCapacity": 8,
+      "CurrentAmmo": 8
+    }
+  ],
+  "EquippedWeapon": {
+    "Id": "budgetarms_c13",
+    "Name": "BudgetArms C-13",
+    "Type": 1,
+    "SkillName": "Pistola",
+    "DamageDice": "1d6",
+    "OptimalRangeMeters": 50,
+    "AccuracyBonus": 0,
+    "Caliber": "5mm",
+    "MagazineCapacity": 8,
+    "CurrentAmmo": 8
+  },
+  "Armor": {
+    "Torso": {
+      "Id": "press_vest",
+      "Name": "Giacca Leggera Stampa con Inserto Kevlar",
+      "Location": 1,
+      "Material": 0,
+      "MaxStopPower": 8,
+      "CurrentStopPower": 8
+    }
+  },
+  "Ammos": [
+    {
+      "Id": "ammo_5mm_std",
+      "Name": "Munizioni 5mm standard",
+      "Caliber": "5mm",
+      "Quantity": 24,
+      "Effect": 0
+    }
+  ],
+  "Cyberware": [
+    {
+      "ID": "CyberCamOptic",
+      "Type": 3,
+      "Bonus": {
+        "ApplyTo": "NONE",
+        "Value": 0
+      },
+      "Description": "Cyber-ottica dotata di microtelecamera e registratore streaming per dirette broadcast."
+    }
+  ]
+}

@@ -228,36 +228,32 @@ namespace RPG.Client
 
                 case OpCode.S2C_SkillListResponse:
                     var skillListResp = packet.DeserializePayload<SkillListResponsePayload>();
-                    if (skillListResp?.Skills != null)
+                    if (skillListResp != null)
                     {
-                        if (_player != null)
+                        PrintServerOutput(() =>
                         {
-                            // Se abbiamo lo stato locale, aggiorniamo il dizionario
-                            if (_player.Character != null)
+                            Console.WriteLine("\n==================================================================");
+                            Console.WriteLine($"🧠 ELENCO ABILITÀ - {skillListResp.Character}");
+                            if (skillListResp.WoundPenalty < 0)
                             {
-                                _player.Character.Skills = skillListResp.Skills;
-                                PrintServerOutput(() => PrintSkillList(_player.Character));
+                                Console.WriteLine($"⚠️  Penalità Ferite attiva: {skillListResp.WoundPenalty}");
                             }
-                            else
+                            Console.WriteLine("------------------------------------------------------------------");
+                            Console.WriteLine($"{"Abilità",-22} {"Livello",-8} {"Statistica",-16} {"Pool Base",-12} {"Pool Effettivo",-14}");
+                            Console.WriteLine("------------------------------------------------------------------");
+                            if (skillListResp.Skills.Count == 0)
                             {
-                                // TODO: Skill list should be gathered from server if the _player.Character is invalid
-                                // Fallback se la scheda completa non è ancora in memoria
-                                PrintServerOutput(() =>
-                                {
-                                    Console.WriteLine("========================================");
-                                    Console.WriteLine($"🧠 ELENCO ABILITÀ - {skillListResp.Character}");
-                                    Console.WriteLine("----------------------------------------");
-                                    foreach (var kv in skillListResp.Skills)
-                                    {
-                                        string statAssoc = Skills.GetStatForSkill(kv.Key);
-                                        Console.WriteLine($"  - {kv.Key,-20} : Livello {kv.Value} (Stat: {statAssoc})");
-                                    }
-                                    Console.WriteLine("========================================");
-                                });
+                                Console.WriteLine("  (Nessuna abilità registrata)");
                             }
-                        }
+                            foreach (var s in skillListResp.Skills)
+                            {
+                                int effectivePool = Math.Max(0, s.BasePool + skillListResp.WoundPenalty);
+                                string statDisplay = $"{s.Stat} ({s.StatValue})";
+                                Console.WriteLine($"  - {s.Name,-20} : Lvl {s.Level,-3}  {statDisplay,-16} -> {s.BasePool,-10} [Eff: {effectivePool}]");
+                            }
+                            Console.WriteLine("==================================================================");
+                        });
                     }
-
                     break;
 
                 case OpCode.S2C_PlayerMoved:
@@ -295,20 +291,27 @@ namespace RPG.Client
                     {
                         PrintServerOutput(() =>
                         {
-                            Console.WriteLine("👥 GIOCATORI ONLINE");
-                            Console.WriteLine("----------------------------------------");
+                            string title = string.IsNullOrWhiteSpace(listResp.FilterGame)
+                                ? "👥 GIOCATORI ONLINE"
+                                : $"👥 GIOCATORI NEL GIOCO '{listResp.FilterGame}'";
+                            Console.WriteLine($"\n{title}");
+                            Console.WriteLine("--------------------------------------------------------------------------------");
+                            Console.WriteLine($"{"Giocatore",-18} {"Ruolo Utente",-14} {"Personaggio",-22} {"Game",-16}");
+                            Console.WriteLine("--------------------------------------------------------------------------------");
                             if (listResp.Players.Count == 0)
                             {
-                                Console.WriteLine("  (Nessun giocatore online)");
+                                Console.WriteLine("  (Nessun giocatore trovato)");
                             }
                             foreach (var p in listResp.Players)
                             {
-                                string marker = (_player != null
-                                    && string.Equals(_player.Username, p.Handle, StringComparison.OrdinalIgnoreCase))
-                                    ? "  (tu)" : "";
-                                Console.WriteLine($"  - {p.Handle,-16}{marker,-8} [{p.Role}]");
+                                string marker = (_player != null && string.Equals(_player.Username, p.Handle, StringComparison.OrdinalIgnoreCase))
+                                    ? " (tu)" : "";
+                                string playerCol = p.Handle + marker;
+                                string charCol = !string.IsNullOrWhiteSpace(p.CharacterHandle) ? p.CharacterHandle : "---";
+                                string gameCol = !string.IsNullOrWhiteSpace(p.Game) ? p.Game : "---";
+                                Console.WriteLine($"  - {playerCol,-16} {p.Role,-14} {charCol,-22} {gameCol,-16}");
                             }
-                            Console.WriteLine("----------------------------------------");
+                            Console.WriteLine("--------------------------------------------------------------------------------");
                         });
                     }
                     break;
@@ -346,6 +349,24 @@ namespace RPG.Client
                         {
                             PrintServerOutput(() => Console.WriteLine($"[LINK] Fallito: {linkResp.Message}"));
                         }
+                    }
+                    break;
+
+                case OpCode.S2C_CreateCharacterResponse:
+                    var createResp = packet.DeserializePayload<CreateCharacterResponsePayload>();
+                    if (createResp != null)
+                    {
+                        PrintServerOutput(() =>
+                        {
+                            if (createResp.Success)
+                            {
+                                Console.WriteLine($"\n✨ [CREAZIONE] {createResp.Message}");
+                            }
+                            else
+                            {
+                                Console.WriteLine($"\n❌ [CREAZIONE FALLITA] {createResp.Message}");
+                            }
+                        });
                     }
                     break;
 
@@ -432,12 +453,13 @@ namespace RPG.Client
                 Console.WriteLine("  /skill <NomeAbilità> [TN]             - Effettua un test di abilità (es. /skill Percezione 15)");
                 Console.WriteLine("  /chat <Messaggio> [userid]            - Chat broadcast, o privata aggiungendo l'userid dopo le virgolette");
                 Console.WriteLine("  /link <Character>                     - Collega il player ad un personaggio esistente");
+                Console.WriteLine("  /create <archetipo> <handle>          - Crea un nuovo personaggio da un archetipo");
                 Console.WriteLine("  /join <Game> [master|player]          - Entra in un game esistente o lo crea (master only)");
                 Console.WriteLine("  /init <Modifier>                      - Avvia tiro iniziativa (master) / Esegue tiro iniziativa (player)");
                 Console.WriteLine("  /characters                           - Elenca i personaggi disponibili sul server");
                 Console.WriteLine("  /games                                - Elenca le sessioni di gioco attive");
                 Console.WriteLine("  /ping                                 - Verifica la latenza con il server (ping/pong)");
-                Console.WriteLine("  /list                                 - Elenca i giocatori online");
+                Console.WriteLine("  /list [Game]                          - Elenca i giocatori online (o filtrati per game)");
                 Console.WriteLine("  /help                                 - Mostra questo menu");
                 Console.WriteLine("  /exit                                 - Disconnettiti ed esci");
                 Console.WriteLine("========================================\n");
@@ -675,10 +697,35 @@ namespace RPG.Client
                     continue;
                 }
 
-                if (trimmedInput.Equals("/list", StringComparison.OrdinalIgnoreCase))
+                if (trimmedInput.StartsWith("/list", StringComparison.OrdinalIgnoreCase))
                 {
-                    await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetPlayers, new { })));
+                    string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    string? gameFilter = parts.Length > 1 ? parts[1].Trim() : null;
+                    await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetPlayers, new PlayersRequestPayload { GameName = gameFilter })));
                     
+                    continue;
+                }
+
+                if (trimmedInput.StartsWith("/create", StringComparison.OrdinalIgnoreCase))
+                {
+                    string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length < 3)
+                    {
+                        Console.WriteLine("[!] Uso corretto: /create <archetipo> <character.handle>");
+                        Console.WriteLine("    Esempio: /create Solo Razor");
+                        Console.WriteLine("    Archetipi disponibili: Solo, Netrunner, Nomad, Rocker, Fixer, Corporate, Techie, TechMed, Cop, Media");
+                        continue;
+                    }
+
+                    string archetype = parts[1].Trim();
+                    string characterHandle = parts[2].Trim();
+
+                    await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_CreateCharacter, new CreateCharacterRequestPayload
+                    {
+                        Archetype = archetype,
+                        CharacterHandle = characterHandle
+                    })));
+
                     continue;
                 }
 
@@ -716,15 +763,7 @@ namespace RPG.Client
 
                 if (trimmedInput.Equals("/skills", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (string.IsNullOrWhiteSpace(_player.Handle))
-                    {
-                        Console.WriteLine("[!] Questo tipo di comando può essere eseguito solo dopo il link al personaggio.");
-                        
-                        continue;
-                    }
-
                     // Richiesta autoritativa delle abilità al server
-                    // (risposta gestita nel case S2C_SkillListResponse)
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetSkills, new { })));
                     
                     continue;

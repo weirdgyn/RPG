@@ -1,0 +1,89 @@
+{
+  "Handle": "Archetipo_Fixer",
+  "Role": 4,
+  "Stats": {
+    "INT": 7,
+    "REF": 7,
+    "TECH": 5,
+    "COOL": 8,
+    "ATTR": 7,
+    "MA": 6,
+    "BODY": 6,
+    "EMP": 8
+  },
+  "Skills": {
+    "AffareDiStrada": 5,
+    "Streetwise": 5,
+    "Persuasione": 4,
+    "Intimidire": 3,
+    "Pistola": 3,
+    "Scassinare": 3,
+    "Schivare": 2
+  },
+  "Weapons": [
+    {
+      "Id": "sternmeyer_35",
+      "Name": "Pistola Sternmeyer 35",
+      "Type": 1,
+      "SkillName": "Pistola",
+      "DamageDice": "2d6",
+      "OptimalRangeMeters": 50,
+      "AccuracyBonus": 1,
+      "Caliber": "10mm",
+      "MagazineCapacity": 12,
+      "CurrentAmmo": 12
+    },
+    {
+      "Id": "unarmed",
+      "Name": "ArtiMarziali",
+      "Type": 2,
+      "SkillName": "ArtiMarziali",
+      "DamageDice": "1d6",
+      "OptimalRangeMeters": 2,
+      "AccuracyBonus": 1,
+      "CanParry": true
+    }
+  ],
+  "EquippedWeapon": {
+    "Id": "sternmeyer_35",
+    "Name": "Pistola Sternmeyer 35",
+    "Type": 1,
+    "SkillName": "Pistola",
+    "DamageDice": "2d6",
+    "OptimalRangeMeters": 50,
+    "AccuracyBonus": 1,
+    "Caliber": "10mm",
+    "MagazineCapacity": 12,
+    "CurrentAmmo": 12
+  },
+  "Armor": {
+    "Torso": {
+      "Id": "armored_trenchcoat",
+      "Name": "Trench Coat Blindato in Kevlar",
+      "Location": 1,
+      "Material": 0,
+      "MaxStopPower": 10,
+      "CurrentStopPower": 10
+    }
+  },
+  "Ammos": [
+    {
+      "Id": "ammo_10mm_std",
+      "Name": "Munizioni 10mm standard",
+      "Caliber": "10mm",
+      "Quantity": 36,
+      "Effect": 0
+    }
+  ],
+  "Cyberware": [
+    {
+      "ID": "ChipwareSocket",
+      "Type": 2,
+      "Bonus": {
+        "ApplyTo": "NONE",
+        "Value": 0
+      },
+      "Description": "Socket per chip di memoria e dati contrabbandati nel collo."
+    }
+  ]
+}

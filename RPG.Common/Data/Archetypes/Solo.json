@@ -1,0 +1,116 @@
+{
+  "Handle": "Archetipo_Solo",
+  "Role": 0,
+  "Stats": {
+    "INT": 6,
+    "REF": 9,
+    "TECH": 5,
+    "COOL": 8,
+    "ATTR": 5,
+    "MA": 6,
+    "BODY": 8,
+    "EMP": 4
+  },
+  "Skills": {
+    "CombatSense": 4,
+    "Pistola": 4,
+    "Fucile": 4,
+    "Schivare": 4,
+    "ArtiMarziali": 3,
+    "Streetwise": 2,
+    "Intimidire": 2
+  },
+  "Weapons": [
+    {
+      "Id": "sternmeyer_35",
+      "Name": "Pistola Sternmeyer 35",
+      "Type": 1,
+      "SkillName": "Pistola",
+      "DamageDice": "2d6",
+      "OptimalRangeMeters": 50,
+      "AccuracyBonus": 1,
+      "Caliber": "10mm",
+      "MagazineCapacity": 12,
+      "CurrentAmmo": 12
+    },
+    {
+      "Id": "militech_ronin",
+      "Name": "Militech Ronin Light Assault",
+      "Type": 1,
+      "SkillName": "Fucile",
+      "DamageDice": "5d6",
+      "OptimalRangeMeters": 400,
+      "AccuracyBonus": 1,
+      "Caliber": "5.56mm",
+      "MagazineCapacity": 30,
+      "CurrentAmmo": 30
+    },
+    {
+      "Id": "unarmed",
+      "Name": "ArtiMarziali",
+      "Type": 2,
+      "SkillName": "ArtiMarziali",
+      "DamageDice": "1d6+2",
+      "OptimalRangeMeters": 2,
+      "AccuracyBonus": 1,
+      "CanParry": true
+    }
+  ],
+  "EquippedWeapon": {
+    "Id": "sternmeyer_35",
+    "Name": "Pistola Sternmeyer 35",
+    "Type": 1,
+    "SkillName": "Pistola",
+    "DamageDice": "2d6",
+    "OptimalRangeMeters": 50,
+    "AccuracyBonus": 1,
+    "Caliber": "10mm",
+    "MagazineCapacity": 12,
+    "CurrentAmmo": 12
+  },
+  "Armor": {
+    "Head": {
+      "Id": "helmet_combat",
+      "Name": "Casco tattico Kevlar",
+      "Location": 0,
+      "Material": 0,
+      "MaxStopPower": 8,
+      "CurrentStopPower": 8
+    },
+    "Torso": {
+      "Id": "vest_kevlar",
+      "Name": "Giubbotto antiproiettile in Kevlar",
+      "Location": 1,
+      "Material": 0,
+      "MaxStopPower": 14,
+      "CurrentStopPower": 14
+    }
+  },
+  "Ammos": [
+    {
+      "Id": "ammo_10mm_std",
+      "Name": "Munizioni 10mm standard",
+      "Caliber": "10mm",
+      "Quantity": 48,
+      "Effect": 0
+    },
+    {
+      "Id": "ammo_556_std",
+      "Name": "Munizioni 5.56mm standard",
+      "Caliber": "5.56mm",
+      "Quantity": 60,
+      "Effect": 0
+    }
+  ],
+  "Cyberware": [
+    {
+      "ID": "Sandevistan",
+      "Type": 1,
+      "Bonus": {
+        "ApplyTo": "INIT",
+        "Value": 3
+      },
+      "Description": "Speedware Sandevistan che incrementa i riflessi e l'iniziativa di combattimento."
+    }
+  ]
+}

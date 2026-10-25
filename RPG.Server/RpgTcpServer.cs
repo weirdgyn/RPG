@@ -122,7 +122,10 @@ public class RpgTcpServer(string ipAddress, int port)
                 await HandleGetStatusAsync(client);
                 break;
             case OpCode.C2S_GetPlayers:
-                await HandleGetPlayersAsync(client);
+                await HandleGetPlayersAsync(client, packet);
+                break;
+            case OpCode.C2S_CreateCharacter:
+                await HandleCreateCharacterAsync(client, packet);
                 break;
             case OpCode.C2S_SkillCheck:
                 await HandleSkillCheckAsync(client, packet);
@@ -442,10 +445,31 @@ public class RpgTcpServer(string ipAddress, int port)
     {
         if (client.Player != null && client.Player.Character != null)
         {
+            var character = client.Player.Character;
+            int penalty = character.Health.GetWoundPenalty();
+
+            var skillInfos = character.Skills
+                .OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(kv =>
+                {
+                    string statName = Skills.GetStatForSkill(kv.Key);
+                    int statVal = character.Stats.GetStatValue(statName);
+                    return new SkillInfoPayload
+                    {
+                        Name = kv.Key,
+                        Level = kv.Value,
+                        Stat = statName,
+                        StatValue = statVal,
+                        BasePool = statVal + kv.Value
+                    };
+                })
+                .ToList();
+
             var skillListPayload = new SkillListResponsePayload
             {
-                Character = client.Player.Character.Handle,
-                Skills = client.Player.Character.Skills
+                Character = character.Handle,
+                WoundPenalty = penalty,
+                Skills = skillInfos
             };
 
             await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_SkillListResponse, skillListPayload));
@@ -470,23 +494,51 @@ public class RpgTcpServer(string ipAddress, int port)
         }
     }
 
-    private async Task HandleGetPlayersAsync(ClientSession client)
+    private async Task HandleGetPlayersAsync(ClientSession client, NetworkPacket packet)
     {
-        var players = _connectedClients.Values
+        var req = packet.DeserializePayload<PlayersRequestPayload>();
+        string? filterGame = req?.GameName?.Trim();
+
+        var allAuthenticated = _connectedClients.Values
             .Where(c => c.IsAuthenticated)
-            .Select(c => new PlayerInfoPayload
-            {
-                Handle = c.Player.Username,
-                Role = c.Player.Role
-            })
-            .OrderBy(p => p.Handle, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        Console.WriteLine($"[LIST] {client.Player.Username} richiede l'elenco: {players.Count} online.");
+        var playerInfos = new List<PlayerInfoPayload>();
+
+        foreach (var c in allAuthenticated)
+        {
+            string gameName = "---";
+            lock (_gamesLock)
+            {
+                var g = _games.FirstOrDefault(game => game.Players.Any(p => p.Username.Equals(c.Player.Username, StringComparison.OrdinalIgnoreCase)));
+                if (g != null) gameName = g.Name;
+            }
+
+            if (!string.IsNullOrWhiteSpace(filterGame))
+            {
+                if (!gameName.Equals(filterGame, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+            }
+
+            playerInfos.Add(new PlayerInfoPayload
+            {
+                Handle = c.Player.Username,
+                Role = c.Player.Role,
+                CharacterHandle = c.Player.Character?.Handle ?? "---",
+                Game = gameName
+            });
+        }
+
+        playerInfos = playerInfos.OrderBy(p => p.Handle, StringComparer.OrdinalIgnoreCase).ToList();
+
+        Console.WriteLine($"[LIST] {client.Player.Username} richiede l'elenco (Filtro Game: '{filterGame ?? "nessuno"}'): {playerInfos.Count} trovati.");
 
         await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Players, new PlayersResponsePayload
         {
-            Players = players
+            FilterGame = filterGame,
+            Players = playerInfos
         }));
     }
 
@@ -639,13 +691,21 @@ public class RpgTcpServer(string ipAddress, int port)
                 {
                     try
                     {
-                        loadedCharacter = CharacterRepository.LoadOrGenerateCharacter(linkReq.CharacterHandle);
+                        loadedCharacter = CharacterRepository.LoadCharacter(linkReq.CharacterHandle);
                         // Il nome del file è la fonte di verità: allineo l'Handle interno, altrimenti
                         // i salvataggi (che usano character.Handle) finirebbero in un altro file.
                         loadedCharacter.Handle = linkReq.CharacterHandle;
                         client.Player.Character = loadedCharacter;
                         client.LinkedCharacterHandle = linkReq.CharacterHandle;
                         client.Player.Role = Player.RoleType.player;
+                    }
+                    catch (FileNotFoundException)
+                    {
+                        failure = new LinkResponsePayload
+                        {
+                            Success = false,
+                            Message = $"Personaggio '{linkReq.CharacterHandle}' non trovato. Usa prima '/create <archetipo> {linkReq.CharacterHandle}' per crearlo."
+                        };
                     }
                     catch (CharacterLoadException ex)
                     {
@@ -703,6 +763,97 @@ public class RpgTcpServer(string ipAddress, int port)
             }));
         }
     }
+
+    private async Task HandleCreateCharacterAsync(ClientSession client, NetworkPacket packet)
+    {
+        var createReq = packet.DeserializePayload<CreateCharacterRequestPayload>();
+        if (createReq == null || string.IsNullOrWhiteSpace(createReq.CharacterHandle) || string.IsNullOrWhiteSpace(createReq.Archetype))
+        {
+            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_CreateCharacterResponse, new CreateCharacterResponsePayload
+            {
+                Success = false,
+                Message = "Uso corretto: /create <archetipo> <handle>"
+            }));
+            return;
+        }
+
+        string safeHandle;
+        try
+        {
+            safeHandle = CharacterHandleValidator.ValidateAndNormalize(createReq.CharacterHandle, nameof(createReq.CharacterHandle));
+        }
+        catch (ArgumentException ex)
+        {
+            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_CreateCharacterResponse, new CreateCharacterResponsePayload
+            {
+                Success = false,
+                Message = $"Handle non valido: {ex.Message}"
+            }));
+            return;
+        }
+
+        if (CharacterRepository.CharacterExists(safeHandle))
+        {
+            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_CreateCharacterResponse, new CreateCharacterResponsePayload
+            {
+                Success = false,
+                Message = $"La scheda del personaggio '{safeHandle}' esiste già. Scegli un altro handle o usa /link."
+            }));
+            return;
+        }
+
+        Character newChar;
+        try
+        {
+            newChar = CharacterTemplateFactory.CreateFromArchetype(createReq.Archetype);
+        }
+        catch (FileNotFoundException)
+        {
+            var available = CharacterTemplateFactory.GetAvailableArchetypes();
+            string archetypesList = available.Count > 0 ? string.Join(", ", available) : "nessuno";
+            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_CreateCharacterResponse, new CreateCharacterResponsePayload
+            {
+                Success = false,
+                Message = $"Archetipo '{createReq.Archetype}' non trovato. Archetipi disponibili: {archetypesList}"
+            }));
+            return;
+        }
+        catch (Exception ex)
+        {
+            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_CreateCharacterResponse, new CreateCharacterResponsePayload
+            {
+                Success = false,
+                Message = $"Errore durante il caricamento dell'archetipo: {ex.Message}"
+            }));
+            return;
+        }
+
+        newChar.Handle = safeHandle;
+        CharacterTemplateFactory.RandomizeStats(newChar);
+        CharacterRepository.NormalizeSkills(newChar);
+
+        try
+        {
+            CharacterRepository.SaveCharacter(newChar);
+            Console.WriteLine($"[CHAR] Creato nuovo personaggio '{safeHandle}' dall'archetipo '{createReq.Archetype}' (Ruolo: {newChar.Role}).");
+            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_CreateCharacterResponse, new CreateCharacterResponsePayload
+            {
+                Success = true,
+                CharacterHandle = safeHandle,
+                Archetype = createReq.Archetype,
+                Message = $"Personaggio '{safeHandle}' ({newChar.Role}) creato con successo! Puoi associarlo al tuo account con: /link {safeHandle}"
+            }));
+        }
+        catch (Exception ex)
+        {
+            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_CreateCharacterResponse, new CreateCharacterResponsePayload
+            {
+                Success = false,
+                Message = $"Errore durante il salvataggio della scheda: {ex.Message}"
+            }));
+        }
+    }
+
 
     private async Task HandleJoinAsync(ClientSession client, NetworkPacket packet)
     {

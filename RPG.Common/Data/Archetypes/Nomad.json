@@ -1,0 +1,107 @@
+{
+  "Handle": "Archetipo_Nomad",
+  "Role": 2,
+  "Stats": {
+    "INT": 5,
+    "REF": 8,
+    "TECH": 7,
+    "COOL": 7,
+    "ATTR": 5,
+    "MA": 6,
+    "BODY": 8,
+    "EMP": 5
+  },
+  "Skills": {
+    "Famiglia": 4,
+    "Guidare": 5,
+    "Fucile": 4,
+    "Pistola": 3,
+    "RiparareArmi": 3,
+    "Schivare": 3,
+    "ArtiMarziali": 3,
+    "Streetwise": 2
+  },
+  "Weapons": [
+    {
+      "Id": "shotgun_arasaka",
+      "Name": "Fucile a Pompa Arasaka 12ga",
+      "Type": 1,
+      "SkillName": "Fucile",
+      "DamageDice": "4d6",
+      "OptimalRangeMeters": 50,
+      "AccuracyBonus": 1,
+      "Caliber": "12ga",
+      "MagazineCapacity": 6,
+      "CurrentAmmo": 6
+    },
+    {
+      "Id": "dailung_cybermag",
+      "Name": "Dai Lung Cybermag 15",
+      "Type": 1,
+      "SkillName": "Pistola",
+      "DamageDice": "2d6+1",
+      "OptimalRangeMeters": 50,
+      "AccuracyBonus": 0,
+      "Caliber": "9mm",
+      "MagazineCapacity": 15,
+      "CurrentAmmo": 15
+    }
+  ],
+  "EquippedWeapon": {
+    "Id": "shotgun_arasaka",
+    "Name": "Fucile a Pompa Arasaka 12ga",
+    "Type": 1,
+    "SkillName": "Fucile",
+    "DamageDice": "4d6",
+    "OptimalRangeMeters": 50,
+    "AccuracyBonus": 1,
+    "Caliber": "12ga",
+    "MagazineCapacity": 6,
+    "CurrentAmmo": 6
+  },
+  "Armor": {
+    "Torso": {
+      "Id": "leather_armor_jacket",
+      "Name": "Giacca in Pelle Pesante Rinforzata",
+      "Location": 1,
+      "Material": 0,
+      "MaxStopPower": 8,
+      "CurrentStopPower": 8
+    },
+    "Legs": {
+      "Id": "riding_pants",
+      "Name": "Pantaloni da Motociclista Rinforzati",
+      "Location": 3,
+      "Material": 0,
+      "MaxStopPower": 6,
+      "CurrentStopPower": 6
+    }
+  },
+  "Ammos": [
+    {
+      "Id": "ammo_12ga_std",
+      "Name": "Cartucce 12ga standard",
+      "Caliber": "12ga",
+      "Quantity": 24,
+      "Effect": 0
+    },
+    {
+      "Id": "ammo_9mm_std",
+      "Name": "Munizioni 9mm standard",
+      "Caliber": "9mm",
+      "Quantity": 30,
+      "Effect": 0
+    }
+  ],
+  "Cyberware": [
+    {
+      "ID": "CyberAudio",
+      "Type": 4,
+      "Bonus": {
+        "ApplyTo": "NONE",
+        "Value": 0
+      },
+      "Description": "Ricevitore audio integrato con scansione canali radio della tribù nomade."
+    }
+  ]
+}

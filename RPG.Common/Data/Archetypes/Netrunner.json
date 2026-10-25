@@ -1,0 +1,90 @@
+{
+  "Handle": "Archetipo_Netrunner",
+  "Role": 1,
+  "Stats": {
+    "INT": 9,
+    "REF": 6,
+    "TECH": 8,
+    "COOL": 6,
+    "ATTR": 5,
+    "MA": 5,
+    "BODY": 5,
+    "EMP": 6
+  },
+  "Skills": {
+    "Interfaccia": 5,
+    "Netrunning": 5,
+    "Cybertech": 4,
+    "Elettronica": 4,
+    "Programmazione": 4,
+    "Pistola": 2,
+    "Schivare": 2,
+    "Streetwise": 3
+  },
+  "Weapons": [
+    {
+      "Id": "fedarms_x9",
+      "Name": "Federated Arms X-9mm",
+      "Type": 1,
+      "SkillName": "Pistola",
+      "DamageDice": "2d6",
+      "OptimalRangeMeters": 50,
+      "AccuracyBonus": 1,
+      "Caliber": "9mm",
+      "MagazineCapacity": 12,
+      "CurrentAmmo": 12
+    },
+    {
+      "Id": "unarmed",
+      "Name": "ArtiMarziali",
+      "Type": 2,
+      "SkillName": "ArtiMarziali",
+      "DamageDice": "1d6",
+      "OptimalRangeMeters": 2,
+      "AccuracyBonus": 1,
+      "CanParry": true
+    }
+  ],
+  "EquippedWeapon": {
+    "Id": "fedarms_x9",
+    "Name": "Federated Arms X-9mm",
+    "Type": 1,
+    "SkillName": "Pistola",
+    "DamageDice": "2d6",
+    "OptimalRangeMeters": 50,
+    "AccuracyBonus": 1,
+    "Caliber": "9mm",
+    "MagazineCapacity": 12,
+    "CurrentAmmo": 12
+  },
+  "Armor": {
+    "Torso": {
+      "Id": "light_kevlar_jacket",
+      "Name": "Giacca in Kevlar Leggera",
+      "Location": 1,
+      "Material": 0,
+      "MaxStopPower": 10,
+      "CurrentStopPower": 10
+    }
+  },
+  "Ammos": [
+    {
+      "Id": "ammo_9mm_std",
+      "Name": "Munizioni 9mm standard",
+      "Caliber": "9mm",
+      "Quantity": 36,
+      "Effect": 0
+    }
+  ],
+  "Cyberware": [
+    {
+      "ID": "Interface_Plugs",
+      "Type": 1,
+      "Bonus": {
+        "ApplyTo": "SKILL:Netrunning",
+        "Value": 2
+      },
+      "Description": "Connettori neurali da polso per collegamento diretto a Cybermodem e terminali di rete."
+    }
+  ]
+}

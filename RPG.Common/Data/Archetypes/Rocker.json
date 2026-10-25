@@ -1,0 +1,89 @@
+{
+  "Handle": "Archetipo_Rocker",
+  "Role": 3,
+  "Stats": {
+    "INT": 6,
+    "REF": 7,
+    "TECH": 5,
+    "COOL": 8,
+    "ATTR": 8,
+    "MA": 6,
+    "BODY": 6,
+    "EMP": 8
+  },
+  "Skills": {
+    "LeadershipCarismatica": 5,
+    "Persuasione": 4,
+    "Seduzione": 4,
+    "Pistola": 3,
+    "Schivare": 3,
+    "Streetwise": 3,
+    "ArtiMarziali": 2
+  },
+  "Weapons": [
+    {
+      "Id": "budgetarms_c13",
+      "Name": "BudgetArms C-13",
+      "Type": 1,
+      "SkillName": "Pistola",
+      "DamageDice": "1d6",
+      "OptimalRangeMeters": 50,
+      "AccuracyBonus": 0,
+      "Caliber": "5mm",
+      "MagazineCapacity": 8,
+      "CurrentAmmo": 8
+    },
+    {
+      "Id": "unarmed",
+      "Name": "ArtiMarziali",
+      "Type": 2,
+      "SkillName": "ArtiMarziali",
+      "DamageDice": "1d6",
+      "OptimalRangeMeters": 2,
+      "AccuracyBonus": 1,
+      "CanParry": true
+    }
+  ],
+  "EquippedWeapon": {
+    "Id": "budgetarms_c13",
+    "Name": "BudgetArms C-13",
+    "Type": 1,
+    "SkillName": "Pistola",
+    "DamageDice": "1d6",
+    "OptimalRangeMeters": 50,
+    "AccuracyBonus": 0,
+    "Caliber": "5mm",
+    "MagazineCapacity": 8,
+    "CurrentAmmo": 8
+  },
+  "Armor": {
+    "Torso": {
+      "Id": "glam_leather_jacket",
+      "Name": "Giacca di Pelle Glam Stile Rock",
+      "Location": 1,
+      "Material": 0,
+      "MaxStopPower": 4,
+      "CurrentStopPower": 4
+    }
+  },
+  "Ammos": [
+    {
+      "Id": "ammo_5mm_std",
+      "Name": "Munizioni 5mm standard",
+      "Caliber": "5mm",
+      "Quantity": 24,
+      "Effect": 0
+    }
+  ],
+  "Cyberware": [
+    {
+      "ID": "SynthVoice",
+      "Type": 4,
+      "Bonus": {
+        "ApplyTo": "SKILL:LeadershipCarismatica",
+        "Value": 1
+      },
+      "Description": "Sintetizzatore vocale cybernetico con micro-altoparlanti per proiezioni sceniche magnetiche."
+    }
+  ]
+}
