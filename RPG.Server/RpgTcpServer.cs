@@ -22,6 +22,8 @@ public class RpgTcpServer(string ipAddress, int port)
     private readonly object _gamesLock = new();
     // Serializza le operazioni di login per rendere atomico il controllo sull'unicità dell'handle
     private readonly object _loginLock = new();
+    // Rende atomico "personaggio già in uso? / carica / associa alla sessione" in /link
+    private readonly object _linkLock = new();
     private bool _isRunning;
 
     public async Task StartAsync()
@@ -605,37 +607,71 @@ public class RpgTcpServer(string ipAddress, int port)
                 return;
             }
 
-            Character loadedCharacter;
-            try
+            // Un personaggio può essere interpretato da una sola sessione alla volta. Il controllo "già in
+            // uso", il caricamento e l'associazione avvengono nello stesso lock: senza, due /link
+            // simultanei sullo stesso personaggio passerebbero entrambi il controllo e lavorerebbero su
+            // due copie separate della scheda, sovrascrivendosi i salvataggi. Gli await restano fuori.
+            // L'associazione si libera da sola alla disconnessione (la sessione esce da _connectedClients);
+            // un secondo /link della stessa sessione (sullo stesso o su un altro personaggio) è ammesso.
+            LinkResponsePayload? failure = null;
+            Character? loadedCharacter = null;
+
+            lock (_linkLock)
             {
-                loadedCharacter = CharacterRepository.LoadOrGenerateCharacter(linkReq.CharacterHandle);
-            }
-            catch (CharacterLoadException ex)
-            {
-                await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_LinkResponse, new LinkResponsePayload
+                var holder = _connectedClients.Values.FirstOrDefault(c =>
+                    c.Id != client.Id
+                    && c.Player.Character != null
+                    && c.Player.Character.Handle.Equals(linkReq.CharacterHandle, StringComparison.OrdinalIgnoreCase));
+
+                if (holder != null)
                 {
-                    Success = false,
-                    Message = $"{ex.Message} Contatta l'amministratore del server."
-                }));
-                return;
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException
-                                          or System.Security.SecurityException)
-            {
-                // Errore di accesso al disco (o di validazione) nel caricare/creare la scheda
-                Console.WriteLine($"[LINK] Errore con la scheda '{linkReq.CharacterHandle}': {ex.Message}");
-                await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_LinkResponse, new LinkResponsePayload
+                    Console.WriteLine($"[LINK] RIFIUTATO: '{linkReq.CharacterHandle}' è già in uso da '{holder.Player.Username}'.");
+                    failure = new LinkResponsePayload
+                    {
+                        Success = false,
+                        Message = $"Il personaggio '{linkReq.CharacterHandle}' è già in uso da '{holder.Player.Username}'."
+                    };
+                }
+                else
                 {
-                    Success = false,
-                    Message = $"Impossibile caricare o creare la scheda di '{linkReq.CharacterHandle}': errore del server, riprova più tardi."
-                }));
+                    try
+                    {
+                        loadedCharacter = CharacterRepository.LoadOrGenerateCharacter(linkReq.CharacterHandle);
+                        client.Player.Character = loadedCharacter;
+                        client.Player.Role = Player.RoleType.player;
+                    }
+                    catch (CharacterLoadException ex)
+                    {
+                        failure = new LinkResponsePayload
+                        {
+                            Success = false,
+                            Message = $"{ex.Message} Contatta l'amministratore del server."
+                        };
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException
+                                                  or System.Security.SecurityException)
+                    {
+                        // Errore di accesso al disco (o di validazione) nel caricare/creare la scheda
+                        Console.WriteLine($"[LINK] Errore con la scheda '{linkReq.CharacterHandle}': {ex.Message}");
+                        failure = new LinkResponsePayload
+                        {
+                            Success = false,
+                            Message = $"Impossibile caricare o creare la scheda di '{linkReq.CharacterHandle}': errore del server, riprova più tardi."
+                        };
+                    }
+                }
+            }
+
+            if (failure != null)
+            {
+                await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_LinkResponse, failure));
                 return;
             }
 
-            client.Player.Character = loadedCharacter;
-            client.Player.Role = Player.RoleType.player;
+            // Senza failure il personaggio è stato caricato e associato alla sessione
+            Character linkedCharacter = loadedCharacter!;
 
-            CharacterRepository.TrySaveCharacter(client.Player.Character);
+            CharacterRepository.TrySaveCharacter(linkedCharacter);
 
             await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_LinkResponse, new LinkResponsePayload
             {
@@ -648,7 +684,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
             await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_PlayerStateUpdate, new CharacterStatePayload
             {
-                Character = client.Player.Character
+                Character = linkedCharacter
             }));
         }
         else
