@@ -38,7 +38,7 @@ internal class Program
 
         if (!connected)
         {
-            AnsiConsole.MarkupLine("[bold red][!] Impossibile connettersi al server. Premere un tasto per uscire.[/]");
+            AnsiConsole.MarkupLine("[bold red][[!]]: Impossibile connettersi al server. Premere un tasto per uscire.[/]");
             Console.ReadKey();
             return 1;
         }
