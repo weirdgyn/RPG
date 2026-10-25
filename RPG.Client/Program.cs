@@ -1,4 +1,5 @@
-﻿using CommandLine;
+using CommandLine;
+using Spectre.Console;
 
 namespace RPG.Client;
 
@@ -21,19 +22,23 @@ internal class Program
         var (host, port) = ClientSettings.Resolve(options);
 
         // ==========================================
-        // 2. SEQUENZA DI AVVIO ORIGINALE INVARIATA
+        // RETRO CYBERPUNK BBS BANNER
         // ==========================================
-        Console.WriteLine("========================================");
-        Console.WriteLine($"🎮 CYBERPUNK RPG CLIENT");
-        Console.WriteLine($"🔌 Connessione a: {host}:{port}");
-        Console.WriteLine("========================================");
+        AnsiConsole.Clear();
+        AnsiConsole.Write(
+            new FigletText("NIGHT CITY")
+                .Centered()
+                .Color(Color.Yellow));
+
+        AnsiConsole.Write(new Rule("[bold cyan]NETRUNNER BBS // CYBERPUNK 2020[/]").Centered());
+        AnsiConsole.MarkupLine($"[grey]🔌 Connessione a:[/] [bold green]{host}:{port}[/]\n");
 
         var client = new RpgTcpClient();
         bool connected = await client.ConnectAsync(host, port);
 
         if (!connected)
         {
-            Console.WriteLine("[!] Impossibile connettersi al server. Premere un tasto per uscire.");
+            AnsiConsole.MarkupLine("[bold red][!] Impossibile connettersi al server. Premere un tasto per uscire.[/]");
             Console.ReadKey();
             return 1;
         }

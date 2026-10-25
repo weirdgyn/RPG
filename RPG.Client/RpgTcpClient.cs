@@ -1,8 +1,8 @@
-﻿using RPG.Common.Models;
+using RPG.Common.Models;
 using RPG.Common.Protocol;
 using RPG.Common.World;
+using Spectre.Console;
 using System.Net.Sockets;
-using System.Reflection.Metadata.Ecma335;
 using System.Text.Json;
 
 namespace RPG.Client
@@ -15,20 +15,25 @@ namespace RPG.Client
         private StreamWriter? _writer;
         private bool _isRunning;
         private Player? _player;
+
         // Serializza l'accesso alla console: il listener di rete e il loop dei comandi
         // scrivono entrambi, e il prompt deve restare in fondo senza essere "seppellito"
         // dai messaggi asincroni del server.
         private static readonly object _consoleLock = new();
         private bool _promptPending;
+
         // True solo quando il loop dei comandi è attivo: prima (es. durante il login)
         // i messaggi del server vengono stampati senza ripristinare il prompt.
         private bool _commandLoopActive;
+
         // Timestamp dell'ultimo /ping inviato (per calcolare il RTT del Pong)
         private DateTime _lastPingSentUtc;
+
         // Completato dal listener di rete quando arriva la risposta al login
         private TaskCompletionSource<LoginResponsePayload> _loginTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         /// <summary>
-        /// Mostra il prompt solo se non è già visibile (evita "> > " duplicati
+        /// Mostra il prompt solo se non è già visibile (evita prompt duplicati
         /// quando il listener ha già ripristinato il prompt dopo un messaggio).
         /// </summary>
         private void ShowPromptIfIdle()
@@ -36,14 +41,14 @@ namespace RPG.Client
             lock (_consoleLock)
             {
                 if (_promptPending) return;
-                Console.Write("> ");
+                AnsiConsole.Markup("[bold yellow]NC-NET[/] [bold cyan]>[/] ");
                 _promptPending = true;
             }
         }
+
         /// <summary>
         /// Stampa un blocco proveniente dal server (thread del listener) e, se il loop
-        /// dei comandi è attivo, ripristina immediatamente il prompt: l'utente non resta
-        /// mai "senza prompt" dopo una risposta asincrona.
+        /// dei comandi è attivo, ripristina immediatamente il prompt.
         /// </summary>
         private void PrintServerOutput(Action render)
         {
@@ -53,11 +58,12 @@ namespace RPG.Client
                 render();
                 if (_commandLoopActive)
                 {
-                    Console.Write("> ");
+                    AnsiConsole.Markup("[bold yellow]NC-NET[/] [bold cyan]>[/] ");
                     _promptPending = true;
                 }
             }
         }
+
         public async Task<bool> ConnectAsync(string host, int port)
         {
             try
@@ -74,10 +80,11 @@ namespace RPG.Client
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[!] Errore di connessione: {ex.Message}");
+                AnsiConsole.MarkupLine($"[bold red][!] Errore di connessione:[/] [red]{Markup.Escape(ex.Message)}[/]");
                 return false;
             }
         }
+
         private async Task ListenToServerAsync()
         {
             try
@@ -87,9 +94,6 @@ namespace RPG.Client
                 {
                     if (string.IsNullOrWhiteSpace(line)) continue;
 
-                    // Un pacchetto non valido, o un errore nel gestirlo, riguarda solo quel pacchetto:
-                    // non deve interrompere l'ascolto (e far passare per "connessione persa" un
-                    // semplice problema di parsing), quindi si segnala e si passa al successivo.
                     try
                     {
                         var packet = JsonSerializer.Deserialize<NetworkPacket>(line);
@@ -99,27 +103,25 @@ namespace RPG.Client
                     }
                     catch (Exception ex)
                     {
-                        PrintServerOutput(() => Console.WriteLine($"[!] Pacchetto dal server ignorato: {ex.Message}"));
+                        PrintServerOutput(() => AnsiConsole.MarkupLine($"[bold red][!] Pacchetto dal server ignorato:[/] [red]{Markup.Escape(ex.Message)}[/]"));
                     }
                 }
             }
             catch (Exception)
             {
-                // Errore di rete (connessione interrotta, socket chiuso): gestito qui sotto
+                // Errore di rete (connessione interrotta, socket chiuso)
             }
 
-            // Si arriva qui solo a canale chiuso: errore di rete oppure fine dello stream (il server
-            // ha chiuso la connessione). Con /exit _isRunning è già false e non c'è nulla da segnalare.
             if (_isRunning)
             {
                 _isRunning = false;
-                PrintServerOutput(() => Console.WriteLine("[!] Connessione al server persa. Premi Invio per uscire."));
+                PrintServerOutput(() => AnsiConsole.MarkupLine("[bold red][!] Connessione al server persa. Premi Invio per uscire.[/]"));
             }
         }
+
         /// <summary>
-        /// Gestisce i pacchetti ricevuti dal server, deserializzando il payload e stampando le informazioni
+        /// Gestisce i pacchetti ricevuti dal server, deserializzando il payload e stampando le informazioni con Spectre.Console
         /// </summary>
-        /// <param name="packet"></param>
         private void HandleServerPacket(NetworkPacket packet)
         {
             switch (packet.OpCode)
@@ -128,7 +130,6 @@ namespace RPG.Client
                     var loginResp = packet.DeserializePayload<LoginResponsePayload>();
                     if (loginResp != null)
                     {
-                        // Sblocca il loop di login in RunLoopAsync, che gestisce la visualizzazione e il retry
                         _loginTcs.TrySetResult(loginResp);
                     }
                     break;
@@ -138,7 +139,7 @@ namespace RPG.Client
                     if (pong != null)
                     {
                         double rttMs = Math.Round((DateTime.UtcNow - _lastPingSentUtc).TotalMilliseconds, 1);
-                        PrintServerOutput(() => Console.WriteLine($"🏓 [PONG] {pong.Message} (RTT: {rttMs} ms)"));
+                        PrintServerOutput(() => AnsiConsole.MarkupLine($"🏓 [bold green][PONG][/] [white]{Markup.Escape(pong.Message)}[/] [grey](RTT:[/] [bold yellow]{rttMs} ms[/][grey])[/]"));
                     }
                     break;
 
@@ -146,7 +147,6 @@ namespace RPG.Client
                     var statePayload = packet.DeserializePayload<CharacterStatePayload>();
                     if (_player != null && statePayload?.Character != null)
                     {
-                        // Salva lo stato in memoria locale per i comandi /skills e consultazione rapida
                         _player.Character = statePayload.Character;
                         PrintServerOutput(() => PrintCharacterStatus(_player.Character));
                     }
@@ -158,29 +158,42 @@ namespace RPG.Client
                     {
                         PrintServerOutput(() =>
                         {
-                            Console.WriteLine($"⚔️ [COMBAT] {attackResp.AttackerHandle} vs {attackResp.TargetHandle}");
-                            Console.WriteLine($"   Tiro Attacco: {attackResp.AttackTotal} vs Difesa TN: {attackResp.DefenseTN}");
-                            Console.WriteLine($"   Esito       : {attackResp.Message}");
+                            var grid = new Grid();
+                            grid.AddColumn();
+
+                            grid.AddRow(new Markup($"⚔️ [bold yellow]{Markup.Escape(attackResp.AttackerHandle)}[/] [red]attacca[/] [bold yellow]{Markup.Escape(attackResp.TargetHandle)}[/]"));
+                            grid.AddRow(new Markup($"   Tiro: [cyan]{attackResp.AttackTotal}[/] vs Difesa TN: [cyan]{attackResp.DefenseTN}[/]"));
+                            grid.AddRow(new Markup($"   Esito: [white]{Markup.Escape(attackResp.Message)}[/]"));
+
                             if (attackResp.IsHit)
                             {
                                 if (!string.IsNullOrEmpty(attackResp.HitLocation))
                                 {
-                                    string mult = attackResp.DamageMultiplier > 1 ? $" (danno x{attackResp.DamageMultiplier})" : "";
-                                    Console.WriteLine($"   Impatto     : {attackResp.HitLocation}{mult}");
+                                    string mult = attackResp.DamageMultiplier > 1 ? $" [bold red](danno x{attackResp.DamageMultiplier})[/]" : "";
+                                    grid.AddRow(new Markup($"   🎯 Impatto: [bold yellow]{Markup.Escape(attackResp.HitLocation)}[/]{mult}"));
                                 }
-                                Console.WriteLine($"   Stato {attackResp.TargetHandle}: {attackResp.TargetRemainingHealth} HP ({attackResp.TargetWoundStatus})");
+                                grid.AddRow(new Markup($"   💥 Danno: [bold red]{attackResp.DamageDealt}[/]"));
+                                grid.AddRow(new Markup($"   🩸 Stato {Markup.Escape(attackResp.TargetHandle)}: [bold yellow]{attackResp.TargetRemainingHealth} HP[/] [grey]({Markup.Escape(attackResp.TargetWoundStatus)})[/]"));
                             }
+
+                            var panel = new Panel(grid)
+                            {
+                                Header = new PanelHeader("[bold red] ⚔️ COMBATTIMENTO [/]"),
+                                Border = BoxBorder.Heavy,
+                                BorderStyle = new Style(Color.Red1)
+                            };
+
+                            AnsiConsole.Write(panel);
                         });
                     }
                     break;
 
                 case OpCode.S2C_Notification:
                     var notif = packet.DeserializePayload<JsonElement>();
-                    // Payload assente o non-oggetto: il JsonElement di default farebbe lanciare TryGetProperty
                     if (notif.ValueKind == JsonValueKind.Object && notif.TryGetProperty("Message", out var msgProp))
                     {
                         string msg = msgProp.GetString() ?? string.Empty;
-                        PrintServerOutput(() => Console.WriteLine($"📢 [NOTIFICA] {msg}"));
+                        PrintServerOutput(() => AnsiConsole.MarkupLine($"🔔 [bold yellow][NOTIFICA][/] [white]{Markup.Escape(msg)}[/]"));
                     }
                     break;
 
@@ -188,7 +201,7 @@ namespace RPG.Client
                     var rollResp = packet.DeserializePayload<RollResponsePayload>();
                     if (rollResp != null)
                     {
-                        PrintServerOutput(() => Console.WriteLine($"🎲 [TIRO DADI] {rollResp.Message}"));
+                        PrintServerOutput(() => AnsiConsole.MarkupLine($"🎲 [bold yellow][ROLL][/] [bold cyan]{Markup.Escape(rollResp.RollerHandle)}[/] tira [bold yellow]{Markup.Escape(rollResp.DiceExpression)}[/] -> [bold green]{rollResp.TotalResult}[/] [grey]({Markup.Escape(rollResp.Details)})[/]"));
                     }
                     break;
 
@@ -196,12 +209,23 @@ namespace RPG.Client
                     var skillResp = packet.DeserializePayload<SkillCheckResponsePayload>();
                     if (skillResp != null)
                     {
-                        string icon = skillResp.IsSuccess ? "✅" : "❌";
                         PrintServerOutput(() =>
                         {
-                            Console.WriteLine($"🧠 [PROVA ABILITÀ] {skillResp.CharacterHandle} -> {skillResp.SkillName} ({skillResp.StatName})");
-                            Console.WriteLine($"   Tiro: {skillResp.TotalResult} (Stat:{skillResp.StatValue} + Lvl:{skillResp.SkillLevel} + d10:{skillResp.DiceRoll}) vs TN: {skillResp.TargetNumber}");
-                            Console.WriteLine($"   Esito: {icon} {skillResp.Message}");
+                            string icon = skillResp.IsSuccess ? "[bold green]✅ SUCCESSO[/]" : "[bold red]❌ FALLIMENTO[/]";
+                            var grid = new Grid();
+                            grid.AddColumn();
+                            grid.AddRow(new Markup($"🧠 [bold cyan]{Markup.Escape(skillResp.CharacterHandle)}[/] prova [bold yellow]{Markup.Escape(skillResp.SkillName)}[/] ({skillResp.StatName})"));
+                            grid.AddRow(new Markup($"   Calcolo: [cyan]{skillResp.TotalResult}[/] [grey](Stat:{skillResp.StatValue} + Lvl:{skillResp.SkillLevel} + d10:{skillResp.DiceRoll})[/] vs TN: [bold yellow]{skillResp.TargetNumber}[/]"));
+                            grid.AddRow(new Markup($"   Esito: {icon} - [white]{Markup.Escape(skillResp.Message)}[/]"));
+
+                            var panel = new Panel(grid)
+                            {
+                                Header = new PanelHeader("[bold magenta] 🧠 PROVA ABILITÀ [/]"),
+                                Border = BoxBorder.Rounded,
+                                BorderStyle = new Style(skillResp.IsSuccess ? Color.Green : Color.Red)
+                            };
+
+                            AnsiConsole.Write(panel);
                         });
                     }
                     break;
@@ -210,18 +234,23 @@ namespace RPG.Client
                     var chat = packet.DeserializePayload<ChatPayload>();
                     if (chat != null)
                     {
-                        bool isMine = _player != null
-                            && string.Equals(_player.Username, chat.Sender, StringComparison.OrdinalIgnoreCase);
+                        bool isMine = _player != null && string.Equals(_player.Username, chat.Sender, StringComparison.OrdinalIgnoreCase);
                         bool hasRecipient = !string.IsNullOrWhiteSpace(chat.Recipient);
 
                         PrintServerOutput(() =>
                         {
                             if (hasRecipient && isMine)
-                                Console.WriteLine($"🤫 [PRIVATO → {chat.Recipient}] {chat.Message}");
+                            {
+                                AnsiConsole.MarkupLine($"🤫 [italic fuchsia][PRIVATO → {Markup.Escape(chat.Recipient!)}][/] [white]{Markup.Escape(chat.Message)}[/]");
+                            }
                             else if (hasRecipient)
-                                Console.WriteLine($"🤫 [PRIVATO da {chat.Sender}] {chat.Message}");
+                            {
+                                AnsiConsole.MarkupLine($"🤫 [italic fuchsia][PRIVATO da {Markup.Escape(chat.Sender)}][/] [bold white]{Markup.Escape(chat.Message)}[/]");
+                            }
                             else
-                                Console.WriteLine($"💬 [{chat.Sender}] {chat.Message}");
+                            {
+                                AnsiConsole.MarkupLine($"💬 [bold cyan][{Markup.Escape(chat.Sender)}][/] [white]{Markup.Escape(chat.Message)}[/]");
+                            }
                         });
                     }
                     break;
@@ -232,26 +261,51 @@ namespace RPG.Client
                     {
                         PrintServerOutput(() =>
                         {
-                            Console.WriteLine("\n==================================================================");
-                            Console.WriteLine($"🧠 ELENCO ABILITÀ - {skillListResp.Character}");
-                            if (skillListResp.WoundPenalty < 0)
-                            {
-                                Console.WriteLine($"⚠️  Penalità Ferite attiva: {skillListResp.WoundPenalty}");
-                            }
-                            Console.WriteLine("------------------------------------------------------------------");
-                            Console.WriteLine($"{"Abilità",-22} {"Livello",-8} {"Statistica",-16} {"Pool Base",-12} {"Pool Effettivo",-14}");
-                            Console.WriteLine("------------------------------------------------------------------");
+                            var table = new Table().Border(TableBorder.Rounded).BorderColor(Color.Cyan1);
+                            table.AddColumns(
+                                new TableColumn("[bold yellow]Abilità[/]"),
+                                new TableColumn("[bold cyan]Livello[/]").Centered(),
+                                new TableColumn("[bold magenta]Statistica[/]").Centered(),
+                                new TableColumn("[bold green]Pool Base[/]").Centered(),
+                                new TableColumn("[bold green]Pool Effettivo[/]").Centered()
+                            );
+
                             if (skillListResp.Skills.Count == 0)
                             {
-                                Console.WriteLine("  (Nessuna abilità registrata)");
+                                table.AddRow("[grey](Nessuna abilità registrata)[/]", "-", "-", "-", "-");
                             }
+
                             foreach (var s in skillListResp.Skills)
                             {
                                 int effectivePool = Math.Max(0, s.BasePool + skillListResp.WoundPenalty);
                                 string statDisplay = $"{s.Stat} ({s.StatValue})";
-                                Console.WriteLine($"  - {s.Name,-20} : Lvl {s.Level,-3}  {statDisplay,-16} -> {s.BasePool,-10} [Eff: {effectivePool}]");
+                                string effDisplay = skillListResp.WoundPenalty < 0
+                                    ? $"[bold red]{effectivePool}[/]"
+                                    : $"[bold green]{effectivePool}[/]";
+
+                                table.AddRow(
+                                    Markup.Escape(s.Name),
+                                    s.Level.ToString(),
+                                    statDisplay,
+                                    s.BasePool.ToString(),
+                                    effDisplay
+                                );
                             }
-                            Console.WriteLine("==================================================================");
+
+                            string headerText = $"[bold yellow] 🧠 ABILITÀ - {Markup.Escape(skillListResp.Character)} [/]";
+                            if (skillListResp.WoundPenalty < 0)
+                            {
+                                headerText += $" [bold red](Penalità Ferite: {skillListResp.WoundPenalty})[/]";
+                            }
+
+                            var panel = new Panel(table)
+                            {
+                                Header = new PanelHeader(headerText),
+                                Border = BoxBorder.Heavy,
+                                BorderStyle = new Style(Color.Yellow)
+                            };
+
+                            AnsiConsole.Write(panel);
                         });
                     }
                     break;
@@ -270,16 +324,16 @@ namespace RPG.Client
                                 var pos = movePayload.ActualPosition;
                                 if (isSelf)
                                 {
-                                    Console.WriteLine($"✅ [MOVIMENTO] {movePayload.Message}");
+                                    AnsiConsole.MarkupLine($"✅ [bold green][MOVIMENTO][/] [white]{Markup.Escape(movePayload.Message)}[/]");
                                 }
                                 else
                                 {
-                                    Console.WriteLine($"📍 [MOVIMENTO] {movePayload.PlayerHandle} si è spostato a ({pos.X}, {pos.Y}, {pos.Z})");
+                                    AnsiConsole.MarkupLine($"📍 [bold blue][MOVIMENTO][/] [bold cyan]{Markup.Escape(movePayload.PlayerHandle)}[/] si è spostato a [green]({pos.X}, {pos.Y}, {pos.Z})[/]");
                                 }
                             }
                             else
                             {
-                                Console.WriteLine($"🚫 [MOVIMENTO] {movePayload.Message}");
+                                AnsiConsole.MarkupLine($"❌ [bold red][MOVIMENTO FALLITO][/] [white]{Markup.Escape(movePayload.Message)}[/]");
                             }
                         });
                     }
@@ -291,54 +345,61 @@ namespace RPG.Client
                     {
                         PrintServerOutput(() =>
                         {
-                            string title = string.IsNullOrWhiteSpace(listResp.FilterGame)
-                                ? "👥 GIOCATORI ONLINE"
-                                : $"👥 GIOCATORI NEL GIOCO '{listResp.FilterGame}'";
-                            Console.WriteLine($"\n{title}");
-                            Console.WriteLine("--------------------------------------------------------------------------------");
-                            Console.WriteLine($"{"Giocatore",-18} {"Ruolo Utente",-14} {"Personaggio",-22} {"Game",-16}");
-                            Console.WriteLine("--------------------------------------------------------------------------------");
+                            var table = new Table().Border(TableBorder.Rounded).BorderColor(Color.Green);
+                            table.AddColumns(
+                                new TableColumn("[bold yellow]Giocatore[/]"),
+                                new TableColumn("[bold cyan]Ruolo Utente[/]").Centered(),
+                                new TableColumn("[bold white]Personaggio[/]"),
+                                new TableColumn("[bold green]Stanza di Gioco[/]")
+                            );
+
                             if (listResp.Players.Count == 0)
                             {
-                                Console.WriteLine("  (Nessun giocatore trovato)");
+                                table.AddRow("[grey](Nessun giocatore trovato)[/]", "-", "-", "-");
                             }
+
                             foreach (var p in listResp.Players)
                             {
-                                string marker = (_player != null && string.Equals(_player.Username, p.Handle, StringComparison.OrdinalIgnoreCase))
-                                    ? " (tu)" : "";
-                                string playerCol = p.Handle + marker;
-                                string charCol = !string.IsNullOrWhiteSpace(p.CharacterHandle) ? p.CharacterHandle : "---";
-                                string gameCol = !string.IsNullOrWhiteSpace(p.Game) ? p.Game : "---";
-                                Console.WriteLine($"  - {playerCol,-16} {p.Role,-14} {charCol,-22} {gameCol,-16}");
-                            }
-                            Console.WriteLine("--------------------------------------------------------------------------------");
-                        });
-                    }
-                    break;
+                                bool isMe = _player != null && string.Equals(_player.Username, p.Handle, StringComparison.OrdinalIgnoreCase);
+                                string playerDisplay = isMe
+                                    ? $"[bold green]{Markup.Escape(p.Handle)} (tu)[/]"
+                                    : $"[white]{Markup.Escape(p.Handle)}[/]";
 
-                case OpCode.S2C_JoinResponse:
-                    var joinResp = packet.DeserializePayload<JoinResponsePayload>();
-                    if (joinResp != null)
-                    {
-                        if(joinResp.Success)
-                        {
-                            PrintServerOutput(() => Console.WriteLine($"[JOIN] Sei entrato nel game '{joinResp.GameName}' come '{joinResp.Role}'."));
-                        }
-                        else
-                        {
-                            PrintServerOutput(() => Console.WriteLine($"[JOIN] Fallito: {joinResp.Message}"));
-                        }
+                                string roleColor = p.Role == Player.RoleType.master ? "bold magenta" : "grey";
+                                string roleDisplay = $"[{roleColor}]{p.Role}[/]";
+                                string charDisplay = !string.IsNullOrWhiteSpace(p.CharacterHandle) && p.CharacterHandle != "---"
+                                    ? $"[bold cyan]{Markup.Escape(p.CharacterHandle)}[/]"
+                                    : "[grey]---[/]";
+                                string gameDisplay = !string.IsNullOrWhiteSpace(p.Game) && p.Game != "---"
+                                    ? $"[bold yellow]{Markup.Escape(p.Game)}[/]"
+                                    : "[grey]---[/]";
+
+                                table.AddRow(playerDisplay, roleDisplay, charDisplay, gameDisplay);
+                            }
+
+                            string title = string.IsNullOrWhiteSpace(listResp.FilterGame)
+                                ? "👥 GIOCATORI ONLINE"
+                                : $"👥 GIOCATORI NEL GIOCO '{Markup.Escape(listResp.FilterGame)}'";
+
+                            var panel = new Panel(table)
+                            {
+                                Header = new PanelHeader($"[bold yellow] {title} [/]"),
+                                Border = BoxBorder.Heavy,
+                                BorderStyle = new Style(Color.Cyan1)
+                            };
+
+                            AnsiConsole.Write(panel);
+                        });
                     }
                     break;
 
                 case OpCode.S2C_LinkResponse:
                     var linkResp = packet.DeserializePayload<LinkResponsePayload>();
-                    
-                    if(linkResp != null)
+                    if (linkResp != null)
                     {
                         if (linkResp.Success)
                         {
-                            PrintServerOutput(() => Console.WriteLine($"[LINK] Collegamento riuscito: Player '{linkResp.PlayerHandle}' con Character '{linkResp.CharacterHandle}'."));
+                            PrintServerOutput(() => AnsiConsole.MarkupLine($"🔗 [bold green][LINK][/] Collegamento riuscito: Player [cyan]'{Markup.Escape(linkResp.PlayerHandle)}'[/] con Character [yellow]'{Markup.Escape(linkResp.CharacterHandle)}'[/]."));
                             if (_player != null)
                             {
                                 _player.Role = linkResp.Role;
@@ -347,7 +408,7 @@ namespace RPG.Client
                         }
                         else
                         {
-                            PrintServerOutput(() => Console.WriteLine($"[LINK] Fallito: {linkResp.Message}"));
+                            PrintServerOutput(() => AnsiConsole.MarkupLine($"❌ [bold red][LINK FALLITO][/] [white]{Markup.Escape(linkResp.Message)}[/]"));
                         }
                     }
                     break;
@@ -360,11 +421,11 @@ namespace RPG.Client
                         {
                             if (createResp.Success)
                             {
-                                Console.WriteLine($"\n✨ [CREAZIONE] {createResp.Message}");
+                                AnsiConsole.MarkupLine($"✨ [bold green][CREAZIONE][/] [white]{Markup.Escape(createResp.Message)}[/]");
                             }
                             else
                             {
-                                Console.WriteLine($"\n❌ [CREAZIONE FALLITA] {createResp.Message}");
+                                AnsiConsole.MarkupLine($"❌ [bold red][CREAZIONE FALLITA][/] [white]{Markup.Escape(createResp.Message)}[/]");
                             }
                         });
                     }
@@ -372,13 +433,12 @@ namespace RPG.Client
 
                 case OpCode.S2C_InitRollRequest:
                     var initReq = packet.DeserializePayload<InitRollRequestPayload>();
-
                     if (initReq != null)
                     {
                         string msg = string.IsNullOrWhiteSpace(initReq.Message)
                             ? "Il master ha avviato un tiro di iniziativa."
                             : initReq.Message;
-                        PrintServerOutput(() => Console.WriteLine($"[INIT] {msg}"));
+                        PrintServerOutput(() => AnsiConsole.MarkupLine($"⚔️ [bold yellow][INIZIATIVA][/] [white]{Markup.Escape(msg)}[/]"));
                     }
                     break;
 
@@ -386,22 +446,20 @@ namespace RPG.Client
                     var gamesResp = packet.DeserializePayload<GamesResponsePayload>();
                     if (gamesResp != null)
                     {
-                        if (gamesResp.Games.Count > 0)
+                        PrintServerOutput(() =>
                         {
-                            PrintServerOutput(() =>
+                            var table = new Table().Border(TableBorder.Rounded).BorderColor(Color.Cyan1);
+                            table.AddColumn("[bold yellow]Stanze di Gioco Attive[/]");
+                            if (gamesResp.Games.Count > 0)
                             {
-                                Console.WriteLine("👥 SESSIONI DI GIOCO");
-                                Console.WriteLine("----------------------------------------");
-                                foreach (var game in gamesResp.Games)
-                                    Console.WriteLine($"{game}");
-                                Console.WriteLine("----------------------------------------");
-                            });
-                        }
-                        else
-                            PrintServerOutput(() =>
+                                foreach (var g in gamesResp.Games) table.AddRow(Markup.Escape(g));
+                            }
+                            else
                             {
-                                Console.WriteLine("   (Nessuna sessione attiva)");
-                            });
+                                table.AddRow("[grey](Nessuna sessione attiva)[/]");
+                            }
+                            AnsiConsole.Write(new Panel(table) { Header = new PanelHeader("[bold yellow] 🎮 SESSIONI ATTIVE [/]"), BorderStyle = new Style(Color.Cyan1) });
+                        });
                     }
                     break;
 
@@ -409,85 +467,72 @@ namespace RPG.Client
                     var charactersResp = packet.DeserializePayload<CharactersResponsePayload>();
                     if (charactersResp != null)
                     {
-                        if (charactersResp.Characters.Count > 0)
+                        PrintServerOutput(() =>
                         {
-                            PrintServerOutput(() =>
+                            var table = new Table().Border(TableBorder.Rounded).BorderColor(Color.Yellow);
+                            table.AddColumns("[bold yellow]Handle Personaggio[/]", "[bold cyan]Ruolo Archetipo[/]");
+                            if (charactersResp.Characters.Count > 0)
                             {
-                                Console.WriteLine("👥 PERSONAGGI DISPONIBILI");
-                                Console.WriteLine("----------------------------------------");
-                                foreach (var _char in charactersResp.Characters)
-                                    Console.WriteLine($"{_char.Handle}\t{_char.Role}");
-                                Console.WriteLine("----------------------------------------");
-                            });
-                        }
-                        else
-                            PrintServerOutput(() =>
+                                foreach (var cNode in charactersResp.Characters) table.AddRow(Markup.Escape(cNode.Handle), cNode.Role.ToString());
+                            }
+                            else
                             {
-                                Console.WriteLine("   (Nessun personaggio disponibile)");
-                            });
+                                table.AddRow("[grey](Nessun personaggio salvato sul server)[/]", "-");
+                            }
+                            AnsiConsole.Write(new Panel(table) { Header = new PanelHeader("[bold yellow] 👥 SCHEDE PERSONAGGI DISPONIBILI [/]"), BorderStyle = new Style(Color.Yellow) });
+                        });
                     }
                     break;
 
                 default:
-                    PrintServerOutput(() => Console.WriteLine($"[PACKET] Ricevuto OpCode non gestito: {packet.OpCode}"));
+                    PrintServerOutput(() => AnsiConsole.MarkupLine($"[grey][PACKET][/] Ricevuto OpCode: [yellow]{packet.OpCode}[/]"));
                     break;
             }
         }
+
         /// <summary>
-        /// Stampa il menu di aiuto con la lista dei comandi disponibili, formattata in modo leggibile.
+        /// Stampa il menu di aiuto in stile BBS anni '90.
         /// </summary>
         private static void PrintHelpMenu()
         {
             lock (_consoleLock)
             {
-                Console.WriteLine("\n========================================");
-                Console.WriteLine("🎮 COMANDI DISPONIBILI - NIGHT CITY RPG");
-                Console.WriteLine("----------------------------------------");
-                Console.WriteLine("  /status                               - Visualizza la scheda del personaggio collegato");
-                Console.WriteLine("  /status <Character>                   - Visualizza la scheda personaggio speficicato (master only)");
-                Console.WriteLine("  /skills                               - Visualizza la lista delle abilità del personaggio");
-                Console.WriteLine("  /move <X> <Y> [Z]                     - Muova il personaggio nello spazio 3D");
-                Console.WriteLine("  /attack <Bersaglio>                   - Attacca il bersaglio con l'arma equipaggiata");
-                Console.WriteLine("  /attack <Bersaglio> <Arma/Abilità>    - Attacca il bersaglio specificando arma o abilità (es. /attack Jackie ArtiMarziali)");
-                Console.WriteLine("  /roll <Espressione> [Motivazione]     - Effettua un tiro di dadi (es. /roll 1d10+4 Iniziativa)");
-                Console.WriteLine("  /skill <NomeAbilità> [TN]             - Effettua un test di abilità (es. /skill Percezione 15)");
-                Console.WriteLine("  /chat <Messaggio> [userid]            - Chat broadcast, o privata aggiungendo l'userid dopo le virgolette");
-                Console.WriteLine("  /link <Character>                     - Collega il player ad un personaggio esistente");
-                Console.WriteLine("  /create <archetipo> <handle>          - Crea un nuovo personaggio da un archetipo");
-                Console.WriteLine("  /join <Game> [master|player]          - Entra in un game esistente o lo crea (master only)");
-                Console.WriteLine("  /init <Modifier>                      - Avvia tiro iniziativa (master) / Esegue tiro iniziativa (player)");
-                Console.WriteLine("  /characters                           - Elenca i personaggi disponibili sul server");
-                Console.WriteLine("  /games                                - Elenca le sessioni di gioco attive");
-                Console.WriteLine("  /ping                                 - Verifica la latenza con il server (ping/pong)");
-                Console.WriteLine("  /list [Game]                          - Elenca i giocatori online (o filtrati per game)");
-                Console.WriteLine("  /help                                 - Mostra questo menu");
-                Console.WriteLine("  /exit                                 - Disconnettiti ed esci");
-                Console.WriteLine("========================================\n");
+                var table = new Table().Border(TableBorder.Rounded).BorderColor(Color.Yellow);
+                table.AddColumns(
+                    new TableColumn("[bold yellow]Comando[/]"),
+                    new TableColumn("[bold cyan]Argomenti[/]"),
+                    new TableColumn("[bold green]Descrizione[/]")
+                );
+
+                table.AddRow("[bold white]/status[/]", "[grey]-[ / <Char>][/]", "Visualizza la scheda del personaggio collegato (o bersaglio se Master)");
+                table.AddRow("[bold white]/skills[/]", "[grey]-[/]", "Elenco abilità, statistiche associate e pool di tiro");
+                table.AddRow("[bold white]/create[/]", "[cyan]<archetipo> <handle>[/]", "Crea un nuovo personaggio da un archetipo (con stat casuali)");
+                table.AddRow("[bold white]/link[/]", "[cyan]<character>[/]", "Collega la sessione ad un personaggio esistente");
+                table.AddRow("[bold white]/list[/]", "[grey][<game>][/]", "Elenca i giocatori online (o filtrati per stanza di gioco)");
+                table.AddRow("[bold white]/games[/]", "[grey]-[/]", "Elenca le sessioni di gioco attive");
+                table.AddRow("[bold white]/characters[/]", "[grey]-[/]", "Elenca i personaggi salvati sul server");
+                table.AddRow("[bold white]/join[/]", "[cyan]<game> [master|player][/]", "Entra in un gioco o ne crea uno (solo Master)");
+                table.AddRow("[bold white]/attack[/]", "[cyan]<target> [arma/skill][/]", "Attacca un bersaglio con arma in pugno o specificata");
+                table.AddRow("[bold white]/skill[/]", "[cyan]<nome> [TN][/]", "Effettua una prova di abilità d10 (es. /skill Pistola 15)");
+                table.AddRow("[bold white]/roll[/]", "[cyan]<espressione> [motivo][/]", "Tiro di dadi personalizzato (es. /roll 2d6+3 Danno)");
+                table.AddRow("[bold white]/move[/]", "[cyan]<X> <Y> [Z][/]", "Muove il personaggio nello spazio 3D");
+                table.AddRow("[bold white]/chat[/]", "[cyan]<\"msg\"> [user][/]", "Messaggio broadcast o privato");
+                table.AddRow("[bold white]/init[/]", "[cyan][modificatore][/]", "Tiro di iniziativa / avvio turno di combattimento");
+                table.AddRow("[bold white]/ping[/]", "[grey]-[/]", "Verifica latenza di rete con il server (RTT)");
+                table.AddRow("[bold white]/help[/]", "[grey]-[/]", "Mostra questo menu dei comandi");
+                table.AddRow("[bold white]/exit[/]", "[grey]-[/]", "Disconnettiti ed esci da Night City");
+
+                var panel = new Panel(table)
+                {
+                    Header = new PanelHeader("[bold yellow] 🎮 COMANDI NIGHT CITY BBS v2.0 [/]"),
+                    Border = BoxBorder.Double,
+                    BorderStyle = new Style(Color.Cyan1)
+                };
+
+                AnsiConsole.Write(panel);
             }
         }
-        /// <summary>
-        /// Stampa la lista delle abilità del personaggio, mostrando il livello, la statistica associata e il pool totale calcolato.
-        /// </summary>
-        /// <param name="character"></param>
-        private static void PrintSkillList(Character character)
-        {
-            Console.WriteLine("\n========================================");
-            Console.WriteLine($"🧠 ELENCO ABILITÀ - {character.Handle}");
-            Console.WriteLine("----------------------------------------");
-            foreach (var kv in character.Skills)
-            {
-                string statAssoc = Skills.GetStatForSkill(kv.Key);
-                int statVal = character.Stats.GetStatValue(statAssoc);
-                int totalPool = statVal + kv.Value;
-                Console.WriteLine($"  - {kv.Key,-20} : Livello {kv.Value} ({statAssoc}: {statVal}) -> Pool Base: {totalPool}");
-            }
-            Console.WriteLine("========================================");
-        }
-        /// <summary>
-        /// Stampa le informazioni sul caricatore e il calibro dell'arma, se disponibili. Restituisce una stringa formattata da aggiungere alla descrizione dell'arma.
-        /// </summary>
-        /// <param name="w">L'arma di cui stampare le informazioni sul caricatore</param>
-        /// <returns>Una stringa formattata con le informazioni sul caricatore</returns>
+
         private static string FormatWeaponAmmo(Weapon w)
         {
             if (w != null && w.MagazineCapacity > 0 && !string.IsNullOrEmpty(w.Caliber))
@@ -496,21 +541,49 @@ namespace RPG.Client
             }
             return "";
         }
+
         /// <summary>
-        /// Stampa lo stato completo del personaggio, inclusi posizione, statistiche, salute, armatura, armi e munizioni.
+        /// Stampa lo stato completo del personaggio con layout Cyberpunk HUD via Spectre.Console.
         /// </summary>
-        /// <param name="c">Lo stato del personaggio da stampare</param>
         private static void PrintCharacterStatus(Character c)
         {
-            Console.WriteLine("\n========================================");
-            Console.WriteLine($"📋 SCHEDA PERSONAGGIO: {c.Handle}");
-            Console.WriteLine("----------------------------------------");
-            Console.WriteLine($" Posizione 3D -> X:{c.Position.X:F1} | Y:{c.Position.Y:F1} | Z:{c.Position.Z:F1}");
-            Console.WriteLine($" Stats        -> INT:{c.Stats.INT} | REF:{c.Stats.REF} | TECH:{c.Stats.TECH} | COOL:{c.Stats.COOL}");
-            Console.WriteLine($"                 ATTR:{c.Stats.ATTR} | MA:{c.Stats.MA} | BODY:{c.Stats.BODY} | EMP:{c.Stats.EMP}");
-            Console.WriteLine($" Salute       -> {c.Health.CurrentHealth} / {c.Health.MaxHealth} ({c.Health.GetWoundStatusDescription()})");
+            var mainGrid = new Grid();
+            mainGrid.AddColumn();
 
-            Console.WriteLine(" 🛡️ Armatura:");
+            // 1. Header con Handle, Ruolo, Posizione
+            mainGrid.AddRow(new Markup($"[bold yellow]PERSONAGGIO:[/] [bold cyan]{Markup.Escape(c.Handle)}[/]  [grey]|[/]  [bold yellow]RUOLO:[/] [white]{c.Role}[/]  [grey]|[/]  [bold yellow]POS:[/] [green]({c.Position.X:F1}, {c.Position.Y:F1}, {c.Position.Z:F1})[/]"));
+
+            // 2. Barra Salute
+            int currentHp = Math.Max(0, c.Health.CurrentHealth);
+            int maxHp = Math.Max(1, c.Health.MaxHealth);
+            double hpPercent = (double)currentHp / maxHp;
+            string hpColor = hpPercent > 0.6 ? "green" : (hpPercent > 0.25 ? "yellow" : "red");
+
+            int barTotal = 20;
+            int filled = Math.Clamp((int)Math.Round(hpPercent * barTotal), 0, barTotal);
+            string bar = new string('█', filled) + new string('░', barTotal - filled);
+
+            mainGrid.AddRow(new Markup($"[bold yellow]SALUTE:[/] [{hpColor}]{bar}[/] [{hpColor}]{currentHp}/{maxHp}[/] [grey]({Markup.Escape(c.Health.GetWoundStatusDescription())})[/]"));
+
+            // 3. Tabella Statistiche
+            var statsTable = new Table().Border(TableBorder.Rounded).BorderColor(Color.Grey);
+            statsTable.AddColumns("[yellow]INT[/]", "[yellow]REF[/]", "[yellow]TECH[/]", "[yellow]COOL[/]", "[yellow]ATTR[/]", "[yellow]MA[/]", "[yellow]BODY[/]", "[yellow]EMP[/]");
+            statsTable.AddRow(
+                c.Stats.INT.ToString(),
+                c.Stats.REF.ToString(),
+                c.Stats.TECH.ToString(),
+                c.Stats.COOL.ToString(),
+                c.Stats.ATTR.ToString(),
+                c.Stats.MA.ToString(),
+                c.Stats.BODY.ToString(),
+                c.Stats.EMP.ToString()
+            );
+            mainGrid.AddRow(statsTable);
+
+            // 4. Armatura
+            var equipTable = new Table().Border(TableBorder.Simple).BorderColor(Color.DarkSlateGray3);
+            equipTable.AddColumns("[cyan]Locazione[/]", "[cyan]Armatura[/]", "[cyan]SP Attuale / Max[/]");
+
             bool anyArmor = false;
             if (c.Armor != null)
             {
@@ -520,92 +593,86 @@ namespace RPG.Client
                     if (piece != null)
                     {
                         anyArmor = true;
-                        Console.WriteLine($"   - {loc,-5}: {piece.Name} [{piece.Material}] SP {piece.CurrentStopPower}/{piece.MaxStopPower}");
+                        string spColor = piece.CurrentStopPower == piece.MaxStopPower ? "green" : (piece.CurrentStopPower > 0 ? "yellow" : "red");
+                        equipTable.AddRow(loc.ToString(), Markup.Escape(piece.Name), $"[{spColor}]{piece.CurrentStopPower}/{piece.MaxStopPower}[/]");
                     }
                 }
             }
             if (!anyArmor)
             {
-                Console.WriteLine("   (Nessuna armatura equipaggiata)");
+                equipTable.AddRow("-", "[grey]Nessuna armatura equipaggiata[/]", "-");
             }
+            mainGrid.AddRow(equipTable);
 
+            // 5. Arma Impugnata
             if (c.EquippedWeapon != null)
             {
-                Console.WriteLine($" ⚔️ Arma Impugnata : {c.EquippedWeapon.Name} [{c.EquippedWeapon.Type}] (Danno: {c.EquippedWeapon.DamageDice}, Skill: {c.EquippedWeapon.SkillName}{FormatWeaponAmmo(c.EquippedWeapon)})");
+                string ammoInfo = FormatWeaponAmmo(c.EquippedWeapon);
+                mainGrid.AddRow(new Markup($"[bold yellow]⚔️ ARMA IN PUGNO:[/] [bold cyan]{Markup.Escape(c.EquippedWeapon.Name)}[/] [grey]({c.EquippedWeapon.Type})[/] [grey]|[/] Danno: [bold red]{c.EquippedWeapon.DamageDice}[/] [grey]|[/] Gittata: [green]{c.EquippedWeapon.OptimalRangeMeters}m[/]{Markup.Escape(ammoInfo)}"));
             }
             else
             {
-                Console.WriteLine(" ⚔️ Arma Impugnata : Nessuna");
+                mainGrid.AddRow(new Markup("[bold yellow]⚔️ ARMA IN PUGNO:[/] [grey]Nessuna[/]"));
             }
 
-            Console.WriteLine(" 🎒 Armi in Inventario:");
+            // 6. Inventario Armi e Munizioni
             if (c.Weapons != null && c.Weapons.Count > 0)
             {
-                foreach (var w in c.Weapons)
+                var wepLines = c.Weapons.Select(w =>
                 {
-                    string marker = (c.EquippedWeapon != null && c.EquippedWeapon.Id == w.Id) ? " (EQUIPAGGIATA)" : "";
-                    Console.WriteLine($"   - {w.Name} [{w.Type}] | Danno: {w.DamageDice} | Skill: {w.SkillName}{FormatWeaponAmmo(w)}{marker}");
-                }
-            }
-            else
-            {
-                Console.WriteLine("   (Inventario vuoto)");
+                    string equipped = (c.EquippedWeapon != null && c.EquippedWeapon.Id == w.Id) ? " [bold green](EQUIPAGGIATA)[/]" : "";
+                    return $"• [white]{Markup.Escape(w.Name)}[/] [grey]({w.DamageDice})[/]{equipped}";
+                });
+                mainGrid.AddRow(new Markup("[bold yellow]🎒 ARMI:[/] " + string.Join("  ", wepLines)));
             }
 
-            Console.WriteLine(" 🔫 Munizioni:");
             if (c.Ammos != null && c.Ammos.Count > 0)
             {
-                foreach (var a in c.Ammos)
+                var ammoLines = c.Ammos.Select(a =>
                 {
-                    string effect = a.Effect == AmmoEffect.ArmorPiercing ? " (AP)" : (a.Effect == AmmoEffect.Expanding ? " (EX)" : "");
-                    Console.WriteLine($"   - {a.Name}{effect} | {a.Quantity} colpi");
-                }
-            }
-            else
-            {
-                Console.WriteLine("   (Nessuna munizione in inventario)");
+                    string effect = a.Effect == AmmoEffect.ArmorPiercing ? " [red](AP)[/]" : (a.Effect == AmmoEffect.Expanding ? " [yellow](EX)[/]" : "");
+                    return $"• [white]{Markup.Escape(a.Name)}[/]{effect}: [green]{a.Quantity}[/]";
+                });
+                mainGrid.AddRow(new Markup("[bold yellow]🔫 MUNIZIONI:[/] " + string.Join("  ", ammoLines)));
             }
 
-            Console.WriteLine(" CyberWare:");
+            // 7. Cyberware
             if (c.Cyberware != null && c.Cyberware.Count > 0)
             {
-                foreach(var w in c.Cyberware)
+                var cwLines = c.Cyberware.Select(cw =>
                 {
-                    Console.WriteLine($"   - {w.ID} | {w.Type}");
-                    Console.WriteLine($"   - {w.Description}");
-                    Console.WriteLine("    BONUS:");
-                    Console.WriteLine($"   - {w.Bonus.ApplyTo} | {w.Bonus.Value}");
-                }
+                    string bonus = cw.Bonus != null && cw.Bonus.Value != 0 ? $" [green][+{cw.Bonus.Value} {cw.Bonus.ApplyTo}][/]" : "";
+                    return $"• [cyan]{Markup.Escape(cw.ID)}[/] [grey]({cw.Type})[/]{bonus} - [grey]{Markup.Escape(cw.Description)}[/]";
+                });
+                mainGrid.AddRow(new Markup("[bold yellow]⚡ CYBERWARE:[/]\n  " + string.Join("\n  ", cwLines)));
             }
-            else
+
+            var panel = new Panel(mainGrid)
             {
-                Console.WriteLine("   (Nessun cyberware in inventario)");
-            }
+                Border = BoxBorder.Heavy,
+                Header = new PanelHeader($"[bold yellow] 📋 SCHEDA PERSONAGGIO - {Markup.Escape(c.Handle)} [/]"),
+                BorderStyle = new Style(Color.Yellow)
+            };
 
-            Console.WriteLine("========================================");
-
+            AnsiConsole.Write(panel);
         }
+
         /// <summary>
         /// Loop principale di I/O: gestisce il login, i comandi dell'utente e l'ascolto dei messaggi del server.
         /// </summary>
-        /// <returns></returns>
         public async Task RunLoopAsync()
         {
             if (_reader == null || _writer == null) return;
 
             _ = Task.Run(() => ListenToServerAsync());
 
-            Console.WriteLine("\n========================================");
-
-            // Loop di login con retry: si ripropone l'player_name finché il server non accetta (es. player_name già in uso)
             bool loggedIn = false;
-            
+
             while (!loggedIn)
             {
-                Console.Write("Inserisci il tuo username: ");
-
+                AnsiConsole.Markup("[bold yellow]NETRUNNER LOGIN[/] [grey]>> Inserisci username:[/] ");
                 string? player_name = Console.ReadLine();
- 
+
                 if (string.IsNullOrWhiteSpace(player_name))
                 {
                     player_name = $"Punk_{Guid.NewGuid().ToString()[..4]}";
@@ -620,7 +687,6 @@ namespace RPG.Client
 
                 await _writer.WriteLineAsync(JsonSerializer.Serialize(loginPacket));
 
-                // Attende la risposta del server (con timeout per non restare appesi se la connessione cade)
                 LoginResponsePayload loginResp;
                 try
                 {
@@ -628,18 +694,18 @@ namespace RPG.Client
                 }
                 catch (TimeoutException)
                 {
-                    Console.WriteLine("[!] Nessuna risposta dal server. Verifica la connessione e riprova.");
+                    AnsiConsole.MarkupLine("[bold red][!] Nessuna risposta dal server. Verifica la connessione e riprova.[/]");
                     if (!_isRunning) break;
                     continue;
                 }
 
                 if (!loginResp.Success)
                 {
-                    PrintServerOutput(() => Console.WriteLine($"[!] Login rifiutato: {loginResp.Message}"));
-                    continue; // ripete il prompt con un nuovo player_name
+                    PrintServerOutput(() => AnsiConsole.MarkupLine($"[bold red][!] Login rifiutato:[/] [red]{Markup.Escape(loginResp.Message)}[/]"));
+                    continue;
                 }
 
-                PrintServerOutput(() => Console.WriteLine($"[SERVER] {loginResp.Message}"));
+                PrintServerOutput(() => AnsiConsole.MarkupLine($"[bold green]✓ Accesso autorizzato:[/] [bold cyan]{Markup.Escape(loginResp.PlayerName)}[/]\n"));
 
                 _player = new Player
                 {
@@ -649,11 +715,10 @@ namespace RPG.Client
                 loggedIn = true;
             }
 
-            if (!loggedIn) return; // chiusura senza login (es. connessione persa)
+            if (!loggedIn) return;
 
             PrintHelpMenu();
 
-            // D'ora in poi i messaggi del server ripristinano il prompt quando arrivano
             _commandLoopActive = true;
 
             while (_isRunning)
@@ -661,39 +726,21 @@ namespace RPG.Client
                 ShowPromptIfIdle();
 
                 string? input = Console.ReadLine();
-                // La riga del prompt è stata "consumata" dall'input utente
                 _promptPending = false;
 
-                // Connessione caduta mentre si attendeva l'input: si esce invece di eseguire
-                // il comando su un socket ormai chiuso
                 if (!_isRunning) break;
 
-                if (string.IsNullOrWhiteSpace(input)) { continue; }
-
-                string trimmedInput = input.Trim().ToLower();
-
-                if (string.IsNullOrWhiteSpace(trimmedInput)) { continue; }
-                else if (!trimmedInput.StartsWith('/'))
+                if (string.IsNullOrWhiteSpace(input))
                 {
-                    Console.WriteLine("[!] I comandi devono iniziare con il carattere '/'.");
                     continue;
                 }
-                else if (trimmedInput.StartsWith('/'))
-                {
-                    if (_player == null)
-                    {
-                        Console.WriteLine("[!] Devi essere loggato per utilizzare i comandi.");
-                        continue;
-                    }
-                }
+
+                string trimmedInput = input.Trim();
 
                 if (trimmedInput.Equals("/ping", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Registra il momento dell'invio per calcolare il RTT quando arriva il Pong
                     _lastPingSentUtc = DateTime.UtcNow;
-                    
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_Ping, new { })));
-                    
                     continue;
                 }
 
@@ -702,7 +749,6 @@ namespace RPG.Client
                     string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                     string? gameFilter = parts.Length > 1 ? parts[1].Trim() : null;
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetPlayers, new PlayersRequestPayload { GameName = gameFilter })));
-                    
                     continue;
                 }
 
@@ -711,9 +757,9 @@ namespace RPG.Client
                     string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                     if (parts.Length < 3)
                     {
-                        Console.WriteLine("[!] Uso corretto: /create <archetipo> <character.handle>");
-                        Console.WriteLine("    Esempio: /create Solo Razor");
-                        Console.WriteLine("    Archetipi disponibili: Solo, Netrunner, Nomad, Rocker, Fixer, Corporate, Techie, TechMed, Cop, Media");
+                        AnsiConsole.MarkupLine("[bold red][!] Uso corretto:[/] [yellow]/create <archetipo> <character.handle>[/]");
+                        AnsiConsole.MarkupLine("    [grey]Esempio:[/] /create Solo Razor");
+                        AnsiConsole.MarkupLine("    [grey]Archetipi:[/] Solo, Netrunner, Nomad, Rocker, Fixer, Corporate, Techie, TechMed, Cop, Media");
                         continue;
                     }
 
@@ -725,61 +771,50 @@ namespace RPG.Client
                         Archetype = archetype,
                         CharacterHandle = characterHandle
                     })));
-
                     continue;
                 }
 
                 if (trimmedInput.Equals("/exit", StringComparison.OrdinalIgnoreCase))
                 {
                     _isRunning = false;
-                    
                     break;
                 }
 
                 if (trimmedInput.Equals("/help", StringComparison.OrdinalIgnoreCase))
                 {
                     PrintHelpMenu();
-                    
                     continue;
                 }
 
-                // Commands after this check need to be applied to valid players
                 if (_player == null) { continue; }
 
                 if (trimmedInput.Equals("/status", StringComparison.OrdinalIgnoreCase))
                 {
                     if (string.IsNullOrWhiteSpace(_player.Handle))
                     {
-                        Console.WriteLine("[!] Questo tipo di comando può essere eseguito solo dopo il link al personaggio.");
-                        
+                        AnsiConsole.MarkupLine("[bold red][!] Devi collegarti a un personaggio prima con /link <character>[/]");
                         continue;
                     }
 
-                    // Invia al server la richiesta esplicita di aggiornamento stato
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetStatus, new { })));
-                    
                     continue;
                 }
 
                 if (trimmedInput.Equals("/skills", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Richiesta autoritativa delle abilità al server
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetSkills, new { })));
-                    
                     continue;
                 }
 
                 if (trimmedInput.Equals("/games", StringComparison.OrdinalIgnoreCase))
                 {
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetGames, new { })));
-
                     continue;
                 }
 
                 if (trimmedInput.Equals("/characters", StringComparison.OrdinalIgnoreCase))
                 {
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetCharacters, new { })));
-
                     continue;
                 }
 
@@ -790,12 +825,12 @@ namespace RPG.Client
 
                     await _writer.WriteLineAsync(
                         JsonSerializer.Serialize(
-                            NetworkPacket.Create( OpCode.C2S_Init, new InitRequest { 
+                            NetworkPacket.Create(OpCode.C2S_Init, new InitRequest
+                            {
                                 PlayerName = _player.Username,
                                 Modifiers = modifier
                             }
                     )));
-
                     continue;
                 }
 
@@ -803,13 +838,12 @@ namespace RPG.Client
                 {
                     if (string.IsNullOrWhiteSpace(_player.Handle))
                     {
-                        Console.WriteLine("[!] Questo tipo di comando può essere eseguito solo dopo il link al personaggio.");
-                        
+                        AnsiConsole.MarkupLine("[bold red][!] Devi collegarti a un personaggio prima con /link <character>[/]");
                         continue;
                     }
 
                     string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                    
+
                     if (parts.Length >= 4 &&
                         int.TryParse(parts[1], out int x) &&
                         int.TryParse(parts[2], out int y) &&
@@ -819,10 +853,9 @@ namespace RPG.Client
                         {
                             Position = new Position3D { X = x, Y = y, Z = z }
                         });
-                        
                         await _writer.WriteLineAsync(JsonSerializer.Serialize(movePacket));
                     }
-                    else if(parts.Length==3 &&
+                    else if (parts.Length == 3 &&
                         int.TryParse(parts[1], out int x1) &&
                         int.TryParse(parts[2], out int y1))
                     {
@@ -830,14 +863,12 @@ namespace RPG.Client
                         {
                             Position = new Position3D { X = x1, Y = y1, Z = _player.Character?.Position.Z ?? 0 }
                         });
-                        
                         await _writer.WriteLineAsync(JsonSerializer.Serialize(movePacket));
                     }
                     else
                     {
-                        Console.WriteLine("[!] Sintassi non valida. Usa: /move <X> <Y> [Z] (es. /move 10 0 5)");
+                        AnsiConsole.MarkupLine("[bold red][!] Sintassi non valida. Usa: /move <X> <Y> [Z][/]");
                     }
-                    
                     continue;
                 }
 
@@ -845,13 +876,10 @@ namespace RPG.Client
                 {
                     if (string.IsNullOrWhiteSpace(_player.Handle))
                     {
-                        Console.WriteLine("[!] Questo tipo di comando può essere eseguito solo dopo il link al personaggio.");
-                        
+                        AnsiConsole.MarkupLine("[bold red][!] Devi collegarti a un personaggio prima con /link <character>[/]");
                         continue;
                     }
 
-                    // Parsing dall'input ORIGINALE (non lowercased) per preservare il case
-                    // di player_name, armi e abilità (es. "ArtiMarziali").
                     string[] parts = input.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
                     if (parts.Length >= 2)
                     {
@@ -863,14 +891,13 @@ namespace RPG.Client
                             TargetHandle = targetHandle,
                             WeaponOrSkill = weaponOrSkill
                         });
-                        
+
                         await _writer.WriteLineAsync(JsonSerializer.Serialize(attackPacket));
                     }
                     else
                     {
-                        Console.WriteLine("[!] Sintassi non valida. Usa: /attack <Bersaglio> [Arma|Abilità]");
+                        AnsiConsole.MarkupLine("[bold red][!] Sintassi non valida. Usa: /attack <Bersaglio> [Arma|Abilità][/]");
                     }
-                    
                     continue;
                 }
 
@@ -885,9 +912,8 @@ namespace RPG.Client
                         DiceExpression = diceExpr,
                         Reason = reason
                     });
-                    
+
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(rollPacket));
-                    
                     continue;
                 }
 
@@ -895,18 +921,15 @@ namespace RPG.Client
                 {
                     if (string.IsNullOrWhiteSpace(_player.Handle))
                     {
-                        Console.WriteLine("[!] Questo tipo di comando può essere eseguito solo dopo il link al personaggio.");
-                        
+                        AnsiConsole.MarkupLine("[bold red][!] Devi collegarti a un personaggio prima con /link <character>[/]");
                         continue;
                     }
 
-                    // Parsing dall'input ORIGINALE (non lowercased) per preservare il case
-                    // del nome dell'abilità (es. "Pistola", "ArtiMarziali").
                     string[] parts = input.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
                     if (parts.Length >= 2)
                     {
                         string skillName = parts[1];
-                        int difficulty = 15; // TN Standard di default (Medio)
+                        int difficulty = 15;
 
                         if (parts.Length >= 3 && int.TryParse(parts[2], out int parsedDiff))
                         {
@@ -918,15 +941,13 @@ namespace RPG.Client
                             SkillName = skillName,
                             Difficulty = difficulty
                         });
-                       
+
                         await _writer.WriteLineAsync(JsonSerializer.Serialize(skillPacket));
                     }
                     else
                     {
-                        Console.WriteLine("[!] Sintassi non valida. Usa: /skill <NomeAbilità> [Difficoltà/TN]");
-                        Console.WriteLine("    Esempi: /skill Percezione 15  oppure  /skill Guidare");
+                        AnsiConsole.MarkupLine("[bold red][!] Sintassi non valida. Usa: /skill <NomeAbilità> [TN][/]");
                     }
-                    
                     continue;
                 }
 
@@ -937,34 +958,29 @@ namespace RPG.Client
 
                     if (string.IsNullOrWhiteSpace(rest))
                     {
-                        Console.WriteLine("[!] Uso: /chat \"<messaggio>\" [userid]");
-                        
+                        AnsiConsole.MarkupLine("[bold red][!] Uso: /chat \"<messaggio>\" [userid][/]");
                         continue;
                     }
 
-                    // Il messaggio è delimitato da virgolette: /chat "testo" [userid]
                     int firstQuote = rest.IndexOf('"');
                     if (firstQuote < 0)
                     {
-                        Console.WriteLine("[!] Il messaggio deve essere racchiuso tra virgolette. Es.: /chat \"Salve a tutti\" oppure /chat \"Ti cerco\" Nome");
-                        
+                        AnsiConsole.MarkupLine("[bold red][!] Il messaggio deve essere racchiuso tra virgolette. Es.: /chat \"Salve a tutti\"[/]");
                         continue;
                     }
                     int lastQuote = rest.LastIndexOf('"');
                     if (lastQuote == firstQuote)
                     {
-                        Console.WriteLine("[!] Virgolette non chiuse. Es.: /chat \"Salve a tutti\"");
-                        
+                        AnsiConsole.MarkupLine("[bold red][!] Virgolette non chiuse. Es.: /chat \"Salve a tutti\"[/]");
                         continue;
                     }
 
                     string message = rest[(firstQuote + 1)..lastQuote].Trim();
-                    string after = rest[(lastQuote + 1)..].Trim(); // eventuale userid
+                    string after = rest[(lastQuote + 1)..].Trim();
 
                     if (string.IsNullOrWhiteSpace(message))
                     {
-                        Console.WriteLine("[!] Messaggio vuoto. Uso: /chat \"<messaggio>\" [userid]");
-                        
+                        AnsiConsole.MarkupLine("[bold red][!] Messaggio vuoto. Uso: /chat \"<messaggio>\" [userid][/]");
                         continue;
                     }
 
@@ -975,9 +991,8 @@ namespace RPG.Client
                         Message = message,
                         Recipient = recipient
                     });
-                   
+
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(chatPacket));
-                    
                     continue;
                 }
 
@@ -986,7 +1001,6 @@ namespace RPG.Client
                     string[] parts = input.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
                     string roleInput = parts.Length >= 3 ? parts[2] : "player";
 
-                    // 2. Convertiamo la stringa nell'enum RoleType in modo sicuro (ignoreCase: true gestisce "Master", "PLAYER", ecc.)
                     Player.RoleType parsedRole = Enum.TryParse<Player.RoleType>(roleInput, true, out var result)
                         ? result
                         : Player.RoleType.player;
@@ -998,7 +1012,6 @@ namespace RPG.Client
                     });
 
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(joinPacket));
-                    
                     continue;
                 }
 
@@ -1008,25 +1021,24 @@ namespace RPG.Client
 
                     if (parts.Length >= 2)
                     {
-                        var chartacterHandle = parts[1].Trim();
+                        var characterHandle = parts[1].Trim();
 
                         var linkPacket = NetworkPacket.Create(OpCode.C2S_Link, new LinkRequestPayload
                         {
                             PlayerHandle = _player.Username,
-                            CharacterHandle = chartacterHandle
+                            CharacterHandle = characterHandle
                         });
 
                         await _writer.WriteLineAsync(JsonSerializer.Serialize(linkPacket));
                     }
                     else
                     {
-                        Console.WriteLine("[!] Sintassi non valida. Usa: /link <NomeCharacter>");
+                        AnsiConsole.MarkupLine("[bold red][!] Sintassi non valida. Usa: /link <NomeCharacter>[/]");
                     }
-                    
                     continue;
                 }
 
-                Console.WriteLine($"[!] Comando non riconosciuto: '{trimmedInput}'. Digita /help per la lista comandi.");
+                AnsiConsole.MarkupLine($"[bold red][!] Comando non riconosciuto:[/] [yellow]'{Markup.Escape(trimmedInput)}'[/]. Digita [cyan]/help[/] per la lista.");
             }
 
             _tcpClient?.Close();
