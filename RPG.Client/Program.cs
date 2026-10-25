@@ -17,16 +17,19 @@ internal class Program
 
         var options = parserResult.Value;
 
+        // Riga di comando > client.settings.json > default (127.0.0.1:5000)
+        var (host, port) = ClientSettings.Resolve(options);
+
         // ==========================================
         // 2. SEQUENZA DI AVVIO ORIGINALE INVARIATA
         // ==========================================
         Console.WriteLine("========================================");
         Console.WriteLine($"🎮 CYBERPUNK RPG CLIENT");
-        Console.WriteLine($"🔌 Connessione a: {options.Host}:{options.Port}");
+        Console.WriteLine($"🔌 Connessione a: {host}:{port}");
         Console.WriteLine("========================================");
 
         var client = new RpgTcpClient();
-        bool connected = await client.ConnectAsync(options.Host, options.Port);
+        bool connected = await client.ConnectAsync(host, port);
 
         if (!connected)
         {
