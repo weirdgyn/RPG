@@ -24,6 +24,10 @@ public class RpgTcpServer(string ipAddress, int port)
     private readonly object _loginLock = new();
     // Rende atomico "personaggio già in uso? / carica / associa alla sessione" in /link
     private readonly object _linkLock = new();
+    // Serializza /create: controllo "esiste già", conteggio e scrittura devono essere un'unica operazione.
+    private readonly object _createLock = new();
+    private const int MaxCharactersPerSession = 3;
+    private const int MaxCharactersTotal = 500;
     private bool _isRunning;
 
     public async Task StartAsync()
@@ -782,22 +786,12 @@ public class RpgTcpServer(string ipAddress, int port)
         {
             safeHandle = CharacterHandleValidator.ValidateAndNormalize(createReq.CharacterHandle, nameof(createReq.CharacterHandle));
         }
-        catch (ArgumentException ex)
+        catch (ArgumentException)
         {
             await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_CreateCharacterResponse, new CreateCharacterResponsePayload
             {
                 Success = false,
-                Message = $"Handle non valido: {ex.Message}"
-            }));
-            return;
-        }
-
-        if (CharacterRepository.CharacterExists(safeHandle))
-        {
-            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_CreateCharacterResponse, new CreateCharacterResponsePayload
-            {
-                Success = false,
-                Message = $"La scheda del personaggio '{safeHandle}' esiste già. Scegli un altro handle o usa /link."
+                Message = CharacterHandleValidator.RulesDescription
             }));
             return;
         }
@@ -814,16 +808,18 @@ public class RpgTcpServer(string ipAddress, int port)
             await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_CreateCharacterResponse, new CreateCharacterResponsePayload
             {
                 Success = false,
-                Message = $"Archetipo '{createReq.Archetype}' non trovato. Archetipi disponibili: {archetypesList}"
+                Message = $"Archetipo non trovato. Archetipi disponibili: {archetypesList}"
             }));
             return;
         }
         catch (Exception ex)
         {
+            // Dettagli (percorsi compresi) solo nel log del server, non al client
+            Console.WriteLine($"[CREATE] Errore nel caricare l'archetipo '{createReq.Archetype}': {ex.Message}");
             await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_CreateCharacterResponse, new CreateCharacterResponsePayload
             {
                 Success = false,
-                Message = $"Errore durante il caricamento dell'archetipo: {ex.Message}"
+                Message = "Errore del server nel caricare l'archetipo. Contatta l'amministratore."
             }));
             return;
         }
@@ -832,28 +828,70 @@ public class RpgTcpServer(string ipAddress, int port)
         CharacterTemplateFactory.RandomizeStats(newChar);
         CharacterRepository.NormalizeSkills(newChar);
 
-        try
+        // Controlli, conteggio e scrittura nello stesso lock: senza, due /create sullo stesso handle
+        // passerebbero entrambi "esiste già" e il secondo sovrascriverebbe la scheda del primo.
+        CreateCharacterResponsePayload? failure = null;
+        lock (_createLock)
         {
-            CharacterRepository.SaveCharacter(newChar);
-            Console.WriteLine($"[CHAR] Creato nuovo personaggio '{safeHandle}' dall'archetipo '{createReq.Archetype}' (Ruolo: {newChar.Role}).");
-            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_CreateCharacterResponse, new CreateCharacterResponsePayload
+            try
             {
-                Success = true,
-                CharacterHandle = safeHandle,
-                Archetype = createReq.Archetype,
-                Message = $"Personaggio '{safeHandle}' ({newChar.Role}) creato con successo! Puoi associarlo al tuo account con: /link {safeHandle}"
-            }));
-        }
-        catch (Exception ex)
-        {
-            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_CreateCharacterResponse, new CreateCharacterResponsePayload
+                if (client.CharactersCreated >= MaxCharactersPerSession)
+                {
+                    failure = new CreateCharacterResponsePayload
+                    {
+                        Success = false,
+                        Message = $"Hai già creato {MaxCharactersPerSession} personaggi in questa sessione: limite raggiunto."
+                    };
+                }
+                else if (CharacterRepository.CountCharacters() >= MaxCharactersTotal)
+                {
+                    Console.WriteLine($"[CREATE] RIFIUTATO: raggiunto il limite globale di {MaxCharactersTotal} schede.");
+                    failure = new CreateCharacterResponsePayload
+                    {
+                        Success = false,
+                        Message = "Il server ha raggiunto il numero massimo di personaggi. Contatta l'amministratore."
+                    };
+                }
+                else if (CharacterRepository.CharacterExists(safeHandle))
+                {
+                    failure = new CreateCharacterResponsePayload
+                    {
+                        Success = false,
+                        Message = $"La scheda del personaggio '{safeHandle}' esiste già. Scegli un altro handle o usa /link."
+                    };
+                }
+                else
+                {
+                    CharacterRepository.SaveCharacter(newChar);
+                    client.CharactersCreated++;
+                }
+            }
+            catch (Exception ex)
             {
-                Success = false,
-                Message = $"Errore durante il salvataggio della scheda: {ex.Message}"
-            }));
+                Console.WriteLine($"[CREATE] Errore creando '{safeHandle}': {ex.Message}");
+                failure = new CreateCharacterResponsePayload
+                {
+                    Success = false,
+                    Message = "Errore del server nel salvare la scheda. Riprova più tardi."
+                };
+            }
         }
-    }
 
+        if (failure != null)
+        {
+            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_CreateCharacterResponse, failure));
+            return;
+        }
+
+        Console.WriteLine($"[CHAR] Creato nuovo personaggio '{safeHandle}' dall'archetipo '{createReq.Archetype}' (Ruolo: {newChar.Role}).");
+        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_CreateCharacterResponse, new CreateCharacterResponsePayload
+        {
+            Success = true,
+            CharacterHandle = safeHandle,
+            Archetype = createReq.Archetype,
+            Message = $"Personaggio '{safeHandle}' ({newChar.Role}) creato con successo! Puoi associarlo al tuo account con: /link {safeHandle}"
+        }));
+    }
 
     private async Task HandleJoinAsync(ClientSession client, NetworkPacket packet)
     {

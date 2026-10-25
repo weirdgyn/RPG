@@ -24,6 +24,9 @@ public class ClientSession
     // dentro il JSON, che in una scheda creata a mano o copiata può differire dal nome del file.
     // Letto e scritto solo sotto _linkLock del server.
     public string? LinkedCharacterHandle { get; set; }
+    // Schede create da questa sessione con /create (tetto per sessione contro l'esaurimento del disco).
+    // Letto e scritto solo sotto _createLock del server.
+    public int CharactersCreated { get; set; }
     public ClientSession(TcpClient tcpClient)
     {
         TcpClient = tcpClient;

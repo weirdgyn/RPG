@@ -35,23 +35,22 @@ public static class CharacterTemplateFactory
     /// <exception cref="FileNotFoundException">Se il file dell'archetipo non esiste.</exception>
     public static Character CreateFromArchetype(string archetypeName, string folder = ArchetypesFolder)
     {
+        // Il nome arriva dal client: non va mai usato per costruire un percorso. Si accetta solo se
+        // coincide (senza distinguere maiuscole/minuscole) con un archetipo realmente presente, e il
+        // file si ricava dall'elenco della cartella, non dal testo ricevuto.
         string absoluteDir = DataPaths.Resolve(folder);
-        string targetFile = Path.Combine(absoluteDir, $"{archetypeName}.json");
+        string? targetFile = Directory.Exists(absoluteDir)
+            ? Directory.EnumerateFiles(absoluteDir, "*.json").FirstOrDefault(f =>
+                {
+                    string name = Path.GetFileNameWithoutExtension(f);
+                    return !name.Equals("DefaultCharacter", StringComparison.OrdinalIgnoreCase)
+                        && name.Equals(archetypeName, StringComparison.OrdinalIgnoreCase);
+                })
+            : null;
 
-        if (!File.Exists(targetFile))
+        if (targetFile == null)
         {
-            // Cerca ignorando maiuscole/minuscole
-            string? matched = Directory.EnumerateFiles(absoluteDir, "*.json")
-                .FirstOrDefault(f => Path.GetFileNameWithoutExtension(f).Equals(archetypeName, StringComparison.OrdinalIgnoreCase));
-
-            if (matched != null)
-            {
-                targetFile = matched;
-            }
-            else
-            {
-                throw new FileNotFoundException($"Archetipo '{archetypeName}' non trovato.");
-            }
+            throw new FileNotFoundException($"Archetipo '{archetypeName}' non trovato.");
         }
 
         string templateJson = File.ReadAllText(targetFile);

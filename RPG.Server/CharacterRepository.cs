@@ -24,6 +24,13 @@ public static class CharacterRepository
         return File.Exists(fullPath);
     }
 
+    /// <summary>Numero di schede presenti su disco (0 se la cartella non esiste ancora).</summary>
+    public static int CountCharacters(string directoryPath = CharactersFolder)
+    {
+        string absoluteDir = DataPaths.Resolve(directoryPath);
+        return Directory.Exists(absoluteDir) ? Directory.EnumerateFiles(absoluteDir, "*.json").Count() : 0;
+    }
+
     /// <summary>
     /// Carica una scheda personaggio esistente da disco. Non crea nulla se la scheda è assente.
     /// </summary>
