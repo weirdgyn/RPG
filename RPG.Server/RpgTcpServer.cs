@@ -603,7 +603,24 @@ public class RpgTcpServer(string ipAddress, int port)
                         && !string.IsNullOrWhiteSpace(linkReq.PlayerHandle) 
                         && !string.IsNullOrWhiteSpace(linkReq.CharacterHandle))
                     {
-                        client.Player.Character = CharacterRepository.LoadOrGenerateCharacter(linkReq.CharacterHandle);
+                        Character loadedCharacter;
+                        try
+                        {
+                            loadedCharacter = CharacterRepository.LoadOrGenerateCharacter(linkReq.CharacterHandle);
+                        }
+                        catch (CharacterLoadException ex)
+                        {
+                            // Scheda presente ma non leggibile: nessun cambiamento alla sessione
+                            // (resta collegato all'eventuale personaggio precedente) e file su disco intatto.
+                            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_LinkResponse, new LinkResponsePayload
+                            {
+                                Success = false,
+                                Message = $"{ex.Message} Contatta l'amministratore del server."
+                            }));
+                            break;
+                        }
+
+                        client.Player.Character = loadedCharacter;
                         client.Player.Role = Player.RoleType.player;
                         
                         CharacterRepository.SaveCharacter(client.Player.Character);

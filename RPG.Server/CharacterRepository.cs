@@ -16,7 +16,11 @@ public static class CharacterRepository
     /// <summary>
     /// Carica la scheda esistente di <paramref name="handle"/> oppure, se assente,
     /// la crea dall'archetipo di default e la persiste.
+    /// Se la scheda esiste ma non è leggibile NON ne crea una nuova (la salverebbe sopra il
+    /// file esistente, cancellandone i dati): lancia <see cref="CharacterLoadException"/> e
+    /// lascia il file intatto.
     /// </summary>
+    /// <exception cref="CharacterLoadException">Scheda presente su disco ma non caricabile.</exception>
     public static Character LoadOrGenerateCharacter(string handle, string directoryPath = CharactersFolder)
     {
         // Risolviamo i percorsi per avere chiarezza nei log
@@ -39,10 +43,21 @@ public static class CharacterRepository
                     Console.WriteLine($"[CHAR] -> SUCCESSO: Scheda di '{handle}' caricata dal file di salvataggio esistente.");
                     return character;
                 }
+
+                // JSON valido ma vuoto ("null"): per noi è come un file corrotto
+                Console.WriteLine($"[CHAR] -> ERRORE: la scheda '{userFilePath}' è vuota.");
+                throw new CharacterLoadException(handle, $"La scheda di '{handle}' esiste ma è vuota.");
+            }
+            catch (CharacterLoadException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[CHAR] -> ERRORE nella lettura della scheda '{userFilePath}': {ex.Message}");
+                // Non si prosegue alla creazione: salvare un personaggio nuovo sovrascriverebbe il file.
+                // Vale anche per errori transitori (file in uso, permessi) su una scheda perfettamente valida.
+                Console.WriteLine($"[CHAR] -> ERRORE nella lettura della scheda '{userFilePath}': {ex.Message}. File lasciato intatto.");
+                throw new CharacterLoadException(handle, $"La scheda di '{handle}' esiste ma non può essere letta.", ex);
             }
         }
         else
