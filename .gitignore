@@ -432,3 +432,4 @@ FodyWeavers.xsd
 
 # Local client configuration (contains server IP, do not commit)
 client.settings.json
+/RPG.Client/Properties/launchSettings.json
