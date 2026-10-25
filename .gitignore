@@ -429,3 +429,6 @@ FodyWeavers.xsd
 
 # Git patch files
 *.patch
+
+# Local client configuration (contains server IP, do not commit)
+client.settings.json
