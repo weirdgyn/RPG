@@ -181,8 +181,14 @@ public class RpgTcpServer(string ipAddress, int port)
                     
                     if (attackReq != null)
                     {
+                        // L'attaccante deve avere un personaggio associato (/link)
+                        if (!await EnsureCharacterLinkedAsync(client)) break;
+
+                        // Le sessioni senza personaggio (es. master, player non ancora collegati) non sono bersagli validi
                         var targetClient = _connectedClients.Values
-                            .FirstOrDefault(c => c.IsAuthenticated && c.Player.Character.Handle.Equals(attackReq.TargetHandle, StringComparison.OrdinalIgnoreCase));
+                            .FirstOrDefault(c => c.IsAuthenticated
+                                && c.Player.Character != null
+                                && c.Player.Character.Handle.Equals(attackReq.TargetHandle, StringComparison.OrdinalIgnoreCase));
 
                         if (targetClient == null)
                         {
@@ -468,6 +474,8 @@ public class RpgTcpServer(string ipAddress, int port)
                     var skillReq = packet.DeserializePayload<SkillCheckRequestPayload>();
                     if (skillReq != null && !string.IsNullOrWhiteSpace(skillReq.SkillName))
                     {
+                        if (!await EnsureCharacterLinkedAsync(client)) break;
+
                         string skillName = skillReq.SkillName.Trim();
                         string statName = Skills.GetStatForSkill(skillName);
 
@@ -508,6 +516,8 @@ public class RpgTcpServer(string ipAddress, int port)
                     var moveReq = packet.DeserializePayload<MoveRequestPayload>();
                     if (moveReq?.Position != null)
                     {
+                        if (!await EnsureCharacterLinkedAsync(client)) break;
+
                         //Get map from player game context (player must be in a game) instead of using the default map
                         var _map = _games.FirstOrDefault(g => g.Players.Contains(client.Player))?.Map;
 
@@ -850,6 +860,23 @@ public class RpgTcpServer(string ipAddress, int port)
                 break;
         }
     }
+    /// <summary>
+    /// Verifica che la sessione abbia un personaggio associato (tramite /link).
+    /// In caso contrario avvisa il client e restituisce false, così il chiamante
+    /// può interrompere il comando senza dereferenziare un Character nullo
+    /// (un'eccezione non gestita chiuderebbe la connessione del giocatore).
+    /// </summary>
+    private static async Task<bool> EnsureCharacterLinkedAsync(ClientSession client)
+    {
+        if (client.Player.Character != null) return true;
+
+        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
+        {
+            Message = "Nessun personaggio associato: usa /link <Character> prima di usare questo comando."
+        }));
+        return false;
+    }
+
     private async Task BroadcastPacketAsync(NetworkPacket packet, Guid? excludeClientId = null)
     {
         foreach (var client in _connectedClients.Values)
