@@ -139,7 +139,7 @@ namespace RPG.Client
                     if (pong != null)
                     {
                         double rttMs = Math.Round((DateTime.UtcNow - _lastPingSentUtc).TotalMilliseconds, 1);
-                        PrintServerOutput(() => AnsiConsole.MarkupLine($"🏓 [bold green][[PONG]][/] [white]{Markup.Escape(pong.Message)}[/] [grey](RTT:[/] [bold yellow]{rttMs} ms[/][grey])[/]"));
+                        PrintServerOutput(() => AnsiConsole.MarkupLine($"[bold green][[PONG]][/] [white]{Markup.Escape(pong.Message)}[/] [grey](RTT:[/] [bold yellow]{rttMs} ms[/][grey])[/]"));
                     }
                     break;
 
@@ -161,7 +161,7 @@ namespace RPG.Client
                             var grid = new Grid();
                             grid.AddColumn();
 
-                            grid.AddRow(new Markup($"⚔️ [bold yellow]{Markup.Escape(attackResp.AttackerHandle)}[/] [red]attacca[/] [bold yellow]{Markup.Escape(attackResp.TargetHandle)}[/]"));
+                            grid.AddRow(new Markup($"[bold yellow]{Markup.Escape(attackResp.AttackerHandle)}[/] [red]attacca[/] [bold yellow]{Markup.Escape(attackResp.TargetHandle)}[/]"));
                             grid.AddRow(new Markup($"   Tiro: [cyan]{attackResp.AttackTotal}[/] vs Difesa TN: [cyan]{attackResp.DefenseTN}[/]"));
                             grid.AddRow(new Markup($"   Esito: [white]{Markup.Escape(attackResp.Message)}[/]"));
 
@@ -169,16 +169,16 @@ namespace RPG.Client
                             {
                                 if (!string.IsNullOrEmpty(attackResp.HitLocation))
                                 {
-                                    string mult = attackResp.DamageMultiplier > 1 ? $" [bold red](danno x{attackResp.DamageMultiplier})[/]" : "";
-                                    grid.AddRow(new Markup($"   🎯 Impatto: [bold yellow]{Markup.Escape(attackResp.HitLocation)}[/]{mult}"));
+                                    string mult = attackResp.DamageMultiplier > 1 ? $"[bold red](danno x{attackResp.DamageMultiplier})[/]" : "";
+                                    grid.AddRow(new Markup($"    Impatto: [bold yellow]{Markup.Escape(attackResp.HitLocation)}[/]{mult}"));
                                 }
-                                grid.AddRow(new Markup($"   💥 Danno: [bold red]{attackResp.DamageDealt}[/]"));
-                                grid.AddRow(new Markup($"   🩸 Stato {Markup.Escape(attackResp.TargetHandle)}: [bold yellow]{attackResp.TargetRemainingHealth} HP[/] [grey]({Markup.Escape(attackResp.TargetWoundStatus)})[/]"));
+                                grid.AddRow(new Markup($"   Danno: [bold red]{attackResp.DamageDealt}[/]"));
+                                grid.AddRow(new Markup($"   Stato {Markup.Escape(attackResp.TargetHandle)}: [bold yellow]{attackResp.TargetRemainingHealth} HP[/] [grey]({Markup.Escape(attackResp.TargetWoundStatus)})[/]"));
                             }
 
                             var panel = new Panel(grid)
                             {
-                                Header = new PanelHeader("[bold red] ⚔️ COMBATTIMENTO [/]"),
+                                Header = new PanelHeader("[bold red] COMBATTIMENTO [/]"),
                                 Border = BoxBorder.Heavy,
                                 BorderStyle = new Style(Color.Red1)
                             };
@@ -193,7 +193,7 @@ namespace RPG.Client
                     if (notif.ValueKind == JsonValueKind.Object && notif.TryGetProperty("Message", out var msgProp))
                     {
                         string msg = msgProp.GetString() ?? string.Empty;
-                        PrintServerOutput(() => AnsiConsole.MarkupLine($"🔔 [bold yellow][[NOTIFICA]][/] [white]{Markup.Escape(msg)}[/]"));
+                        PrintServerOutput(() => AnsiConsole.MarkupLine($"[bold yellow][[NOTIFICA]][/] [white]{Markup.Escape(msg)}[/]"));
                     }
                     break;
 
@@ -201,7 +201,7 @@ namespace RPG.Client
                     var rollResp = packet.DeserializePayload<RollResponsePayload>();
                     if (rollResp != null)
                     {
-                        PrintServerOutput(() => AnsiConsole.MarkupLine($"🎲 [bold yellow][[ROLL]][/] [bold cyan]{Markup.Escape(rollResp.RollerHandle)}[/] tira [bold yellow]{Markup.Escape(rollResp.DiceExpression)}[/] -> [bold green]{rollResp.TotalResult}[/] [grey]({Markup.Escape(rollResp.Details)})[/]"));
+                        PrintServerOutput(() => AnsiConsole.MarkupLine($"[bold yellow][[ROLL]][/] [bold cyan]{Markup.Escape(rollResp.RollerHandle)}[/] tira [bold yellow]{Markup.Escape(rollResp.DiceExpression)}[/] -> [bold green]{rollResp.TotalResult}[/] [grey]({Markup.Escape(rollResp.Details)})[/]"));
                     }
                     break;
 
@@ -211,16 +211,16 @@ namespace RPG.Client
                     {
                         PrintServerOutput(() =>
                         {
-                            string icon = skillResp.IsSuccess ? "[bold green]✅ SUCCESSO[/]" : "[bold red]❌ FALLIMENTO[/]";
+                            string icon = skillResp.IsSuccess ? "[bold green] SUCCESSO[/]" : "[bold red] FALLIMENTO[/]";
                             var grid = new Grid();
                             grid.AddColumn();
-                            grid.AddRow(new Markup($"🧠 [bold cyan]{Markup.Escape(skillResp.CharacterHandle)}[/] prova [bold yellow]{Markup.Escape(skillResp.SkillName)}[/] ({skillResp.StatName})"));
+                            grid.AddRow(new Markup($"[bold cyan]{Markup.Escape(skillResp.CharacterHandle)}[/] prova [bold yellow]{Markup.Escape(skillResp.SkillName)}[/] ({skillResp.StatName})"));
                             grid.AddRow(new Markup($"   Calcolo: [cyan]{skillResp.TotalResult}[/] [grey](Stat:{skillResp.StatValue} + Lvl:{skillResp.SkillLevel} + d10:{skillResp.DiceRoll})[/] vs TN: [bold yellow]{skillResp.TargetNumber}[/]"));
                             grid.AddRow(new Markup($"   Esito: {icon} - [white]{Markup.Escape(skillResp.Message)}[/]"));
 
                             var panel = new Panel(grid)
                             {
-                                Header = new PanelHeader("[bold magenta] 🧠 PROVA ABILITÀ [/]"),
+                                Header = new PanelHeader("[bold magenta] PROVA ABILITÀ [/]"),
                                 Border = BoxBorder.Rounded,
                                 BorderStyle = new Style(skillResp.IsSuccess ? Color.Green : Color.Red)
                             };
@@ -241,15 +241,15 @@ namespace RPG.Client
                         {
                             if (hasRecipient && isMine)
                             {
-                                AnsiConsole.MarkupLine($"🤫 [italic fuchsia][[PRIVATO → {Markup.Escape(chat.Recipient!)}]][/] [white]{Markup.Escape(chat.Message)}[/]");
+                                AnsiConsole.MarkupLine($"[italic fuchsia][[PRIVATO → {Markup.Escape(chat.Recipient!)}]][/] [white]{Markup.Escape(chat.Message)}[/]");
                             }
                             else if (hasRecipient)
                             {
-                                AnsiConsole.MarkupLine($"🤫 [italic fuchsia][[PRIVATO da {Markup.Escape(chat.Sender)}]][/] [bold white]{Markup.Escape(chat.Message)}[/]");
+                                AnsiConsole.MarkupLine($"[italic fuchsia][[PRIVATO da {Markup.Escape(chat.Sender)}]][/] [bold white]{Markup.Escape(chat.Message)}[/]");
                             }
                             else
                             {
-                                AnsiConsole.MarkupLine($"💬 [bold cyan][[{Markup.Escape(chat.Sender)}]][/] [white]{Markup.Escape(chat.Message)}[/]");
+                                AnsiConsole.MarkupLine($"[bold cyan][[{Markup.Escape(chat.Sender)}]][/] [white]{Markup.Escape(chat.Message)}[/]");
                             }
                         });
                     }
@@ -292,10 +292,10 @@ namespace RPG.Client
                                 );
                             }
 
-                            string headerText = $"[bold yellow] 🧠 ABILITÀ - {Markup.Escape(skillListResp.Character)} [/]";
+                            string headerText = $"[bold yellow] ABILITÀ - {Markup.Escape(skillListResp.Character)} [/]";
                             if (skillListResp.WoundPenalty < 0)
                             {
-                                headerText += $" [bold red](Penalità Ferite: {skillListResp.WoundPenalty})[/]";
+                                headerText += $"[bold red](Penalità Ferite: {skillListResp.WoundPenalty})[/]";
                             }
 
                             var panel = new Panel(table)
@@ -324,16 +324,16 @@ namespace RPG.Client
                                 var pos = movePayload.ActualPosition;
                                 if (isSelf)
                                 {
-                                    AnsiConsole.MarkupLine($"✅ [bold green][[MOVIMENTO]][/] [white]{Markup.Escape(movePayload.Message)}[/]");
+                                    AnsiConsole.MarkupLine($"[bold green][[MOVIMENTO]][/] [white]{Markup.Escape(movePayload.Message)}[/]");
                                 }
                                 else
                                 {
-                                    AnsiConsole.MarkupLine($"📍 [bold blue][[MOVIMENTO]][/] [bold cyan]{Markup.Escape(movePayload.PlayerHandle)}[/] si è spostato a [green]({pos.X}, {pos.Y}, {pos.Z})[/]");
+                                    AnsiConsole.MarkupLine($"[bold blue][[MOVIMENTO]][/] [bold cyan]{Markup.Escape(movePayload.PlayerHandle)}[/] si è spostato a [green]({pos.X}, {pos.Y}, {pos.Z})[/]");
                                 }
                             }
                             else
                             {
-                                AnsiConsole.MarkupLine($"❌ [bold red][[MOVIMENTO FALLITO]][/] [white]{Markup.Escape(movePayload.Message)}[/]");
+                                AnsiConsole.MarkupLine($"[bold red][[MOVIMENTO FALLITO]][/] [white]{Markup.Escape(movePayload.Message)}[/]");
                             }
                         });
                     }
@@ -378,8 +378,8 @@ namespace RPG.Client
                             }
 
                             string title = string.IsNullOrWhiteSpace(listResp.FilterGame)
-                                ? "👥 GIOCATORI ONLINE"
-                                : $"👥 GIOCATORI NEL GIOCO '{Markup.Escape(listResp.FilterGame)}'";
+                                ? " GIOCATORI ONLINE"
+                                : $" GIOCATORI NEL GIOCO '{Markup.Escape(listResp.FilterGame)}'";
 
                             var panel = new Panel(table)
                             {
@@ -399,7 +399,7 @@ namespace RPG.Client
                     {
                         if (linkResp.Success)
                         {
-                            PrintServerOutput(() => AnsiConsole.MarkupLine($"🔗 [bold green][[LINK]][/] Collegamento riuscito: Player [cyan]'{Markup.Escape(linkResp.PlayerHandle)}'[/] con Character [yellow]'{Markup.Escape(linkResp.CharacterHandle)}'[/]."));
+                            PrintServerOutput(() => AnsiConsole.MarkupLine($"[bold green][[LINK]][/] Collegamento riuscito: Player [cyan]'{Markup.Escape(linkResp.PlayerHandle)}'[/] con Character [yellow]'{Markup.Escape(linkResp.CharacterHandle)}'[/]."));
                             if (_player != null)
                             {
                                 _player.Role = linkResp.Role;
@@ -408,7 +408,7 @@ namespace RPG.Client
                         }
                         else
                         {
-                            PrintServerOutput(() => AnsiConsole.MarkupLine($"❌ [bold red][[LINK FALLITO]][/] [white]{Markup.Escape(linkResp.Message)}[/]"));
+                            PrintServerOutput(() => AnsiConsole.MarkupLine($" [bold red][[LINK FALLITO]][/] [white]{Markup.Escape(linkResp.Message)}[/]"));
                         }
                     }
                     break;
@@ -421,11 +421,11 @@ namespace RPG.Client
                         {
                             if (createResp.Success)
                             {
-                                AnsiConsole.MarkupLine($"✨ [bold green][[CREAZIONE]][/] [white]{Markup.Escape(createResp.Message)}[/]");
+                                AnsiConsole.MarkupLine($" [bold green][[CREAZIONE]][/] [white]{Markup.Escape(createResp.Message)}[/]");
                             }
                             else
                             {
-                                AnsiConsole.MarkupLine($"❌ [bold red][[CREAZIONE FALLITA]][/] [white]{Markup.Escape(createResp.Message)}[/]");
+                                AnsiConsole.MarkupLine($" [bold red][[CREAZIONE FALLITA]][/] [white]{Markup.Escape(createResp.Message)}[/]");
                             }
                         });
                     }
@@ -458,7 +458,7 @@ namespace RPG.Client
                             {
                                 table.AddRow("[grey](Nessuna sessione attiva)[/]");
                             }
-                            AnsiConsole.Write(new Panel(table) { Header = new PanelHeader("[bold yellow] 🎮 SESSIONI ATTIVE [/]"), BorderStyle = new Style(Color.Cyan1) });
+                            AnsiConsole.Write(new Panel(table) { Header = new PanelHeader("[bold yellow] SESSIONI ATTIVE [/]"), BorderStyle = new Style(Color.Cyan1) });
                         });
                     }
                     break;
@@ -479,7 +479,7 @@ namespace RPG.Client
                             {
                                 table.AddRow("[grey](Nessun personaggio salvato sul server)[/]", "-");
                             }
-                            AnsiConsole.Write(new Panel(table) { Header = new PanelHeader("[bold yellow] 👥 SCHEDE PERSONAGGI DISPONIBILI [/]"), BorderStyle = new Style(Color.Yellow) });
+                            AnsiConsole.Write(new Panel(table) { Header = new PanelHeader("[bold yellow] SCHEDE PERSONAGGI DISPONIBILI [/]"), BorderStyle = new Style(Color.Yellow) });
                         });
                     }
                     break;
@@ -504,7 +504,7 @@ namespace RPG.Client
                     new TableColumn("[bold green]Descrizione[/]")
                 );
 
-                table.AddRow("[bold white]/status[/]", "[grey]- | [[<Char>]][/]", "Visualizza la scheda del personaggio collegato (o bersaglio se Master)");
+                table.AddRow("[bold white]/status[/]", "[grey]<character>[/]", "Visualizza la scheda del personaggio collegato (o specifico se Master)");
                 table.AddRow("[bold white]/skills[/]", "[grey]-[/]", "Elenco abilità, statistiche associate e pool di tiro");
                 table.AddRow("[bold white]/create[/]", "[cyan]<archetipo> <handle>[/]", "Crea un nuovo personaggio da un archetipo (con stat casuali)");
                 table.AddRow("[bold white]/link[/]", "[cyan]<character>[/]", "Collega la sessione ad un personaggio esistente");
@@ -524,7 +524,7 @@ namespace RPG.Client
 
                 var panel = new Panel(table)
                 {
-                    Header = new PanelHeader("[bold yellow] 🎮 COMANDI NIGHT CITY BBS v2.0 [/]"),
+                    Header = new PanelHeader("[bold yellow]  COMANDI NIGHT CITY BBS v2.0 [/]"),
                     Border = BoxBorder.Double,
                     BorderStyle = new Style(Color.Cyan1)
                 };
@@ -608,11 +608,11 @@ namespace RPG.Client
             if (c.EquippedWeapon != null)
             {
                 string ammoInfo = FormatWeaponAmmo(c.EquippedWeapon);
-                mainGrid.AddRow(new Markup($"[bold yellow]⚔️ ARMA IN PUGNO:[/] [bold cyan]{Markup.Escape(c.EquippedWeapon.Name)}[/] [grey]({c.EquippedWeapon.Type})[/] [grey]|[/] Danno: [bold red]{c.EquippedWeapon.DamageDice}[/] [grey]|[/] Gittata: [green]{c.EquippedWeapon.OptimalRangeMeters}m[/]{Markup.Escape(ammoInfo)}"));
+                mainGrid.AddRow(new Markup($"[bold yellow]ARMA IN PUGNO:[/] [bold cyan]{Markup.Escape(c.EquippedWeapon.Name)}[/] [grey]({c.EquippedWeapon.Type})[/] [grey]|[/] Danno: [bold red]{c.EquippedWeapon.DamageDice}[/] [grey]|[/] Gittata: [green]{c.EquippedWeapon.OptimalRangeMeters}m[/]{Markup.Escape(ammoInfo)}"));
             }
             else
             {
-                mainGrid.AddRow(new Markup("[bold yellow]⚔️ ARMA IN PUGNO:[/] [grey]Nessuna[/]"));
+                mainGrid.AddRow(new Markup("[bold yellow]ARMA IN PUGNO:[/] [grey]Nessuna[/]"));
             }
 
             // 6. Inventario Armi e Munizioni
@@ -621,9 +621,9 @@ namespace RPG.Client
                 var wepLines = c.Weapons.Select(w =>
                 {
                     string equipped = (c.EquippedWeapon != null && c.EquippedWeapon.Id == w.Id) ? " [bold green](EQUIPAGGIATA)[/]" : "";
-                    return $"• [white]{Markup.Escape(w.Name)}[/] [grey]({w.DamageDice})[/]{equipped}";
+                    return $"[white]{Markup.Escape(w.Name)}[/] [grey]({w.DamageDice})[/]{equipped}";
                 });
-                mainGrid.AddRow(new Markup("[bold yellow]🎒 ARMI:[/] " + string.Join("  ", wepLines)));
+                mainGrid.AddRow(new Markup("[bold yellow] ARMI:[/] " + string.Join("  ", wepLines)));
             }
 
             if (c.Ammos != null && c.Ammos.Count > 0)
@@ -631,9 +631,9 @@ namespace RPG.Client
                 var ammoLines = c.Ammos.Select(a =>
                 {
                     string effect = a.Effect == AmmoEffect.ArmorPiercing ? " [red](AP)[/]" : (a.Effect == AmmoEffect.Expanding ? " [yellow](EX)[/]" : "");
-                    return $"• [white]{Markup.Escape(a.Name)}[/]{effect}: [green]{a.Quantity}[/]";
+                    return $"[white]{Markup.Escape(a.Name)}[/]{effect}: [green]{a.Quantity}[/]";
                 });
-                mainGrid.AddRow(new Markup("[bold yellow]🔫 MUNIZIONI:[/] " + string.Join("  ", ammoLines)));
+                mainGrid.AddRow(new Markup("[bold yellow] MUNIZIONI:[/] " + string.Join("  ", ammoLines)));
             }
 
             // 7. Cyberware
@@ -642,15 +642,15 @@ namespace RPG.Client
                 var cwLines = c.Cyberware.Select(cw =>
                 {
                     string bonus = cw.Bonus != null && cw.Bonus.Value != 0 ? $" [green][[{cw.Bonus.Value:+0;-0} {cw.Bonus.ApplyTo}]][/]" : "";
-                    return $"• [cyan]{Markup.Escape(cw.ID)}[/] [grey]({cw.Type})[/]{bonus} - [grey]{Markup.Escape(cw.Description)}[/]";
+                    return $"[cyan]{Markup.Escape(cw.ID)}[/] [grey]({cw.Type})[/]{bonus} - [grey]{Markup.Escape(cw.Description)}[/]";
                 });
-                mainGrid.AddRow(new Markup("[bold yellow]⚡ CYBERWARE:[/]\n  " + string.Join("\n  ", cwLines)));
+                mainGrid.AddRow(new Markup("[bold yellow] CYBERWARE:[/]\n  " + string.Join("\n  ", cwLines)));
             }
 
             var panel = new Panel(mainGrid)
             {
                 Border = BoxBorder.Heavy,
-                Header = new PanelHeader($"[bold yellow] 📋 SCHEDA PERSONAGGIO - {Markup.Escape(c.Handle)} [/]"),
+                Header = new PanelHeader($"[bold yellow] SCHEDA PERSONAGGIO - {Markup.Escape(c.Handle)} [/]"),
                 BorderStyle = new Style(Color.Yellow)
             };
 

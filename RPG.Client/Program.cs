@@ -31,7 +31,7 @@ internal class Program
                 .Color(Color.Yellow));
 
         AnsiConsole.Write(new Rule("[bold cyan]NETRUNNER BBS // CYBERPUNK 2020[/]").Centered());
-        AnsiConsole.MarkupLine($"[grey]🔌 Connessione a:[/] [bold green]{host}:{port}[/]\n");
+        AnsiConsole.MarkupLine($"[grey]Connessione a:[/] [bold green]{host}:{port}[/]\n");
 
         var client = new RpgTcpClient();
         bool connected = await client.ConnectAsync(host, port);
