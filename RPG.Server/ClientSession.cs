@@ -19,6 +19,11 @@ public class ClientSession
     // Diventa true solo dopo un login riuscito; i comandi di gioco sono bloccati prima.
     public bool IsAuthenticated { get; set; }
     public Player Player { get; set; } = new();
+    // Handle con cui la sessione ha fatto /link (quello richiesto e validato, cioè il nome del file della
+    // scheda). Il controllo "personaggio già in uso" confronta questo valore e non l'Handle scritto
+    // dentro il JSON, che in una scheda creata a mano o copiata può differire dal nome del file.
+    // Letto e scritto solo sotto _linkLock del server.
+    public string? LinkedCharacterHandle { get; set; }
     public ClientSession(TcpClient tcpClient)
     {
         TcpClient = tcpClient;

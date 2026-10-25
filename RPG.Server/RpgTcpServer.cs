@@ -620,8 +620,11 @@ public class RpgTcpServer(string ipAddress, int port)
             {
                 var holder = _connectedClients.Values.FirstOrDefault(c =>
                     c.Id != client.Id
-                    && c.Player.Character != null
-                    && c.Player.Character.Handle.Equals(linkReq.CharacterHandle, StringComparison.OrdinalIgnoreCase));
+                    && c.LinkedCharacterHandle != null
+                    && c.LinkedCharacterHandle.Equals(linkReq.CharacterHandle, StringComparison.OrdinalIgnoreCase));
+
+                Console.WriteLine($"[LINK] '{client.Player.Username}' chiede '{linkReq.CharacterHandle}': " +
+                                  (holder == null ? "libero." : $"occupato da '{holder.Player.Username}'."));
 
                 if (holder != null)
                 {
@@ -637,7 +640,11 @@ public class RpgTcpServer(string ipAddress, int port)
                     try
                     {
                         loadedCharacter = CharacterRepository.LoadOrGenerateCharacter(linkReq.CharacterHandle);
+                        // Il nome del file è la fonte di verità: allineo l'Handle interno, altrimenti
+                        // i salvataggi (che usano character.Handle) finirebbero in un altro file.
+                        loadedCharacter.Handle = linkReq.CharacterHandle;
                         client.Player.Character = loadedCharacter;
+                        client.LinkedCharacterHandle = linkReq.CharacterHandle;
                         client.Player.Role = Player.RoleType.player;
                     }
                     catch (CharacterLoadException ex)
