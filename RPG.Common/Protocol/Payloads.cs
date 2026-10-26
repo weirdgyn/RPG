@@ -168,6 +168,15 @@ public class JoinResponsePayload
     public Player.RoleType Role { get; set; } = Player.RoleType.none; // Ruolo assegnato al giocatore nel game
 }
 
+public class LeaveResponsePayload
+{
+    public bool Success { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public string GameName { get; set; } = string.Empty;
+    // Ruolo del giocatore dopo l'uscita (player se ha un personaggio collegato, altrimenti none)
+    public Player.RoleType Role { get; set; } = Player.RoleType.none;
+}
+
 public class LinkRequestPayload
 {
     public string PlayerHandle { get; set; } = string.Empty;

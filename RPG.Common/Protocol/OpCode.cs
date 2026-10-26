@@ -13,6 +13,7 @@ public enum OpCode
     C2S_Attack = 70,        // Richiesta di attacco verso un altro player
     C2S_SkillCheck = 80,
     C2S_GetPlayers = 90,    // Richiesta della lista dei giocatori online
+    C2S_Leave = 94,         // Uscire dal game corrente (opposto di C2S_Join)
     C2S_Link = 95,          // Collegare un player ad uno specifico personaggio (Character) già esistente
     C2S_CreateCharacter = 96, // Creazione di un nuovo personaggio da archetipo
     C2S_Init = 97,          // Initiative roll
@@ -34,6 +35,7 @@ public enum OpCode
     S2C_LinkResponse = 205,     // Risposta alla richiesta di collegare un player ad un personaggio
     S2C_CreateCharacterResponse = 206, // Risposta alla creazione di un nuovo personaggio
     S2C_JoinResponse = 210,     // Risposta alla richiesta di entrare in un game
+    S2C_LeaveResponse = 211,    // Risposta alla richiesta di uscire da un game
     S2C_InitRollRequest = 220,
     S2C_GamesResponse = 230,
     S2C_CharactersResponse = 240

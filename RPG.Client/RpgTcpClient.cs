@@ -414,6 +414,25 @@ namespace RPG.Client
                     }
                     break;
 
+                case OpCode.S2C_LeaveResponse:
+                    var leaveResp = packet.DeserializePayload<LeaveResponsePayload>();
+                    if (leaveResp != null)
+                    {
+                        if (leaveResp.Success)
+                        {
+                            PrintServerOutput(() => AnsiConsole.MarkupLine($"[bold green][[LEAVE]][/] [white]{Markup.Escape(leaveResp.Message)}[/]"));
+                            if (_player != null)
+                            {
+                                _player.Role = leaveResp.Role;
+                            }
+                        }
+                        else
+                        {
+                            PrintServerOutput(() => AnsiConsole.MarkupLine($"[bold red][[LEAVE FALLITO]][/] [white]{Markup.Escape(leaveResp.Message)}[/]"));
+                        }
+                    }
+                    break;
+
                 case OpCode.S2C_LinkResponse:
                     var linkResp = packet.DeserializePayload<LinkResponsePayload>();
                     if (linkResp != null)
@@ -533,6 +552,7 @@ namespace RPG.Client
                 table.AddRow("[bold white]/games[/]", "[grey]-[/]", "Elenca le sessioni di gioco attive");
                 table.AddRow("[bold white]/characters[/]", "[grey]-[/]", "Elenca i personaggi salvati sul server");
                 table.AddRow("[bold white]/join[/]", "[cyan]<game> [[master|player]][/]", "Entra in un gioco o ne crea uno (solo Master)");
+                table.AddRow("[bold white]/leave[/]", "", "Esce dal gioco corrente");
                 table.AddRow("[bold white]/attack[/]", "[cyan]<target> [[arma|skill]][/]", "Attacca un bersaglio con arma in pugno o specificata");
                 table.AddRow("[bold white]/skill[/]", "[cyan]<nome> [[TN]][/]", "Effettua una prova di abilità d10 (es. /skill Pistola 15)");
                 table.AddRow("[bold white]/roll[/]", "[cyan]<espressione> [[motivo]][/]", "Tiro di dadi personalizzato (es. /roll 2d6+3 Danno)");
@@ -1014,6 +1034,13 @@ namespace RPG.Client
                     });
 
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(chatPacket));
+                    continue;
+                }
+
+                if (trimmedInput.Equals("/leave", StringComparison.OrdinalIgnoreCase))
+                {
+                    var leavePacket = NetworkPacket.Create(OpCode.C2S_Leave, new { });
+                    await _writer.WriteLineAsync(JsonSerializer.Serialize(leavePacket));
                     continue;
                 }
 

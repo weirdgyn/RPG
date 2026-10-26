@@ -179,6 +179,9 @@ public class RpgTcpServer(string ipAddress, int port)
             case OpCode.C2S_Join:
                 await HandleJoinAsync(client, packet);
                 break;
+            case OpCode.C2S_Leave:
+                await HandleLeaveAsync(client);
+                break;
             case OpCode.C2S_Init:
                 await HandleInitAsync(client, packet);
                 break;
@@ -992,6 +995,92 @@ public class RpgTcpServer(string ipAddress, int port)
         }));
     }
 
+    private async Task HandleLeaveAsync(ClientSession client)
+    {
+        string gameName = string.Empty;
+        bool gameClosed = false;
+        bool wasMaster = false;
+        List<Player> remaining = [];
+
+        lock (_gamesLock)
+        {
+            var game = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
+            if (game != null)
+            {
+                gameName = game.Name;
+                wasMaster = client.Player.Role == Player.RoleType.master;
+
+                game.Players.Remove(client.Player);
+
+                // Un tiro di iniziativa di un personaggio che esce non ha più senso nel game
+                if (client.Player.Character != null)
+                {
+                    game.InitRolls.RemoveAll(r => r.PlayerName.Equals(client.Player.Character.Handle, StringComparison.OrdinalIgnoreCase));
+                }
+
+                if (game.Players.Count == 0)
+                {
+                    _games.Remove(game);
+                    gameClosed = true;
+                    Console.WriteLine($"[GAME] Game '{game.Name}' rimosso: nessun giocatore rimasto.");
+                }
+                else
+                {
+                    remaining = [.. game.Players];
+                }
+            }
+        }
+
+        if (gameName.Length == 0)
+        {
+            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_LeaveResponse, new LeaveResponsePayload
+            {
+                Success = false,
+                Message = "Non sei in nessun game: usa /join <game> per entrare in una partita.",
+                Role = client.Player.Role
+            }));
+            return;
+        }
+
+        // Il personaggio collegato resta tuo (il /link è indipendente dal game): senza personaggio, e
+        // per un master, il ruolo torna "none"; altrimenti si resta "player".
+        client.Player.Role = (!wasMaster && client.Player.Character != null)
+            ? Player.RoleType.player
+            : Player.RoleType.none;
+
+        Console.WriteLine($"[GAME] {client.Player.Username} ha lasciato '{gameName}'{(wasMaster ? " (era il master)" : "")}.");
+
+        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_LeaveResponse, new LeaveResponsePayload
+        {
+            Success = true,
+            Message = gameClosed
+                ? $"Hai lasciato '{gameName}'. Eri l'ultimo giocatore: il game è stato chiuso."
+                : $"Hai lasciato '{gameName}'.",
+            GameName = gameName,
+            Role = client.Player.Role
+        }));
+
+        // Avviso agli altri giocatori del game (in particolare se se n'è andato il master)
+        string notice = wasMaster
+            ? $"Il master {client.Player.Username} ha lasciato '{gameName}': il ruolo di master è libero."
+            : $"{client.Player.Username} ha lasciato '{gameName}'.";
+
+        foreach (var other in remaining)
+        {
+            var session = _connectedClients.Values.FirstOrDefault(s => ReferenceEquals(s.Player, other));
+            if (session == null) continue;
+
+            try
+            {
+                await session.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = notice }));
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[GAME] Notifica di uscita non consegnata a [{session.IdShort}]: {ex.Message}");
+            }
+        }
+    }
+
     private async Task HandleJoinAsync(ClientSession client, NetworkPacket packet)
     {
         var joinReq = packet.DeserializePayload<JoinRequestPayload>();
@@ -1009,6 +1098,8 @@ public class RpgTcpServer(string ipAddress, int port)
         }
         joinReq.GameName = cleanGameName;
         joinReq.Description = InputLimits.Clean(joinReq.Description, 200);
+        // Qualunque ruolo diverso da master è "player" (un join con ruolo "none" non ha senso)
+        if (joinReq.Role != Player.RoleType.master) joinReq.Role = Player.RoleType.player;
 
         string denialMessage = string.Empty;
         bool success = false;
@@ -1017,7 +1108,15 @@ public class RpgTcpServer(string ipAddress, int port)
         {
             var game = _games.FirstOrDefault(g => g.Name.Equals(joinReq.GameName, StringComparison.OrdinalIgnoreCase));
 
-            if (joinReq.Role == Player.RoleType.master)
+            // Una sessione sta in un solo game alla volta (i comandi cercano "il" game del giocatore):
+            // per cambiare game si esce prima con /leave.
+            var currentGame = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
+
+            if (currentGame != null && !ReferenceEquals(currentGame, game))
+            {
+                denialMessage = $"Sei già nel gioco '{currentGame.Name}': usa /leave prima di entrare in un altro.";
+            }
+            else if (joinReq.Role == Player.RoleType.master)
             {
                 if (game == null && _games.Count >= InputLimits.MaxGames)
                 {
