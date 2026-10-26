@@ -17,12 +17,9 @@ internal class Program
 
         var options = parserResult.Value;
 
-        // ==========================================
-        // 2. SEQUENZA DI AVVIO ORIGINALE INVARIATA
-        // ==========================================
         Console.WriteLine("========================================");
-        Console.WriteLine($"🚀 NATIVE CYBERPUNK RPG SERVER");
-        Console.WriteLine($"📍 Bind Target: {options.Host}:{options.Port}");
+        Console.WriteLine($" NATIVE CYBERPUNK RPG SERVER");
+        Console.WriteLine($" Bind Target: {options.Host}:{options.Port}");
         Console.WriteLine("========================================");
 
         Skills.Initialize();
