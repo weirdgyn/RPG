@@ -504,11 +504,11 @@ namespace RPG.Client
                     new TableColumn("[bold green]Descrizione[/]")
                 );
 
-                table.AddRow("[bold white]/status[/]", "[grey]<character>[/]", "Visualizza la scheda del personaggio collegato (o specifico se Master)");
+                table.AddRow("[bold white]/status[/]", "[grey][[character>]][/]", "Visualizza la scheda del personaggio collegato (o specifico se Master)");
                 table.AddRow("[bold white]/skills[/]", "[grey]-[/]", "Elenco abilità, statistiche associate e pool di tiro");
                 table.AddRow("[bold white]/create[/]", "[cyan]<archetipo> <handle>[/]", "Crea un nuovo personaggio da un archetipo (con stat casuali)");
                 table.AddRow("[bold white]/link[/]", "[cyan]<character>[/]", "Collega la sessione ad un personaggio esistente");
-                table.AddRow("[bold white]/list[/]", "[grey][[<game>]][/]", "Elenca i giocatori online (o filtrati per stanza di gioco)");
+                table.AddRow("[bold white]/list[/]", "[grey][[game]][/]", "Elenca i giocatori online (o filtrati per stanza di gioco)");
                 table.AddRow("[bold white]/games[/]", "[grey]-[/]", "Elenca le sessioni di gioco attive");
                 table.AddRow("[bold white]/characters[/]", "[grey]-[/]", "Elenca i personaggi salvati sul server");
                 table.AddRow("[bold white]/join[/]", "[cyan]<game> [[master|player]][/]", "Entra in un gioco o ne crea uno (solo Master)");
@@ -516,7 +516,7 @@ namespace RPG.Client
                 table.AddRow("[bold white]/skill[/]", "[cyan]<nome> [[TN]][/]", "Effettua una prova di abilità d10 (es. /skill Pistola 15)");
                 table.AddRow("[bold white]/roll[/]", "[cyan]<espressione> [[motivo]][/]", "Tiro di dadi personalizzato (es. /roll 2d6+3 Danno)");
                 table.AddRow("[bold white]/move[/]", "[cyan]<X> <Y> [[Z]][/]", "Muove il personaggio nello spazio 3D");
-                table.AddRow("[bold white]/chat[/]", "[cyan]\"<msg>\" [[user]][/]", "Messaggio broadcast o privato");
+                table.AddRow("[bold white]/chat[/]", "[cyan]\"msg\" [[user]][/]", "Messaggio broadcast o privato");
                 table.AddRow("[bold white]/init[/]", "[cyan][[modificatore]][/]", "Tiro di iniziativa / avvio turno di combattimento");
                 table.AddRow("[bold white]/ping[/]", "[grey]-[/]", "Verifica latenza di rete con il server (RTT)");
                 table.AddRow("[bold white]/help[/]", "[grey]-[/]", "Mostra questo menu dei comandi");
