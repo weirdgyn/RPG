@@ -10,7 +10,7 @@ public class ClientSession
     public Guid Id { get; } = Guid.NewGuid();
     public string IdShort => Id.ToString()[..6];
     public TcpClient TcpClient { get; }
-    public StreamReader Reader { get; }
+    private StreamReader Reader { get; }
     // StreamWriter non è thread-safe: i pacchetti verso questo client partono da più task
     // (il suo handler, i broadcast e le risposte generate dagli altri client). Ogni scrittura
     // passa da SendPacketAsync, che le serializza con _sendLock; per questo il writer è privato.
@@ -34,6 +34,40 @@ public class ClientSession
         Reader = new StreamReader(stream);
         _writer = new StreamWriter(stream) { AutoFlush = true };
     }
+    /// <summary>
+    /// Come <c>StreamReader.ReadLineAsync</c>, ma con un tetto alla lunghezza della riga: un client che
+    /// manda dati senza mai andare a capo non può far crescere la memoria del server senza limite.
+    /// Restituisce null a fine flusso; lancia <see cref="InvalidDataException"/> se la riga supera il tetto.
+    /// </summary>
+    public async Task<string?> ReadLineLimitedAsync(int maxLength)
+    {
+        var sb = new System.Text.StringBuilder();
+        var buffer = new char[1];
+
+        while (true)
+        {
+            int read = await Reader.ReadAsync(buffer, 0, 1);
+            if (read == 0)
+            {
+                return sb.Length == 0 ? null : sb.ToString();   // fine flusso (ultima riga senza \n)
+            }
+
+            char c = buffer[0];
+            if (c == '\n')
+            {
+                if (sb.Length > 0 && sb[^1] == '\r') sb.Length--;
+                return sb.ToString();
+            }
+
+            if (sb.Length >= maxLength)
+            {
+                throw new InvalidDataException($"Riga oltre il limite di {maxLength} caratteri.");
+            }
+
+            sb.Append(c);
+        }
+    }
+
     public async Task SendPacketAsync(NetworkPacket packet)
     {
         // Serializzazione fuori dal lock: solo la scrittura sullo stream va resa esclusiva.

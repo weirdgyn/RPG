@@ -43,6 +43,14 @@ public class RpgTcpServer(string ipAddress, int port)
             try
             {
                 var tcpClient = await _listener.AcceptTcpClientAsync();
+
+                if (_connectedClients.Count >= InputLimits.MaxConnections)
+                {
+                    Console.WriteLine($"[SERVER] Connessione rifiutata: raggiunto il limite di {InputLimits.MaxConnections} client.");
+                    tcpClient.Close();
+                    continue;
+                }
+
                 var session = new ClientSession(tcpClient);
                 _connectedClients[session.Id] = session;
 
@@ -63,11 +71,21 @@ public class RpgTcpServer(string ipAddress, int port)
         try
         {
             string? line;
-            while ((line = await client.Reader.ReadLineAsync()) != null)
+            while ((line = await client.ReadLineLimitedAsync(InputLimits.MaxLineLength)) != null)
             {
                 if (string.IsNullOrWhiteSpace(line)) continue;
 
-                var packet = JsonSerializer.Deserialize<NetworkPacket>(line);
+                NetworkPacket? packet;
+                try
+                {
+                    packet = JsonSerializer.Deserialize<NetworkPacket>(line);
+                }
+                catch (JsonException)
+                {
+                    // Riga non valida: la scarto senza chiudere la sessione
+                    Console.WriteLine($"[SERVER] Pacchetto malformato da [{client.IdShort}] ignorato.");
+                    continue;
+                }
                 if (packet == null) continue;
 
                 try
@@ -207,14 +225,29 @@ public class RpgTcpServer(string ipAddress, int port)
 
         LoginResponsePayload? denial = null;
 
+        if (userName.Length > InputLimits.MaxUsernameLength || InputLimits.HasControlChars(userName))
+        {
+            denial = new LoginResponsePayload
+            {
+                Success = false,
+                PlayerId = string.Empty,
+                PlayerName = string.Empty,
+                Message = $"Username non valido: massimo {InputLimits.MaxUsernameLength} caratteri e nessun carattere di controllo."
+            };
+        }
+
         lock (_loginLock)
         {
-            bool duplicate = _connectedClients.Values.Any(c =>
+            bool duplicate = denial == null && _connectedClients.Values.Any(c =>
                 c.Id != client.Id &&
                 !string.IsNullOrEmpty(c.Player.Username) &&
                 c.Player.Username.Equals(userName, StringComparison.OrdinalIgnoreCase));
 
-            if (duplicate)
+            if (denial != null)
+            {
+                Console.WriteLine($"[LOGIN] RIFIUTATO: username non valido da [{client.IdShort}].");
+            }
+            else if (duplicate)
             {
                 Console.WriteLine($"[LOGIN] RIFIUTATO: username '{userName}' già in uso da un altro client.");
                 denial = new LoginResponsePayload
@@ -255,6 +288,8 @@ public class RpgTcpServer(string ipAddress, int port)
     {
         var attackReq = packet.DeserializePayload<AttackRequestPayload>();
         if (attackReq == null) return;
+        attackReq.TargetHandle = InputLimits.Clean(attackReq.TargetHandle, InputLimits.MaxNameFieldLength);
+        attackReq.WeaponOrSkill = InputLimits.Clean(attackReq.WeaponOrSkill, InputLimits.MaxNameFieldLength);
 
         if (!await EnsureCharacterLinkedAsync(client)) return;
 
@@ -443,8 +478,28 @@ public class RpgTcpServer(string ipAddress, int port)
         var chatReq = packet.DeserializePayload<ChatPayload>();
         if (chatReq == null || string.IsNullOrWhiteSpace(chatReq.Message)) return;
 
-        string message = chatReq.Message.Trim();
-        string? recipient = string.IsNullOrWhiteSpace(chatReq.Recipient) ? null : chatReq.Recipient.Trim();
+        if (chatReq.Message.Length > InputLimits.MaxChatLength * 2)
+        {
+            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
+            {
+                Message = $"Messaggio troppo lungo (massimo {InputLimits.MaxChatLength} caratteri)."
+            }));
+            return;
+        }
+
+        string message = InputLimits.Clean(chatReq.Message, InputLimits.MaxChatLength + 1);
+        if (message.Length == 0) return;
+        if (message.Length > InputLimits.MaxChatLength)
+        {
+            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
+            {
+                Message = $"Messaggio troppo lungo (massimo {InputLimits.MaxChatLength} caratteri)."
+            }));
+            return;
+        }
+
+        string recipientClean = InputLimits.Clean(chatReq.Recipient, InputLimits.MaxUsernameLength);
+        string? recipient = recipientClean.Length == 0 ? null : recipientClean;
 
         if (recipient == null)
         {
@@ -545,7 +600,7 @@ public class RpgTcpServer(string ipAddress, int port)
     private async Task HandleGetPlayersAsync(ClientSession client, NetworkPacket packet)
     {
         var req = packet.DeserializePayload<PlayersRequestPayload>();
-        string? filterGame = req?.GameName?.Trim();
+        string? filterGame = InputLimits.Clean(req?.GameName, InputLimits.MaxGameNameLength);
 
         var allAuthenticated = _connectedClients.Values
             .Where(c => c.IsAuthenticated)
@@ -597,7 +652,7 @@ public class RpgTcpServer(string ipAddress, int port)
         {
             if (!await EnsureCharacterLinkedAsync(client)) return;
 
-            string skillName = skillReq.SkillName.Trim();
+            string skillName = InputLimits.Clean(skillReq.SkillName, InputLimits.MaxNameFieldLength);
             string statName = Skills.GetStatForSkill(skillName);
 
             int statVal = client.Player.Character.Stats.GetStatValue(statName);
@@ -942,6 +997,19 @@ public class RpgTcpServer(string ipAddress, int port)
         var joinReq = packet.DeserializePayload<JoinRequestPayload>();
         if (joinReq == null || string.IsNullOrWhiteSpace(joinReq.GameName)) return;
 
+        string cleanGameName = InputLimits.Clean(joinReq.GameName, InputLimits.MaxGameNameLength + 1);
+        if (cleanGameName.Length > InputLimits.MaxGameNameLength || InputLimits.HasControlChars(joinReq.GameName))
+        {
+            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_JoinResponse, new JoinResponsePayload
+            {
+                Success = false,
+                Message = $"Nome del gioco non valido: massimo {InputLimits.MaxGameNameLength} caratteri, senza caratteri di controllo."
+            }));
+            return;
+        }
+        joinReq.GameName = cleanGameName;
+        joinReq.Description = InputLimits.Clean(joinReq.Description, 200);
+
         string denialMessage = string.Empty;
         bool success = false;
 
@@ -951,7 +1019,11 @@ public class RpgTcpServer(string ipAddress, int port)
 
             if (joinReq.Role == Player.RoleType.master)
             {
-                if (game == null)
+                if (game == null && _games.Count >= InputLimits.MaxGames)
+                {
+                    denialMessage = $"Il server ha raggiunto il numero massimo di giochi ({InputLimits.MaxGames}).";
+                }
+                else if (game == null)
                 {
                     game = new Game
                     {
