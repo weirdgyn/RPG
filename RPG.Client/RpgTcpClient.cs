@@ -395,6 +395,25 @@ namespace RPG.Client
                     }
                     break;
 
+                case OpCode.S2C_JoinResponse:
+                    var joinResp = packet.DeserializePayload<JoinResponsePayload>();
+                    if (joinResp != null)
+                    {
+                        if (joinResp.Success)
+                        {
+                            PrintServerOutput(() => AnsiConsole.MarkupLine($"[bold green][[JOIN]][/] Sei entrato nel game [bold yellow]'{Markup.Escape(joinResp.GameName)}'[/] come [cyan]'{joinResp.Role}'[/]."));
+                            if (_player != null)
+                            {
+                                _player.Role = joinResp.Role;
+                            }
+                        }
+                        else
+                        {
+                            PrintServerOutput(() => AnsiConsole.MarkupLine($"[bold red][[JOIN FALLITO]][/] [white]{Markup.Escape(joinResp.Message)}[/]"));
+                        }
+                    }
+                    break;
+
                 case OpCode.S2C_LinkResponse:
                     var linkResp = packet.DeserializePayload<LinkResponsePayload>();
                     if (linkResp != null)
