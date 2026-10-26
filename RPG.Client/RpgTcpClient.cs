@@ -201,7 +201,9 @@ namespace RPG.Client
                     var rollResp = packet.DeserializePayload<RollResponsePayload>();
                     if (rollResp != null)
                     {
-                        PrintServerOutput(() => AnsiConsole.MarkupLine($"[bold yellow][[ROLL]][/] [bold cyan]{Markup.Escape(rollResp.RollerHandle)}[/] tira [bold yellow]{Markup.Escape(rollResp.DiceExpression)}[/] -> [bold green]{rollResp.TotalResult}[/] [grey]({Markup.Escape(rollResp.Details)})[/]"));
+                        string rollReason = string.IsNullOrWhiteSpace(rollResp.Reason) ? "" : $" [italic grey]({Markup.Escape(rollResp.Reason)})[/]";
+                        string rollDetails = string.IsNullOrWhiteSpace(rollResp.Details) ? "" : $" [grey]{Markup.Escape(rollResp.Details)}[/]";
+                        PrintServerOutput(() => AnsiConsole.MarkupLine($"[bold yellow][[ROLL]][/] [bold cyan]{Markup.Escape(rollResp.RollerHandle)}[/] tira [bold yellow]{Markup.Escape(rollResp.DiceExpression)}[/]{rollReason} -> [bold green]{rollResp.TotalResult}[/]{rollDetails}"));
                     }
                     break;
 

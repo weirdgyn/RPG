@@ -1,4 +1,5 @@
 ﻿using Dice;
+using System.Text.RegularExpressions;
 
 namespace RPG.Common.Utils;
 
@@ -10,10 +11,47 @@ public class DiceRollResult
 }
 public static class GameDice
 {
+    /// <summary>Lunghezza massima accettata per un'espressione di dadi.</summary>
+    public const int MaxExpressionLength = 64;
+
+    // Limiti anti-abuso (es. "999999d999999", esplosioni a catena): oltre questi valori la libreria
+    // lancia DiceException invece di bloccare il server.
+    private static readonly RollerConfig BoundedConfig = new()
+    {
+        MaxDice = 100,
+        MaxSides = 1000,
+        MaxRerolls = 20,
+        MaxRecursionDepth = 5
+    };
+
+    // La libreria documenta l'esplosione come "!e" (compounding "!c", penetrante "!p"), non come "!" da solo.
+    // Accettiamo la notazione comune dei GdR: "3d6!" -> "3d6!e", "3d6!!" -> "3d6!c". Il "!" seguito da una
+    // lettera o da "=" (es. "!=") è già sintassi della libreria e resta com'è.
+    private static readonly Regex CompoundShorthand = new(@"!!", RegexOptions.Compiled);
+    private static readonly Regex ExplodeShorthand = new(@"!(?![a-zA-Z=])", RegexOptions.Compiled);
+
+    /// <summary>
+    /// Converte le abbreviazioni "!" / "!!" nella sintassi della libreria. Pubblico per poterlo testare.
+    /// </summary>
+    public static string NormalizeExpression(string expression)
+    {
+        string e = CompoundShorthand.Replace(expression.Trim(), "!c");
+        return ExplodeShorthand.Replace(e, "!e");
+    }
+
+    /// <summary>
+    /// Esegue un tiro. Espressioni non valide o oltre i limiti lanciano <see cref="DiceException"/>;
+    /// un'espressione troppo lunga lancia <see cref="ArgumentException"/>.
+    /// </summary>
     public static DiceRollResult Roll(string expression)
     {
+        if (expression == null || expression.Length > MaxExpressionLength)
+        {
+            throw new ArgumentException($"L'espressione dei dadi supera i {MaxExpressionLength} caratteri.", nameof(expression));
+        }
+
         // Esegue il parsing e il tiro usando la libreria esterna
-        RollResult result = Roller.Roll(expression);
+        RollResult result = Roller.Roll(NormalizeExpression(expression), BoundedConfig);
 
         return new DiceRollResult
         {

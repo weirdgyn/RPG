@@ -70,7 +70,25 @@ public class RpgTcpServer(string ipAddress, int port)
                 var packet = JsonSerializer.Deserialize<NetworkPacket>(line);
                 if (packet == null) continue;
 
-                await ProcessPacketAsync(client, packet);
+                try
+                {
+                    await ProcessPacketAsync(client, packet);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException && client.TcpClient.Connected)
+                {
+                    // Un comando che fallisce non deve chiudere la sessione del giocatore: lo registro,
+                    // avviso il client e passo al comando successivo. Se è la connessione stessa a essere
+                    // caduta, il prossimo ReadLineAsync lancerà e il ciclo uscirà come prima.
+                    Console.WriteLine($"[SERVER] Errore nel comando {packet.OpCode} di [{client.IdShort}]: {ex.GetType().Name}: {ex.Message}");
+                    try
+                    {
+                        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
+                        {
+                            Message = "Errore del server nell'eseguire il comando."
+                        }));
+                    }
+                    catch { /* connessione ormai persa */ }
+                }
             }
         }
         catch (Exception ex)
@@ -371,22 +389,48 @@ public class RpgTcpServer(string ipAddress, int port)
         await targetClient.SendPacketAsync(attackPacket);
     }
 
+    private const int MaxRollReasonLength = 100;
+
     private async Task HandleRollAsync(ClientSession client, NetworkPacket packet)
     {
         var rollReq = packet.DeserializePayload<RollRequestPayload>();
-        string expr = string.IsNullOrWhiteSpace(rollReq?.DiceExpression) ? "1d10" : rollReq.DiceExpression;
-        string reason = rollReq?.Reason ?? "Tiro generico";
+        string expr = string.IsNullOrWhiteSpace(rollReq?.DiceExpression) ? "1d10" : rollReq.DiceExpression.Trim();
 
-        var rollResult = GameDice.Roll(expr);
+        // Il motivo è testo libero che finisce nel log e nelle notifiche di tutti: tolgo i caratteri di
+        // controllo (niente righe finte nel log) e lo limito in lunghezza.
+        string reason = new string((rollReq?.Reason ?? string.Empty).Where(c => !char.IsControl(c)).ToArray()).Trim();
+        if (reason.Length > MaxRollReasonLength) reason = reason[..MaxRollReasonLength];
+        if (reason.Length == 0) reason = "Tiro generico";
+
+        DiceRollResult rollResult;
+        try
+        {
+            rollResult = GameDice.Roll(expr);
+        }
+        catch (Exception ex) when (ex is Dice.DiceException or ArgumentException)
+        {
+            // Espressione non valida o oltre i limiti: errore al solo mittente, la sessione resta aperta.
+            Console.WriteLine($"[ROLL] {client.Player.Username}: espressione rifiutata ({ex.GetType().Name}).");
+            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
+            {
+                Message = $"Espressione dadi non valida: {(ex is Dice.DiceException ? ex.Message : "troppo lunga")}. " +
+                          $"Esempi: 1d10, 3d6+2, 4d6dl1, 3d6! (max {GameDice.MaxExpressionLength} caratteri, 100 dadi, 1000 facce)."
+            }));
+            return;
+        }
+
         int total = (int)rollResult.Total;
+        string loggedExpr = new string(expr.Where(c => !char.IsControl(c)).ToArray());
 
-        Console.WriteLine($"[ROLL] {client.Player.Username} tira {expr} ({reason}): {total}");
+        Console.WriteLine($"[ROLL] {client.Player.Username} tira {loggedExpr} ({reason}): {total}");
 
         var resp = new RollResponsePayload
         {
             RollerHandle = client.Player.Username,
             DiceExpression = expr,
+            Reason = reason,
             TotalResult = total,
+            Details = rollResult.Details,
             Message = $"{client.Player.Username} tira [{expr}] ({reason}) ed ottiene: {total}"
         };
 

@@ -105,6 +105,7 @@ public class RollResponsePayload
 {
     public string RollerHandle { get; set; } = string.Empty;
     public string DiceExpression { get; set; } = string.Empty;
+    public string Reason { get; set; } = string.Empty;
     public int TotalResult { get; set; }
     public string Details { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
