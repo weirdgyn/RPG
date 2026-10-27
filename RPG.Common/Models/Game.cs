@@ -15,4 +15,6 @@ public class Game
     public string Description { get; set; } = string.Empty;
     public List<Player> Players { get; set; } = [];
     public List<Roll> InitRolls { get; set; } = [];
+    /// <summary>Personaggi non giocanti del game: in memoria, gestiti solo dal master (/npc, /as).</summary>
+    public List<Character> NPCs { get; set; } = [];
 }

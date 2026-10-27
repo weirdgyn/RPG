@@ -414,6 +414,44 @@ namespace RPG.Client
                     }
                     break;
 
+                case OpCode.S2C_NpcResponse:
+                    var npcResp = packet.DeserializePayload<NpcResponsePayload>();
+                    if (npcResp != null)
+                    {
+                        PrintServerOutput(() =>
+                        {
+                            string tag = npcResp.Success ? "[bold green][[NPC]][/]" : "[bold red][[NPC FALLITO]][/]";
+                            AnsiConsole.MarkupLine($"{tag} [white]{Markup.Escape(npcResp.Message)}[/]");
+
+                            if (npcResp.Npcs.Count > 0)
+                            {
+                                var table = new Table().Border(TableBorder.Rounded).BorderColor(Color.Yellow);
+                                table.AddColumn("[bold yellow]NPC[/]");
+                                table.AddColumn("[bold yellow]Ruolo[/]");
+                                table.AddColumn("[bold yellow]Salute[/]");
+                                table.AddColumn("[bold yellow]Stato[/]");
+                                table.AddColumn("[bold yellow]Posizione[/]");
+                                foreach (var n in npcResp.Npcs)
+                                {
+                                    table.AddRow(
+                                        $"[bold cyan]{Markup.Escape(n.Handle)}[/]",
+                                        n.Role.ToString(),
+                                        $"{n.CurrentHealth}/{n.MaxHealth}",
+                                        Markup.Escape(n.WoundStatus),
+                                        $"({n.Position.X:F1}, {n.Position.Y:F1}, {n.Position.Z:F1})");
+                                }
+                                AnsiConsole.Write(table);
+                            }
+
+                            // La scheda di un NPC non sostituisce quella del proprio personaggio (_player.Character)
+                            if (npcResp.Character != null)
+                            {
+                                PrintCharacterStatus(npcResp.Character);
+                            }
+                        });
+                    }
+                    break;
+
                 case OpCode.S2C_LeaveResponse:
                     var leaveResp = packet.DeserializePayload<LeaveResponsePayload>();
                     if (leaveResp != null)
@@ -510,14 +548,20 @@ namespace RPG.Client
                         PrintServerOutput(() =>
                         {
                             var table = new Table().Border(TableBorder.Rounded).BorderColor(Color.Yellow);
-                            table.AddColumns("[bold yellow]Handle Personaggio[/]", "[bold cyan]Ruolo Archetipo[/]");
+                            table.AddColumns("[bold yellow]Handle Personaggio[/]", "[bold cyan]Ruolo Archetipo[/]", "[bold white]Stato[/]");
                             if (charactersResp.Characters.Count > 0)
                             {
-                                foreach (var cNode in charactersResp.Characters) table.AddRow(Markup.Escape(cNode.Handle), cNode.Role.ToString());
+                                foreach (var cNode in charactersResp.Characters)
+                                {
+                                    table.AddRow(
+                                        Markup.Escape(cNode.Handle),
+                                        cNode.Role.ToString(),
+                                        Markup.Escape(cNode.Status));
+                                }
                             }
                             else
                             {
-                                table.AddRow("[grey](Nessun personaggio salvato sul server)[/]", "-");
+                                table.AddRow("[grey](Nessun personaggio salvato sul server)[/]", "-", "-");
                             }
                             AnsiConsole.Write(new Panel(table) { Header = new PanelHeader("[bold yellow] SCHEDE PERSONAGGI DISPONIBILI [/]"), BorderStyle = new Style(Color.Yellow) });
                         });
@@ -528,6 +572,67 @@ namespace RPG.Client
                     PrintServerOutput(() => AnsiConsole.MarkupLine($"[grey][[PACKET]][/] Ricevuto OpCode: [yellow]{packet.OpCode}[/]"));
                     break;
             }
+        }
+
+        /// <summary>
+        /// Costruisce il pacchetto /as: lo stesso payload del comando normale, avvolto con l'handle dell'NPC.
+        /// Restituisce null se i parametri non sono validi.
+        /// </summary>
+        private static NetworkPacket? BuildAsPacket(string npcHandle, string verb, string[] args)
+        {
+            OpCode innerOp;
+            string innerJson;
+
+            switch (verb)
+            {
+                case "attack" when args.Length >= 1:
+                    innerOp = OpCode.C2S_Attack;
+                    innerJson = JsonSerializer.Serialize(new AttackRequestPayload
+                    {
+                        TargetHandle = args[0],
+                        WeaponOrSkill = args.Length >= 2 ? args[1] : null
+                    });
+                    break;
+
+                case "skill" when args.Length >= 1:
+                    innerOp = OpCode.C2S_SkillCheck;
+                    innerJson = JsonSerializer.Serialize(new SkillCheckRequestPayload
+                    {
+                        SkillName = args[0],
+                        Difficulty = args.Length >= 2 && int.TryParse(args[1], out int tn) ? tn : 15
+                    });
+                    break;
+
+                case "move" when args.Length >= 2
+                                 && int.TryParse(args[0], out int x)
+                                 && int.TryParse(args[1], out int y):
+                    int z = 0;
+                    if (args.Length >= 3 && !int.TryParse(args[2], out z)) return null;
+                    innerOp = OpCode.C2S_Move;
+                    innerJson = JsonSerializer.Serialize(new MoveRequestPayload
+                    {
+                        Position = new Position3D { X = x, Y = y, Z = z }
+                    });
+                    break;
+
+                case "init":
+                    innerOp = OpCode.C2S_Init;
+                    innerJson = JsonSerializer.Serialize(new InitRequest
+                    {
+                        Modifiers = args.Length >= 1 ? args[0] : string.Empty
+                    });
+                    break;
+
+                default:
+                    return null;
+            }
+
+            return NetworkPacket.Create(OpCode.C2S_As, new AsRequestPayload
+            {
+                ActorHandle = npcHandle,
+                InnerOpCode = innerOp,
+                InnerPayload = innerJson
+            });
         }
 
         /// <summary>
@@ -553,6 +658,8 @@ namespace RPG.Client
                 table.AddRow("[bold white]/characters[/]", "[grey]-[/]", "Elenca i personaggi salvati sul server");
                 table.AddRow("[bold white]/join[/]", "[cyan]<game> [[master|player]][/]", "Entra in un gioco o ne crea uno (solo Master)");
                 table.AddRow("[bold white]/leave[/]", "", "Esce dal gioco corrente");
+                table.AddRow("[bold white]/npc[/]", "[cyan]add <h> | list | remove <h> | status <h>[/]", "Master: usa una scheda esistente come NPC del game");
+                table.AddRow("[bold white]/as[/]", "[cyan]<npc> attack|skill|move|init ...[/]", "Master: esegue il comando per conto di un NPC");
                 table.AddRow("[bold white]/attack[/]", "[cyan]<target> [[arma|skill]][/]", "Attacca un bersaglio con arma in pugno o specificata");
                 table.AddRow("[bold white]/skill[/]", "[cyan]<nome> [[TN]][/]", "Effettua una prova di abilità d10 (es. /skill Pistola 15)");
                 table.AddRow("[bold white]/roll[/]", "[cyan]<espressione> [[motivo]][/]", "Tiro di dadi personalizzato (es. /roll 2d6+3 Danno)");
@@ -828,6 +935,50 @@ namespace RPG.Client
                 }
 
                 if (_player == null) { continue; }
+
+                if (trimmedInput.Equals("/npc", StringComparison.OrdinalIgnoreCase)
+                    || trimmedInput.StartsWith("/npc ", StringComparison.OrdinalIgnoreCase))
+                {
+                    string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    string action = parts.Length >= 2 ? parts[1].ToLowerInvariant() : string.Empty;
+
+                    bool valid = action switch
+                    {
+                        "add" or "remove" or "status" => parts.Length >= 3,
+                        "list" => true,
+                        _ => false
+                    };
+
+                    if (!valid)
+                    {
+                        AnsiConsole.MarkupLine("[bold red][[!]]: Uso:[/] [yellow]/npc add <handle>[/] | [yellow]/npc list[/] | [yellow]/npc remove <handle>[/] | [yellow]/npc status <handle>[/]");
+                        continue;
+                    }
+
+                    var npcPacket = NetworkPacket.Create(OpCode.C2S_Npc, new NpcRequestPayload
+                    {
+                        Action = action,
+                        Handle = parts.Length >= 3 ? parts[2] : string.Empty
+                    });
+                    await _writer.WriteLineAsync(JsonSerializer.Serialize(npcPacket));
+                    continue;
+                }
+
+                if (trimmedInput.Equals("/as", StringComparison.OrdinalIgnoreCase)
+                    || trimmedInput.StartsWith("/as ", StringComparison.OrdinalIgnoreCase))
+                {
+                    string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    var asPacket = parts.Length >= 3 ? BuildAsPacket(parts[1], parts[2].ToLowerInvariant(), parts[3..]) : null;
+
+                    if (asPacket == null)
+                    {
+                        AnsiConsole.MarkupLine("[bold red][[!]]: Uso:[/] [yellow]/as <npc> attack <bersaglio> [[arma|skill]][/] | [yellow]/as <npc> skill <abilità> [[TN]][/] | [yellow]/as <npc> move <X> <Y> [[Z]][/] | [yellow]/as <npc> init [[mod]][/]");
+                        continue;
+                    }
+
+                    await _writer.WriteLineAsync(JsonSerializer.Serialize(asPacket));
+                    continue;
+                }
 
                 if (trimmedInput.Equals("/status", StringComparison.OrdinalIgnoreCase))
                 {

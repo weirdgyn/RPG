@@ -177,6 +177,41 @@ public class LeaveResponsePayload
     public Player.RoleType Role { get; set; } = Player.RoleType.none;
 }
 
+public class NpcRequestPayload
+{
+    // add | list | remove | status
+    public string Action { get; set; } = string.Empty;
+    public string Handle { get; set; } = string.Empty;
+}
+
+public class NpcInfoPayload
+{
+    public string Handle { get; set; } = string.Empty;
+    public Character.RoleType Role { get; set; } = Character.RoleType.Solo;
+    public int CurrentHealth { get; set; }
+    public int MaxHealth { get; set; }
+    public string WoundStatus { get; set; } = string.Empty;
+    public Position3D Position { get; set; } = new();
+}
+
+public class NpcResponsePayload
+{
+    public bool Success { get; set; }
+    public string Action { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public List<NpcInfoPayload> Npcs { get; set; } = [];
+    // Valorizzato solo da "status": la scheda dell'NPC
+    public Character? Character { get; set; }
+}
+
+// Comando eseguito dal master per conto di un NPC: l'opcode e il payload sono quelli del comando "normale"
+public class AsRequestPayload
+{
+    public string ActorHandle { get; set; } = string.Empty;
+    public OpCode InnerOpCode { get; set; }
+    public string InnerPayload { get; set; } = string.Empty;
+}
+
 public class LinkRequestPayload
 {
     public string PlayerHandle { get; set; } = string.Empty;
@@ -228,6 +263,8 @@ public class CharactersResponsePayload
     public class CharacterNode {
         public string Handle { get; set; } = string.Empty;
         public Character.RoleType Role { get; set; } = Character.RoleType.Solo;
+        // "libero", "in uso da <giocatore>" oppure "NPC di <game>"
+        public string Status { get; set; } = string.Empty;
     }
     public List<CharacterNode> Characters { get; set; } = [];
 }

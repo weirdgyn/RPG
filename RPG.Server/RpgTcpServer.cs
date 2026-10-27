@@ -26,7 +26,7 @@ public class RpgTcpServer(string ipAddress, int port)
     private readonly object _linkLock = new();
     // Serializza /create: controllo "esiste già", conteggio e scrittura devono essere un'unica operazione.
     private readonly object _createLock = new();
-    private const int MaxCharactersPerSession = 3;
+    private const int MaxCharactersPerSession = 20;
     private const int MaxCharactersTotal = 500;
     private bool _isRunning;
 
@@ -117,7 +117,7 @@ public class RpgTcpServer(string ipAddress, int port)
         {
             _connectedClients.TryRemove(client.Id, out _);
             client.TcpClient.Close();
-            RemovePlayerFromGames(client.Player);
+            var masterNotices = RemovePlayerFromGames(client.Player);
 
             string userName = !string.IsNullOrEmpty(client.Player.Username) ? client.Player.Username : client.IdShort;
             Console.WriteLine($"[SERVER] Client disconnesso: {userName}");
@@ -126,6 +126,12 @@ public class RpgTcpServer(string ipAddress, int port)
             {
                 var leaveNotify = NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"{userName} ha abbandonato la rete." });
                 await BroadcastPacketAsync(leaveNotify, excludeClientId: client.Id);
+
+                // Se se n'è andato il master, i giocatori rimasti nel suo game devono saperlo
+                foreach (var (gameName, remaining) in masterNotices)
+                {
+                    await NotifyPlayersAsync(remaining, $"Il master {userName} si è disconnesso da '{gameName}': il ruolo di master è libero.");
+                }
             }
         }
     }
@@ -181,6 +187,12 @@ public class RpgTcpServer(string ipAddress, int port)
                 break;
             case OpCode.C2S_Leave:
                 await HandleLeaveAsync(client);
+                break;
+            case OpCode.C2S_Npc:
+                await HandleNpcAsync(client, packet);
+                break;
+            case OpCode.C2S_As:
+                await HandleAsAsync(client, packet);
                 break;
             case OpCode.C2S_Init:
                 await HandleInitAsync(client, packet);
@@ -309,7 +321,9 @@ public class RpgTcpServer(string ipAddress, int port)
             }
         }
 
-        return null;
+        // Poi gli NPC del game (nessuna sessione: il master li controlla)
+        var npc = game.NPCs.FirstOrDefault(n => n.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase));
+        return npc != null ? new Combatant(npc, null) : null;
     }
 
     // Da chiamare sotto _gamesLock. Sessioni dei partecipanti del game.
@@ -867,7 +881,20 @@ public class RpgTcpServer(string ipAddress, int port)
                 return;
             }
 
-            // Un personaggio può essere interpretato da una sola sessione alla volta. Il controllo "già in
+            // Il master non interpreta personaggi: per quelli del game usa gli NPC (/npc, /as). Senza questo
+            // divieto un /link lo riporterebbe al ruolo di giocatore.
+            if (client.Player.Role == Player.RoleType.master)
+            {
+                await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_LinkResponse, new LinkResponsePayload
+                {
+                    Success = false,
+                    Message = "Un master non collega personaggi: per usare una scheda nel tuo game aggiungila come NPC con /npc add."
+                }));
+                return;
+            }
+
+            // Una scheda è usata da un solo "attore" alla volta: o un giocatore (questa sessione) o un NPC di un
+            // game (/npc add), mai entrambi. Il controllo "già in
             // uso", il caricamento e l'associazione avvengono nello stesso lock: senza, due /link
             // simultanei sullo stesso personaggio passerebbero entrambi il controllo e lavorerebbero su
             // due copie separate della scheda, sovrascrivendosi i salvataggi. Gli await restano fuori.
@@ -883,8 +910,18 @@ public class RpgTcpServer(string ipAddress, int port)
                     && c.LinkedCharacterHandle != null
                     && c.LinkedCharacterHandle.Equals(linkReq.CharacterHandle, StringComparison.OrdinalIgnoreCase));
 
+                // Ordine dei lock: _linkLock, poi _gamesLock (come in /npc add)
+                string? npcGame = null;
+                lock (_gamesLock)
+                {
+                    npcGame = _games.FirstOrDefault(g => g.NPCs.Any(n =>
+                        n.Handle.Equals(linkReq.CharacterHandle, StringComparison.OrdinalIgnoreCase)))?.Name;
+                }
+
                 Console.WriteLine($"[LINK] '{client.Player.Username}' chiede '{linkReq.CharacterHandle}': " +
-                                  (holder == null ? "libero." : $"occupato da '{holder.Player.Username}'."));
+                                  (holder != null ? $"occupato da '{holder.Player.Username}'."
+                                   : npcGame != null ? $"NPC del game '{npcGame}'."
+                                   : "libero."));
 
                 if (holder != null)
                 {
@@ -893,6 +930,14 @@ public class RpgTcpServer(string ipAddress, int port)
                     {
                         Success = false,
                         Message = $"Il personaggio '{linkReq.CharacterHandle}' è già in uso da '{holder.Player.Username}'."
+                    };
+                }
+                else if (npcGame != null)
+                {
+                    failure = new LinkResponsePayload
+                    {
+                        Success = false,
+                        Message = $"Il personaggio '{linkReq.CharacterHandle}' è un NPC del game '{npcGame}': non è disponibile finché il master non lo rimuove."
                     };
                 }
                 else
@@ -1061,7 +1106,7 @@ public class RpgTcpServer(string ipAddress, int port)
                     failure = new CreateCharacterResponsePayload
                     {
                         Success = false,
-                        Message = $"La scheda del personaggio '{safeHandle}' esiste già. Scegli un altro handle o usa /link."
+                        Message = $"La scheda '{safeHandle}' esiste già. Scegli un altro handle."
                     };
                 }
                 else
@@ -1093,8 +1138,321 @@ public class RpgTcpServer(string ipAddress, int port)
             Success = true,
             CharacterHandle = safeHandle,
             Archetype = createReq.Archetype,
-            Message = $"Personaggio '{safeHandle}' ({newChar.Role}) creato con successo! Puoi associarlo al tuo account con: /link {safeHandle}"
+            Message = $"Personaggio '{safeHandle}' ({newChar.Role}) creato con successo! Puoi associarlo al tuo account con /link {safeHandle}, o (se sei master) usarlo come NPC con /npc add {safeHandle}."
         }));
+    }
+
+    private const int MaxNpcsPerGame = 30;
+
+    // Comandi che il master può dare a un NPC con /as (gli stessi dei giocatori, con l'NPC come attore)
+    private static readonly HashSet<OpCode> NpcAllowedCommands =
+        [OpCode.C2S_Attack, OpCode.C2S_SkillCheck, OpCode.C2S_Move, OpCode.C2S_Init];
+
+    private static Task SendNpcResponseAsync(ClientSession client, NpcResponsePayload payload)
+        => client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_NpcResponse, payload));
+
+    /// <summary>
+    /// /npc add|list|remove|status: gestione degli NPC del game, riservata al suo master. Un NPC è una qualunque
+    /// scheda di Data/Characters (creata con /create) collegata al game invece che a un giocatore: lo stato
+    /// (ferite, posizione) si salva come per i giocatori, e uscire dal game non cancella la scheda. La stessa
+    /// scheda può essere un PG o un NPC, ma non entrambe le cose nello stesso momento.
+    /// </summary>
+    private async Task HandleNpcAsync(ClientSession client, NetworkPacket packet)
+    {
+        var req = packet.DeserializePayload<NpcRequestPayload>();
+        string action = (req?.Action ?? string.Empty).Trim().ToLowerInvariant();
+
+        if (req == null || action.Length == 0)
+        {
+            await SendNpcResponseAsync(client, new NpcResponsePayload
+            {
+                Success = false,
+                Message = "Uso: /npc add <handle> | /npc list | /npc remove <handle> | /npc status <handle>"
+            });
+            return;
+        }
+
+        Game? game;
+        lock (_gamesLock)
+        {
+            game = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
+        }
+
+        if (game == null || client.Player.Role != Player.RoleType.master)
+        {
+            await SendNpcResponseAsync(client, new NpcResponsePayload
+            {
+                Success = false,
+                Action = action,
+                Message = "Solo il master di un game può gestire gli NPC: entra con /join <game> master."
+            });
+            return;
+        }
+
+        string handle = InputLimits.Clean(req.Handle, InputLimits.MaxNameFieldLength);
+
+        switch (action)
+        {
+            case "add":
+                await HandleNpcAddAsync(client, game, handle);
+                break;
+
+            case "list":
+            {
+                List<NpcInfoPayload> infos;
+                lock (_gamesLock)
+                {
+                    infos = game.NPCs.Select(n => new NpcInfoPayload
+                    {
+                        Handle = n.Handle,
+                        Role = n.Role,
+                        CurrentHealth = n.Health.CurrentHealth,
+                        MaxHealth = n.Health.MaxHealth,
+                        WoundStatus = n.Health.GetWoundStatusDescription(),
+                        Position = n.Position
+                    }).ToList();
+                }
+
+                await SendNpcResponseAsync(client, new NpcResponsePayload
+                {
+                    Success = true,
+                    Action = action,
+                    Message = infos.Count == 0 ? "Nessun NPC in questo game." : $"{infos.Count} NPC nel game '{game.Name}'.",
+                    Npcs = infos
+                });
+                break;
+            }
+
+            case "remove":
+            {
+                bool removed;
+                lock (_gamesLock)
+                {
+                    removed = game.NPCs.RemoveAll(n => n.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase)) > 0;
+                    if (removed)
+                    {
+                        game.InitRolls.RemoveAll(r => r.PlayerName.Equals(handle, StringComparison.OrdinalIgnoreCase));
+                    }
+                }
+
+                if (removed) Console.WriteLine($"[NPC] {client.Player.Username} ha rimosso l'NPC '{handle}' da '{game.Name}'.");
+
+                await SendNpcResponseAsync(client, new NpcResponsePayload
+                {
+                    Success = removed,
+                    Action = action,
+                    Message = removed ? $"NPC '{handle}' rimosso." : $"NPC '{handle}' non trovato in questo game."
+                });
+                break;
+            }
+
+            case "status":
+            {
+                Character? npc;
+                lock (_gamesLock)
+                {
+                    npc = game.NPCs.FirstOrDefault(n => n.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase));
+                }
+
+                await SendNpcResponseAsync(client, new NpcResponsePayload
+                {
+                    Success = npc != null,
+                    Action = action,
+                    Message = npc != null ? $"Scheda dell'NPC '{npc.Handle}'." : $"NPC '{handle}' non trovato in questo game.",
+                    Character = npc
+                });
+                break;
+            }
+
+            default:
+                await SendNpcResponseAsync(client, new NpcResponsePayload
+                {
+                    Success = false,
+                    Action = action,
+                    Message = "Azione sconosciuta. Uso: /npc add <handle> | list | remove <handle> | status <handle>"
+                });
+                break;
+        }
+    }
+
+    // Collega al game una scheda NPC già esistente. Una scheda può essere NPC di un solo game alla volta.
+    private async Task HandleNpcAddAsync(ClientSession client, Game game, string handle)
+    {
+        Task Respond(bool ok, string message) => SendNpcResponseAsync(client, new NpcResponsePayload { Success = ok, Action = "add", Message = message });
+
+        if (!CharacterHandleValidator.IsValid(handle))
+        {
+            await Respond(false, CharacterHandleValidator.RulesDescription);
+            return;
+        }
+
+        Character npc;
+        try
+        {
+            npc = CharacterRepository.LoadCharacter(handle);
+        }
+        catch (FileNotFoundException)
+        {
+            await Respond(false, $"Scheda '{handle}' non trovata. Creala con: /create <archetipo> {handle}");
+            return;
+        }
+        catch (CharacterLoadException ex)
+        {
+            await Respond(false, $"{ex.Message} Contatta l'amministratore del server.");
+            return;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException
+                                      or System.Security.SecurityException)
+        {
+            Console.WriteLine($"[NPC] Errore con la scheda '{handle}': {ex.Message}");
+            await Respond(false, "Impossibile caricare la scheda: errore del server, riprova più tardi.");
+            return;
+        }
+
+        npc.Handle = handle;
+
+        // Una scheda è usata da un solo "attore" alla volta: un giocatore (/link) oppure un NPC di un game.
+        // Ordine dei lock: _linkLock, poi _gamesLock (come in /link).
+        string? error = null;
+        lock (_linkLock)
+        {
+            var holder = _connectedClients.Values.FirstOrDefault(c =>
+                c.LinkedCharacterHandle != null
+                && c.LinkedCharacterHandle.Equals(handle, StringComparison.OrdinalIgnoreCase));
+
+            lock (_gamesLock)
+            {
+                var otherGame = _games.FirstOrDefault(g => g.NPCs.Any(n => n.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase)));
+
+                if (game.NPCs.Count >= MaxNpcsPerGame)
+                {
+                    error = $"Limite raggiunto: al massimo {MaxNpcsPerGame} NPC per game.";
+                }
+                else if (holder != null)
+                {
+                    error = $"Il personaggio '{handle}' è in uso da '{holder.Player.Username}': non può essere un NPC finché lo interpreta.";
+                }
+                else if (otherGame != null)
+                {
+                    error = ReferenceEquals(otherGame, game)
+                        ? $"L'NPC '{handle}' è già in questo game."
+                        : $"L'NPC '{handle}' è già in uso nel game '{otherGame.Name}'.";
+                }
+                else if (game.Players.Any(p => p.Character != null && p.Character.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase)))
+                {
+                    error = $"In questo game esiste già un personaggio chiamato '{handle}'.";
+                }
+                else
+                {
+                    game.NPCs.Add(npc);
+                }
+            }
+        }
+
+        if (error != null)
+        {
+            await Respond(false, error);
+            return;
+        }
+
+        Console.WriteLine($"[NPC] {client.Player.Username} ha aggiunto l'NPC '{handle}' ({npc.Role}) a '{game.Name}'.");
+        await Respond(true, $"NPC '{handle}' ({npc.Role}) aggiunto al game. Usa /as {handle} attack|skill|move|init ... per farlo agire.");
+    }
+
+    /// <summary>
+    /// /as &lt;npc&gt; &lt;comando&gt;: il master esegue attack, skill, move o init con un suo NPC come attore.
+    /// Riusa le stesse routine dei giocatori; le uniche differenze sono che l'attore è l'NPC e che nulla
+    /// viene salvato su disco.
+    /// </summary>
+    private async Task HandleAsAsync(ClientSession client, NetworkPacket packet)
+    {
+        var req = packet.DeserializePayload<AsRequestPayload>();
+
+        Task Fail(string message) => client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = message }));
+
+        string actorHandle = InputLimits.Clean(req?.ActorHandle, InputLimits.MaxNameFieldLength);
+        if (req == null || actorHandle.Length == 0)
+        {
+            await Fail("Uso: /as <npc> <attack|skill|move|init> ...");
+            return;
+        }
+
+        Game? game;
+        Character? npc = null;
+        lock (_gamesLock)
+        {
+            game = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
+            if (game != null && client.Player.Role == Player.RoleType.master)
+            {
+                npc = game.NPCs.FirstOrDefault(n => n.Handle.Equals(actorHandle, StringComparison.OrdinalIgnoreCase));
+            }
+        }
+
+        if (game == null || client.Player.Role != Player.RoleType.master)
+        {
+            await Fail("Solo il master di un game può usare /as.");
+            return;
+        }
+
+        if (npc == null)
+        {
+            await Fail($"NPC '{actorHandle}' non trovato in questo game: vedi /npc list.");
+            return;
+        }
+
+        if (!NpcAllowedCommands.Contains(req.InnerOpCode))
+        {
+            await Fail("Con /as si possono usare solo: attack, skill, move, init.");
+            return;
+        }
+
+        try
+        {
+            switch (req.InnerOpCode)
+            {
+                case OpCode.C2S_Attack:
+                {
+                    var attackReq = JsonSerializer.Deserialize<AttackRequestPayload>(req.InnerPayload);
+                    if (attackReq == null) { await Fail("Comando non valido."); return; }
+
+                    attackReq.TargetHandle = InputLimits.Clean(attackReq.TargetHandle, InputLimits.MaxNameFieldLength);
+                    attackReq.WeaponOrSkill = InputLimits.Clean(attackReq.WeaponOrSkill, InputLimits.MaxNameFieldLength);
+                    if (attackReq.TargetHandle.Length == 0) { await Fail("Uso: /as <npc> attack <bersaglio> [arma|skill]"); return; }
+
+                    await ResolveAttackAsync(client, npc, attackReq);
+                    break;
+                }
+
+                case OpCode.C2S_SkillCheck:
+                {
+                    var skillReq = JsonSerializer.Deserialize<SkillCheckRequestPayload>(req.InnerPayload);
+                    if (skillReq == null || string.IsNullOrWhiteSpace(skillReq.SkillName)) { await Fail("Uso: /as <npc> skill <abilità> [TN]"); return; }
+
+                    await ResolveSkillCheckAsync(client, npc, skillReq);
+                    break;
+                }
+
+                case OpCode.C2S_Move:
+                {
+                    var moveReq = JsonSerializer.Deserialize<MoveRequestPayload>(req.InnerPayload);
+                    if (moveReq?.Position == null) { await Fail("Uso: /as <npc> move <X> <Y> [Z]"); return; }
+
+                    await ResolveMoveAsync(client, npc, moveReq);
+                    break;
+                }
+
+                case OpCode.C2S_Init:
+                {
+                    var initReq = JsonSerializer.Deserialize<InitRequest>(req.InnerPayload);
+                    await ResolveInitiativeAsync(client, npc, initReq?.Modifiers);
+                    break;
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            await Fail("Comando non valido.");
+        }
     }
 
     private async Task HandleLeaveAsync(ClientSession client)
@@ -1167,18 +1525,24 @@ public class RpgTcpServer(string ipAddress, int port)
             ? $"Il master {client.Player.Username} ha lasciato '{gameName}': il ruolo di master è libero."
             : $"{client.Player.Username} ha lasciato '{gameName}'.";
 
-        foreach (var other in remaining)
+        await NotifyPlayersAsync(remaining, notice);
+    }
+
+    // Notifica testuale ai giocatori indicati (le sessioni non più collegate vengono saltate).
+    private async Task NotifyPlayersAsync(IEnumerable<Player> players, string message)
+    {
+        foreach (var other in players)
         {
             var session = _connectedClients.Values.FirstOrDefault(s => ReferenceEquals(s.Player, other));
             if (session == null) continue;
 
             try
             {
-                await session.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = notice }));
+                await session.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = message }));
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[GAME] Notifica di uscita non consegnata a [{session.IdShort}]: {ex.Message}");
+                Console.WriteLine($"[GAME] Notifica non consegnata a [{session.IdShort}]: {ex.Message}");
             }
         }
     }
@@ -1263,6 +1627,12 @@ public class RpgTcpServer(string ipAddress, int port)
                     if (playerExists)
                     {
                         denialMessage = $"Sei già nel gioco '{joinReq.GameName}'.";
+                        success = false;
+                    }
+                    else if (client.Player.Character != null
+                        && game.NPCs.Any(n => n.Handle.Equals(client.Player.Character.Handle, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        denialMessage = $"Nel gioco '{joinReq.GameName}' esiste già un NPC chiamato '{client.Player.Character.Handle}'.";
                         success = false;
                     }
                     else
@@ -1431,14 +1801,37 @@ public class RpgTcpServer(string ipAddress, int port)
 
     private async Task HandleGetCharactersAsync(ClientSession client)
     {
+        // Chi sta usando quale scheda: NPC di un game, oppure giocatore collegato
+        var npcOwner = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        lock (_gamesLock)
+        {
+            foreach (var game in _games)
+            {
+                foreach (var npc in game.NPCs) npcOwner[npc.Handle] = game.Name;
+            }
+        }
+
+        var linkedBy = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var session in _connectedClients.Values)
+        {
+            string? linked = session.LinkedCharacterHandle;
+            if (linked != null && session.Player.Character != null) linkedBy[linked] = session.Player.Username;
+        }
+
         var charactersResponsePayload = new CharactersResponsePayload();
 
         foreach (var character in CharacterRepository.ListCharacters())
         {
+            string status =
+                npcOwner.TryGetValue(character.Handle, out var gameName) ? $"NPC di '{gameName}'" :
+                linkedBy.TryGetValue(character.Handle, out var player) ? $"in uso da {player}" :
+                "libero";
+
             charactersResponsePayload.Characters.Add(new CharactersResponsePayload.CharacterNode
             {
                 Handle = character.Handle,
-                Role = character.Role
+                Role = character.Role,
+                Status = status
             });
         }
 
@@ -1469,13 +1862,22 @@ public class RpgTcpServer(string ipAddress, int port)
         return false;
     }
 
-    private void RemovePlayerFromGames(Player player)
+    // Rimuove il giocatore da tutti i game. Restituisce, per ogni game rimasto aperto di cui era master,
+    // il nome e i giocatori rimasti (da avvisare).
+    private List<(string GameName, List<Player> Remaining)> RemovePlayerFromGames(Player player)
     {
+        var masterNotices = new List<(string, List<Player>)>();
+
         lock (_gamesLock)
         {
             foreach (var game in _games.Where(g => g.Players.Contains(player)).ToList())
             {
                 game.Players.Remove(player);
+
+                if (player.Character != null)
+                {
+                    game.InitRolls.RemoveAll(r => r.PlayerName.Equals(player.Character.Handle, StringComparison.OrdinalIgnoreCase));
+                }
 
                 if (game.Players.Count == 0)
                 {
@@ -1485,9 +1887,12 @@ public class RpgTcpServer(string ipAddress, int port)
                 else if (player.Role == Player.RoleType.master)
                 {
                     Console.WriteLine($"[GAME] Il master '{player.Username}' ha lasciato '{game.Name}': il ruolo è di nuovo libero.");
+                    masterNotices.Add((game.Name, [.. game.Players]));
                 }
             }
         }
+
+        return masterNotices;
     }
 
     /// <summary>
