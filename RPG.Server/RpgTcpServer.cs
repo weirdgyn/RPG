@@ -287,6 +287,41 @@ public class RpgTcpServer(string ipAddress, int port)
         await BroadcastPacketAsync(joinNotify, excludeClientId: client.Id);
     }
 
+    // Serializza la risoluzione degli attacchi: lettura e modifica dei punti ferita di attaccante e
+    // bersaglio avvengono sotto questo lock, altrimenti due attacchi simultanei sullo stesso bersaglio
+    // possono perdere un colpo (lettura, calcolo e scrittura non atomici).
+    private readonly object _combatLock = new();
+
+    /// <summary>Un partecipante al combattimento: il personaggio e la sua sessione (se è un giocatore).</summary>
+    private sealed record Combatant(Character Character, ClientSession? Session);
+
+    private sealed record AttackOutcome(string? Error, AttackResponsePayload? Result, string? LogLine);
+
+    // Da chiamare sotto _gamesLock. Cerca il personaggio per handle tra i partecipanti del game.
+    private Combatant? FindCombatantInGame(Game game, string handle)
+    {
+        foreach (var p in game.Players)
+        {
+            if (p.Character != null && p.Character.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase))
+            {
+                var session = _connectedClients.Values.FirstOrDefault(s => s.IsAuthenticated && ReferenceEquals(s.Player, p));
+                return new Combatant(p.Character, session);
+            }
+        }
+
+        return null;
+    }
+
+    // Da chiamare sotto _gamesLock. Sessioni dei partecipanti del game.
+    private List<ClientSession> GetGameSessions(Game game)
+    {
+        return game.Players
+            .Select(p => _connectedClients.Values.FirstOrDefault(s => ReferenceEquals(s.Player, p)))
+            .Where(s => s != null)
+            .Select(s => s!)
+            .ToList();
+    }
+
     private async Task HandleAttackAsync(ClientSession client, NetworkPacket packet)
     {
         var attackReq = packet.DeserializePayload<AttackRequestPayload>();
@@ -296,135 +331,182 @@ public class RpgTcpServer(string ipAddress, int port)
 
         if (!await EnsureCharacterLinkedAsync(client)) return;
 
-        var targetClient = _connectedClients.Values
-            .FirstOrDefault(c => c.IsAuthenticated
-                && c.Player.Character != null
-                && c.Player.Character.Handle.Equals(attackReq.TargetHandle, StringComparison.OrdinalIgnoreCase));
+        await ResolveAttackAsync(client, client.Player.Character!, attackReq);
+    }
 
-        if (targetClient == null)
+    /// <summary>
+    /// Attacco di <paramref name="attacker"/> (il personaggio che agisce) contro un personaggio dello stesso
+    /// game. <paramref name="reporter"/> è la sessione che ha dato il comando e riceve gli errori.
+    /// </summary>
+    private async Task ResolveAttackAsync(ClientSession reporter, Character attacker, AttackRequestPayload attackReq)
+    {
+        Game? game;
+        Combatant? target = null;
+        List<ClientSession> audience = [];
+
+        lock (_gamesLock)
         {
-            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"Bersaglio '{attackReq.TargetHandle}' non trovato o non online." }));
-            return;
-        }
-
-        if (targetClient.Id == client.Id)
-        {
-            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Non puoi attaccare te stesso!" }));
-            return;
-        }
-
-        Weapon? weaponToUse = null;
-        if (!string.IsNullOrWhiteSpace(attackReq.WeaponOrSkill))
-        {
-            string key = attackReq.WeaponOrSkill.Trim();
-            weaponToUse = client.Player.Character.Weapons.FirstOrDefault(w =>
-                w.Name.Equals(key, StringComparison.OrdinalIgnoreCase) ||
-                w.Id.Equals(key, StringComparison.OrdinalIgnoreCase) ||
-                w.SkillName.Equals(key, StringComparison.OrdinalIgnoreCase));
-        }
-
-        weaponToUse ??= client.Player.Character.EquippedWeapon ?? client.Player.Character.Weapons.FirstOrDefault();
-        if (weaponToUse == null)
-        {
-            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Nessuna arma o abilità d'attacco disponibile!" }));
-            return;
-        }
-
-        string skillName = weaponToUse.SkillName;
-        string statName = Skills.GetStatForSkill(skillName);
-
-        int attackerStat = client.Player.Character.Stats.GetStatValue(statName);
-        int attackerSkillLvl = client.Player.Character.Skills.TryGetValue(skillName, out int lvl) ? lvl : 0;
-        int attackerPenalty = client.Player.Character.Health.GetWoundPenalty();
-
-        if (attackerPenalty <= -99)
-        {
-            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Sei K.O., non puoi attaccare!" }));
-            return;
-        }
-
-        double distance = CombatRules.CalculateDistance(client.Player.Character.Position, targetClient.Player.Character.Position);
-        int targetNumber = 15;
-        string attackTypeDesc = string.Empty;
-
-        if (weaponToUse.Type == Weapon.WeaponType.Ranged)
-        {
-            targetNumber = CombatRules.GetRangedTargetNumber(distance);
-            attackTypeDesc = $"A Distanza con {weaponToUse.Name} ({distance:F1}m) -> TN Fisso: {targetNumber}";
-        }
-        else if (weaponToUse.Type == Weapon.WeaponType.Melee)
-        {
-            if (distance > 2.5)
+            game = _games.FirstOrDefault(g => g.Players.Contains(reporter.Player));
+            if (game != null)
             {
-                await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"Troppo lontano per la mischia con {weaponToUse.Name}! Distanza: {distance:F1}m > 2.5m." }));
-                return;
+                target = FindCombatantInGame(game, attackReq.TargetHandle);
+                audience = GetGameSessions(game);
+            }
+        }
+
+        if (game == null)
+        {
+            await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Devi essere in un game per attaccare: usa /join <game>." }));
+            return;
+        }
+
+        if (target == null)
+        {
+            await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"Bersaglio '{attackReq.TargetHandle}' non trovato in questo game." }));
+            return;
+        }
+
+        if (ReferenceEquals(target.Character, attacker))
+        {
+            await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Non puoi attaccare te stesso!" }));
+            return;
+        }
+
+        var outcome = ResolveAttackRules(attacker, target.Character, attackReq.WeaponOrSkill);
+        if (outcome.Error != null)
+        {
+            await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = outcome.Error }));
+            return;
+        }
+
+        Console.WriteLine(outcome.LogLine);
+
+        if (outcome.Result!.IsHit)
+        {
+            CharacterRepository.TrySaveCharacter(target.Character);
+        }
+
+        // Il risultato va a tutto il game (attaccante e bersaglio compresi), non agli altri game
+        var attackPacket = NetworkPacket.Create(OpCode.S2C_AttackResult, outcome.Result);
+        foreach (var session in audience)
+        {
+            try { await session.SendPacketAsync(attackPacket); }
+            catch (Exception ex) { Console.WriteLine($"[COMBAT] Risultato non consegnato a [{session.IdShort}]: {ex.Message}"); }
+        }
+    }
+
+    // Regole dell'attacco, sincrone e sotto _combatLock. Nessun I/O di rete qui dentro.
+    private AttackOutcome ResolveAttackRules(Character attacker, Character target, string? weaponKey)
+    {
+        lock (_combatLock)
+        {
+            Weapon? weaponToUse = null;
+            if (!string.IsNullOrWhiteSpace(weaponKey))
+            {
+                string key = weaponKey.Trim();
+                weaponToUse = attacker.Weapons.FirstOrDefault(w =>
+                    w.Name.Equals(key, StringComparison.OrdinalIgnoreCase) ||
+                    w.Id.Equals(key, StringComparison.OrdinalIgnoreCase) ||
+                    w.SkillName.Equals(key, StringComparison.OrdinalIgnoreCase));
             }
 
-            int targetRef = targetClient.Player.Character.Stats.REF;
-            int targetDodge = targetClient.Player.Character.Skills.TryGetValue("Schivare", out int dLvl) ? dLvl : 0;
-            int targetPenalty = targetClient.Player.Character.Health.GetWoundPenalty();
+            weaponToUse ??= attacker.EquippedWeapon ?? attacker.Weapons.FirstOrDefault();
+            if (weaponToUse == null)
+            {
+                return new AttackOutcome("Nessuna arma o abilità d'attacco disponibile!", null, null);
+            }
 
-            targetNumber = 10 + targetRef + targetDodge + targetPenalty;
-            attackTypeDesc = $"In Mischia con {weaponToUse.Name} -> Difesa Bersaglio (REF {targetRef} + Schivare {targetDodge}): TN {targetNumber}";
-        }
+            string skillName = weaponToUse.SkillName;
+            string statName = Skills.GetStatForSkill(skillName);
 
-        int diceVal = GameDice.RollExplodingD10();
-        int attackTotal = attackerStat + attackerSkillLvl + attackerPenalty + diceVal;
+            int attackerStat = attacker.Stats.GetStatValue(statName);
+            int attackerSkillLvl = attacker.Skills.TryGetValue(skillName, out int lvl) ? lvl : 0;
+            int attackerPenalty = attacker.Health.GetWoundPenalty();
 
-        bool isHit = attackTotal >= targetNumber;
-        int damageDealt = 0;
-        string hitLocationName = string.Empty;
-        int hitMultiplier = 1;
+            if (attackerPenalty <= -99)
+            {
+                return new AttackOutcome("Sei K.O., non puoi attaccare!", null, null);
+            }
 
-        if (isHit)
-        {
-            var damageRoll = GameDice.Roll(weaponToUse.DamageDice);
-            int rawDamage = (int)damageRoll.Total;
+            double distance = CombatRules.CalculateDistance(attacker.Position, target.Position);
+            int targetNumber = 15;
+            string attackTypeDesc = string.Empty;
 
             if (weaponToUse.Type == Weapon.WeaponType.Ranged)
             {
-                var loc = CombatRules.ResolveHitLocation((int)GameDice.Roll("1d10").Total);
-                hitLocationName = loc.Name;
-                hitMultiplier = loc.DamageMultiplier;
+                targetNumber = CombatRules.GetRangedTargetNumber(distance);
+                attackTypeDesc = $"A Distanza con {weaponToUse.Name} ({distance:F1}m) -> TN Fisso: {targetNumber}";
+            }
+            else if (weaponToUse.Type == Weapon.WeaponType.Melee)
+            {
+                if (distance > 2.5)
+                {
+                    return new AttackOutcome($"Troppo lontano per la mischia con {weaponToUse.Name}! Distanza: {distance:F1}m > 2.5m.", null, null);
+                }
+
+                int targetRef = target.Stats.REF;
+                int targetDodge = target.Skills.TryGetValue("Schivare", out int dLvl) ? dLvl : 0;
+                int targetPenalty = target.Health.GetWoundPenalty();
+
+                targetNumber = 10 + targetRef + targetDodge + targetPenalty;
+                attackTypeDesc = $"In Mischia con {weaponToUse.Name} -> Difesa Bersaglio (REF {targetRef} + Schivare {targetDodge}): TN {targetNumber}";
             }
 
-            damageDealt = rawDamage * hitMultiplier;
-            targetClient.Player.Character.Health.CurrentHealth = Math.Max(0, targetClient.Player.Character.Health.CurrentHealth - damageDealt);
-            CharacterRepository.TrySaveCharacter(targetClient.Player.Character);
+            int diceVal = GameDice.RollExplodingD10();
+            int attackTotal = attackerStat + attackerSkillLvl + attackerPenalty + diceVal;
+
+            bool isHit = attackTotal >= targetNumber;
+            int damageDealt = 0;
+            string hitLocationName = string.Empty;
+            int hitMultiplier = 1;
+
+            if (isHit)
+            {
+                var damageRoll = GameDice.Roll(weaponToUse.DamageDice);
+                int rawDamage = (int)damageRoll.Total;
+
+                if (weaponToUse.Type == Weapon.WeaponType.Ranged)
+                {
+                    var loc = CombatRules.ResolveHitLocation((int)GameDice.Roll("1d10").Total);
+                    hitLocationName = loc.Name;
+                    hitMultiplier = loc.DamageMultiplier;
+                }
+
+                damageDealt = rawDamage * hitMultiplier;
+                target.Health.CurrentHealth = Math.Max(0, target.Health.CurrentHealth - damageDealt);
+            }
+
+            string hitDesc = isHit
+                ? hitLocationName.Length > 0
+                    ? $"COLPITO ({damageDealt} dmg, Impatto: {hitLocationName}{(hitMultiplier > 1 ? $" x{hitMultiplier}" : "")})"
+                    : $"COLPITO ({damageDealt} dmg)"
+                : "MANCATO";
+
+            string log = $"[COMBAT] {attacker.Handle} attacca {target.Handle} con '{weaponToUse.Name}'. {attackTypeDesc}. Tiro: {attackTotal} vs TN {targetNumber}. {hitDesc}";
+
+            string impactSuffix = hitLocationName.Length > 0
+                ? $" Impatto: {hitLocationName}{(hitMultiplier > 1 ? $" (x{hitMultiplier})" : "")}"
+                : string.Empty;
+
+            var respPayload = new AttackResponsePayload
+            {
+                AttackerHandle = attacker.Handle,
+                TargetHandle = target.Handle,
+                AttackTotal = attackTotal,
+                DefenseTN = targetNumber,
+                IsHit = isHit,
+                DamageDealt = damageDealt,
+                HitLocation = hitLocationName,
+                DamageMultiplier = hitMultiplier,
+                TargetRemainingHealth = target.Health.CurrentHealth,
+                TargetWoundStatus = target.Health.GetWoundStatusDescription(),
+                Message = isHit
+                    ? $"COLPO A SEGNO! {attacker.Handle} usa '{weaponToUse.Name}' e infligge {damageDealt} danni ({weaponToUse.DamageDice})!{impactSuffix}"
+                    : $"MANCATO! {attacker.Handle} fallisce l'attacco con '{weaponToUse.Name}'."
+            };
+
+            return new AttackOutcome(null, respPayload, log);
         }
-
-        string hitDesc = isHit
-            ? hitLocationName.Length > 0
-                ? $"COLPITO ({damageDealt} dmg, Impatto: {hitLocationName}{(hitMultiplier > 1 ? $" x{hitMultiplier}" : "")})"
-                : $"COLPITO ({damageDealt} dmg)"
-            : "MANCATO";
-
-        Console.WriteLine($"[COMBAT] {client.Player.Character.Handle} attacca {targetClient.Player.Character.Handle} con '{weaponToUse.Name}'. {attackTypeDesc}. Tiro: {attackTotal} vs TN {targetNumber}. {hitDesc}");
-
-        string impactSuffix = hitLocationName.Length > 0
-            ? $" Impatto: {hitLocationName}{(hitMultiplier > 1 ? $" (x{hitMultiplier})" : "") }"
-            : string.Empty;
-
-        var respPayload = new AttackResponsePayload
-        {
-            AttackerHandle = client.Player.Character.Handle,
-            TargetHandle = targetClient.Player.Character.Handle,
-            AttackTotal = attackTotal,
-            DefenseTN = targetNumber,
-            IsHit = isHit,
-            DamageDealt = damageDealt,
-            HitLocation = hitLocationName,
-            DamageMultiplier = hitMultiplier,
-            TargetRemainingHealth = targetClient.Player.Character.Health.CurrentHealth,
-            TargetWoundStatus = targetClient.Player.Character.Health.GetWoundStatusDescription(),
-            Message = isHit
-                ? $"COLPO A SEGNO! {client.Player.Character.Handle} usa '{weaponToUse.Name}' e infligge {damageDealt} danni ({weaponToUse.DamageDice})!{impactSuffix}"
-                : $"MANCATO! {client.Player.Character.Handle} fallisce l'attacco con '{weaponToUse.Name}'."
-        };
-
-        var attackPacket = NetworkPacket.Create(OpCode.S2C_AttackResult, respPayload);
-        await client.SendPacketAsync(attackPacket);
-        await targetClient.SendPacketAsync(attackPacket);
     }
 
     private const int MaxRollReasonLength = 100;
@@ -473,7 +555,7 @@ public class RpgTcpServer(string ipAddress, int port)
         };
 
         var packetResp = NetworkPacket.Create(OpCode.S2C_RollResult, resp);
-        await BroadcastPacketAsync(packetResp);
+        await BroadcastToGameAsync(client, packetResp);
     }
 
     private async Task HandleChatAsync(ClientSession client, NetworkPacket packet)
@@ -549,36 +631,9 @@ public class RpgTcpServer(string ipAddress, int port)
 
     private async Task HandleGetSkillsAsync(ClientSession client)
     {
-        if (client.Player != null && client.Player.Character != null)
+        if (client.Player.Character != null)
         {
-            var character = client.Player.Character;
-            int penalty = character.Health.GetWoundPenalty();
-
-            var skillInfos = character.Skills
-                .OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
-                .Select(kv =>
-                {
-                    string statName = Skills.GetStatForSkill(kv.Key);
-                    int statVal = character.Stats.GetStatValue(statName);
-                    return new SkillInfoPayload
-                    {
-                        Name = kv.Key,
-                        Level = kv.Value,
-                        Stat = statName,
-                        StatValue = statVal,
-                        BasePool = statVal + kv.Value
-                    };
-                })
-                .ToList();
-
-            var skillListPayload = new SkillListResponsePayload
-            {
-                Character = character.Handle,
-                WoundPenalty = penalty,
-                Skills = skillInfos
-            };
-
-            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_SkillListResponse, skillListPayload));
+            await SendSkillsAsync(client, client.Player.Character);
         }
         else
         {
@@ -589,15 +644,53 @@ public class RpgTcpServer(string ipAddress, int port)
         }
     }
 
+    // Elenco abilità di <paramref name="character"/> inviato a <paramref name="reporter"/>.
+    private static async Task SendSkillsAsync(ClientSession reporter, Character character)
+    {
+        int penalty = character.Health.GetWoundPenalty();
+
+        var skillInfos = character.Skills
+            .OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(kv =>
+            {
+                string statName = Skills.GetStatForSkill(kv.Key);
+                int statVal = character.Stats.GetStatValue(statName);
+                return new SkillInfoPayload
+                {
+                    Name = kv.Key,
+                    Level = kv.Value,
+                    Stat = statName,
+                    StatValue = statVal,
+                    BasePool = statVal + kv.Value
+                };
+            })
+            .ToList();
+
+        var skillListPayload = new SkillListResponsePayload
+        {
+            Character = character.Handle,
+            WoundPenalty = penalty,
+            Skills = skillInfos
+        };
+
+        await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_SkillListResponse, skillListPayload));
+    }
+
     private async Task HandleGetStatusAsync(ClientSession client)
     {
-        if (client.Player != null && client.Player.Character != null)
+        if (client.Player.Character != null)
         {
-            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_PlayerStateUpdate, new CharacterStatePayload
-            {
-                Character = client.Player.Character
-            }));
+            await SendStatusAsync(client, client.Player.Character);
         }
+    }
+
+    // La scheda di <paramref name="character"/> inviata a <paramref name="reporter"/> (chi ha dato il comando).
+    private static async Task SendStatusAsync(ClientSession reporter, Character character)
+    {
+        await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_PlayerStateUpdate, new CharacterStatePayload
+        {
+            Character = character
+        }));
     }
 
     private async Task HandleGetPlayersAsync(ClientSession client, NetworkPacket packet)
@@ -651,43 +744,46 @@ public class RpgTcpServer(string ipAddress, int port)
     private async Task HandleSkillCheckAsync(ClientSession client, NetworkPacket packet)
     {
         var skillReq = packet.DeserializePayload<SkillCheckRequestPayload>();
-        if (skillReq != null && !string.IsNullOrWhiteSpace(skillReq.SkillName))
-        {
-            if (!await EnsureCharacterLinkedAsync(client)) return;
+        if (skillReq == null || string.IsNullOrWhiteSpace(skillReq.SkillName)) return;
 
-            string skillName = InputLimits.Clean(skillReq.SkillName, InputLimits.MaxNameFieldLength);
-            string statName = Skills.GetStatForSkill(skillName);
+        if (!await EnsureCharacterLinkedAsync(client)) return;
 
-            int statVal = client.Player.Character.Stats.GetStatValue(statName);
-            int skillLvl = client.Player.Character.Skills.TryGetValue(skillName, out int lvl) ? lvl : 0;
-            int penalty = client.Player.Character.Health.GetWoundPenalty();
-
-            var roll = GameDice.Roll("1d10");
-            int diceVal = (int)roll.Total;
-            int totalResult = statVal + skillLvl + penalty + diceVal;
-            bool isSuccess = totalResult >= skillReq.Difficulty;
-
-            string outcome = isSuccess ? "SUCCESSO" : "FALLIMENTO";
-            Console.WriteLine($"[SKILL] {client.Player.Character.Handle} prova '{skillName}' ({statName}:{statVal} + Lvl:{skillLvl} + d10:{diceVal} - Pen:{Math.Abs(penalty)}) = {totalResult} vs TN {skillReq.Difficulty} -> {outcome}");
-
-            var respPayload = new SkillCheckResponsePayload
-            {
-                CharacterHandle = client.Player.Character.Handle,
-                SkillName = skillName,
-                StatName = statName,
-                StatValue = statVal,
-                SkillLevel = skillLvl,
-                DiceRoll = diceVal,
-                TotalResult = totalResult,
-                TargetNumber = skillReq.Difficulty,
-                IsSuccess = isSuccess,
-                Message = $"{client.Player.Character.Handle} effettua una prova di {skillName} ({statName}): {totalResult} vs TN {skillReq.Difficulty} -> {outcome}!"
-            };
-
-            await BroadcastPacketAsync(NetworkPacket.Create(OpCode.S2C_SkillCheckResult, respPayload));
-        }
+        await ResolveSkillCheckAsync(client, client.Player.Character!, skillReq);
     }
 
+    private async Task ResolveSkillCheckAsync(ClientSession reporter, Character actor, SkillCheckRequestPayload skillReq)
+    {
+        string skillName = InputLimits.Clean(skillReq.SkillName, InputLimits.MaxNameFieldLength);
+        string statName = Skills.GetStatForSkill(skillName);
+
+        int statVal = actor.Stats.GetStatValue(statName);
+        int skillLvl = actor.Skills.TryGetValue(skillName, out int lvl) ? lvl : 0;
+        int penalty = actor.Health.GetWoundPenalty();
+
+        var roll = GameDice.Roll("1d10");
+        int diceVal = (int)roll.Total;
+        int totalResult = statVal + skillLvl + penalty + diceVal;
+        bool isSuccess = totalResult >= skillReq.Difficulty;
+
+        string outcome = isSuccess ? "SUCCESSO" : "FALLIMENTO";
+        Console.WriteLine($"[SKILL] {actor.Handle} prova '{skillName}' ({statName}:{statVal} + Lvl:{skillLvl} + d10:{diceVal} - Pen:{Math.Abs(penalty)}) = {totalResult} vs TN {skillReq.Difficulty} -> {outcome}");
+
+        var respPayload = new SkillCheckResponsePayload
+        {
+            CharacterHandle = actor.Handle,
+            SkillName = skillName,
+            StatName = statName,
+            StatValue = statVal,
+            SkillLevel = skillLvl,
+            DiceRoll = diceVal,
+            TotalResult = totalResult,
+            TargetNumber = skillReq.Difficulty,
+            IsSuccess = isSuccess,
+            Message = $"{actor.Handle} effettua una prova di {skillName} ({statName}): {totalResult} vs TN {skillReq.Difficulty} -> {outcome}!"
+        };
+
+        await BroadcastToGameAsync(reporter, NetworkPacket.Create(OpCode.S2C_SkillCheckResult, respPayload));
+    }
     private async Task HandleMoveAsync(ClientSession client, NetworkPacket packet)
     {
         var moveReq = packet.DeserializePayload<MoveRequestPayload>();
@@ -695,15 +791,20 @@ public class RpgTcpServer(string ipAddress, int port)
 
         if (!await EnsureCharacterLinkedAsync(client)) return;
 
+        await ResolveMoveAsync(client, client.Player.Character!, moveReq);
+    }
+
+    private async Task ResolveMoveAsync(ClientSession reporter, Character actor, MoveRequestPayload moveReq)
+    {
         GameMap? map;
         lock (_gamesLock)
         {
-            map = _games.FirstOrDefault(g => g.Players.Contains(client.Player))?.Map;
+            map = _games.FirstOrDefault(g => g.Players.Contains(reporter.Player))?.Map;
         }
 
         if (map == null)
         {
-            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Non sei in una partita attiva. Non puoi muoverti." }));
+            await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Non sei in una partita attiva. Non puoi muoverti." }));
             return;
         }
 
@@ -713,34 +814,35 @@ public class RpgTcpServer(string ipAddress, int port)
         string message;
         if (result == GameMap.MovementResult.Success)
         {
-            client.Player.Character.Position = requested;
-            CharacterRepository.TrySaveCharacter(client.Player.Character);
+            actor.Position = requested;
+            CharacterRepository.TrySaveCharacter(actor);
 
             message = $"Posizione aggiornata a ({requested.X}, {requested.Y}, {requested.Z})";
-            Console.WriteLine($"[MOVE] {client.Player.Character.Handle} si è spostato a ({requested.X}, {requested.Y}, {requested.Z})");
+            Console.WriteLine($"[MOVE] {actor.Handle} si è spostato a ({requested.X}, {requested.Y}, {requested.Z})");
         }
         else
         {
             message = result == GameMap.MovementResult.OutOfBounds
                 ? $"Movimento bloccato: ({requested.X}, {requested.Y}, {requested.Z}) è fuori dai confini della mappa."
                 : $"Movimento bloccato: c'è un ostacolo in ({requested.X}, {requested.Y}, {requested.Z}).";
-            Console.WriteLine($"[MOVE] {client.Player.Character.Handle} movimento negato ({result}) verso ({requested.X}, {requested.Y}, {requested.Z})");
+            Console.WriteLine($"[MOVE] {actor.Handle} movimento negato ({result}) verso ({requested.X}, {requested.Y}, {requested.Z})");
         }
 
         var movePayload = new MoveResultPayload
         {
-            PlayerHandle = client.Player.Character.Handle,
+            PlayerHandle = actor.Handle,
             RequestedPosition = requested,
-            ActualPosition = client.Player.Character.Position,
+            ActualPosition = actor.Position,
             Result = result,
             Message = message
         };
 
-        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_PlayerMoved, movePayload));
+        await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_PlayerMoved, movePayload));
 
         if (result == GameMap.MovementResult.Success)
         {
-            await BroadcastPacketAsync(NetworkPacket.Create(OpCode.S2C_PlayerMoved, movePayload), excludeClientId: client.Id);
+            // Solo gli altri partecipanti dello stesso game vedono lo spostamento
+            await BroadcastToGameAsync(reporter, NetworkPacket.Create(OpCode.S2C_PlayerMoved, movePayload), includeOrigin: false);
         }
     }
 
@@ -1217,7 +1319,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
             if (game != null)
             {
-                game.InitRolls.Clear();
+                lock (_gamesLock) { game.InitRolls.Clear(); }
 
                 foreach (var player in playersSnapshot)
                 {
@@ -1254,57 +1356,7 @@ public class RpgTcpServer(string ipAddress, int port)
                 return;
             }
 
-            Game? game;
-            lock (_gamesLock)
-            {
-                game = _games.FirstOrDefault(g =>
-                    g.Players.Any(p => p.Username.Equals(client.Player.Username, StringComparison.OrdinalIgnoreCase)));
-            }
-
-            if (game == null)
-            {
-                await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
-                {
-                    Message = "Non sei in nessun game attivo: impossibile tirare l'iniziativa."
-                }));
-                return;
-            }
-
-            var character = client.Player.Character;
-            int refStat = character.Stats.REF;
-
-            int combatSense = 0;
-            if (character.Role == Character.RoleType.Solo)
-            {
-                combatSense = character.Skills.TryGetValue("CombatSense", out int csLvl) ? csLvl : 0;
-            }
-
-            int cyberInit = character.Cyberware
-                .Where(cw => cw.Bonus != null && cw.Bonus.ApplyTo.Equals("INIT", StringComparison.OrdinalIgnoreCase))
-                .Sum(cw => cw.Bonus.Value);
-
-            int requestedMod = 0;
-            if (initReq != null && !string.IsNullOrWhiteSpace(initReq.Modifiers))
-            {
-                int.TryParse(initReq.Modifiers.Trim(), out requestedMod);
-            }
-
-            int dice = (int)GameDice.Roll("1d10").Total;
-            int total = refStat + combatSense + cyberInit + requestedMod + dice;
-
-            game.InitRolls.Add(new Game.Roll
-            {
-                Value = total,
-                PlayerName = character.Handle,
-                Timestamp = TimeOnly.FromDateTime(DateTime.UtcNow)
-            });
-
-            Console.WriteLine($"[INIT] {client.Player.Username} ({character.Handle}) tira iniziativa: REF {refStat} + CombatSense {combatSense} + Cyberware {cyberInit} + Mod {requestedMod} + d10 {dice} = {total}");
-
-            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
-            {
-                Message = $"Tiro di iniziativa registrato: {total} (REF {refStat} + CS {combatSense} + Cyber {cyberInit} + d10 {dice})."
-            }));
+            await ResolveInitiativeAsync(client, client.Player.Character, initReq?.Modifiers);
         }
         else
         {
@@ -1313,6 +1365,68 @@ public class RpgTcpServer(string ipAddress, int port)
                 Message = "Non sei in nessun game: unisciti a una partita con /join prima del tiro di iniziativa."
             }));
         }
+    }
+
+    /// <summary>
+    /// Tiro di iniziativa di <paramref name="actor"/> nel game di <paramref name="reporter"/> (la sessione che ha
+    /// dato il comando: il giocatore stesso, o il master che tira per un NPC). Un nuovo tiro dello stesso
+    /// personaggio sostituisce quello precedente.
+    /// </summary>
+    private async Task ResolveInitiativeAsync(ClientSession reporter, Character actor, string? modifiers)
+    {
+        Game? game;
+        lock (_gamesLock)
+        {
+            game = _games.FirstOrDefault(g => g.Players.Contains(reporter.Player));
+        }
+
+        if (game == null)
+        {
+            await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
+            {
+                Message = "Non sei in nessun game attivo: impossibile tirare l'iniziativa."
+            }));
+            return;
+        }
+
+        int refStat = actor.Stats.REF;
+
+        int combatSense = 0;
+        if (actor.Role == Character.RoleType.Solo)
+        {
+            combatSense = actor.Skills.TryGetValue("CombatSense", out int csLvl) ? csLvl : 0;
+        }
+
+        int cyberInit = actor.Cyberware
+            .Where(cw => cw.Bonus != null && cw.Bonus.ApplyTo.Equals("INIT", StringComparison.OrdinalIgnoreCase))
+            .Sum(cw => cw.Bonus.Value);
+
+        int requestedMod = 0;
+        if (!string.IsNullOrWhiteSpace(modifiers))
+        {
+            int.TryParse(modifiers.Trim(), out requestedMod);
+        }
+
+        int dice = (int)GameDice.Roll("1d10").Total;
+        int total = refStat + combatSense + cyberInit + requestedMod + dice;
+
+        lock (_gamesLock)
+        {
+            game.InitRolls.RemoveAll(r => r.PlayerName.Equals(actor.Handle, StringComparison.OrdinalIgnoreCase));
+            game.InitRolls.Add(new Game.Roll
+            {
+                Value = total,
+                PlayerName = actor.Handle,
+                Timestamp = TimeOnly.FromDateTime(DateTime.UtcNow)
+            });
+        }
+
+        Console.WriteLine($"[INIT] {reporter.Player.Username} ({actor.Handle}) tira iniziativa: REF {refStat} + CombatSense {combatSense} + Cyberware {cyberInit} + Mod {requestedMod} + d10 {dice} = {total}");
+
+        await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
+        {
+            Message = $"Tiro di iniziativa registrato per {actor.Handle}: {total} (REF {refStat} + CS {combatSense} + Cyber {cyberInit} + d10 {dice})."
+        }));
     }
 
     private async Task HandleGetCharactersAsync(ClientSession client)
@@ -1372,6 +1486,32 @@ public class RpgTcpServer(string ipAddress, int port)
                 {
                     Console.WriteLine($"[GAME] Il master '{player.Username}' ha lasciato '{game.Name}': il ruolo è di nuovo libero.");
                 }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Invia un pacchetto ai partecipanti del game di <paramref name="origin"/>; se non è in nessun game,
+    /// solo a lui. Evita che tiri, prove e movimenti di una partita siano visibili a tutte le altre.
+    /// </summary>
+    private async Task BroadcastToGameAsync(ClientSession origin, NetworkPacket packet, bool includeOrigin = true)
+    {
+        List<ClientSession> audience;
+        lock (_gamesLock)
+        {
+            var game = _games.FirstOrDefault(g => g.Players.Contains(origin.Player));
+            audience = game != null ? GetGameSessions(game) : [origin];
+        }
+
+        foreach (var session in audience)
+        {
+            if (!includeOrigin && session.Id == origin.Id) continue;
+            try
+            {
+                await session.SendPacketAsync(packet);
+            }
+            catch
+            {
             }
         }
     }

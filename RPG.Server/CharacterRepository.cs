@@ -12,6 +12,7 @@ public static class CharacterRepository
 {
     public const string CharactersFolder = "Data/Characters";
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
+    private static readonly object _saveLock = new();
 
     /// <summary>
     /// Verifica se la scheda del personaggio esiste già su disco.
@@ -121,9 +122,17 @@ public static class CharacterRepository
             Directory.CreateDirectory(absoluteDir);
 
             string fullFilePath = GetCharacterFilePath(absoluteDir, safeHandle);
-            string json = JsonSerializer.Serialize(character, JsonOpts);
 
-            File.WriteAllText(fullFilePath, json);
+            // Un solo salvataggio alla volta: due thread che scrivono lo stesso file darebbero un
+            // IOException (e un salvataggio perso). Si scrive su un file temporaneo e poi lo si sostituisce:
+            // un crash a metà scrittura non lascia una scheda troncata (che non sarebbe più caricabile).
+            lock (_saveLock)
+            {
+                string json = JsonSerializer.Serialize(character, JsonOpts);
+                string tempPath = fullFilePath + ".tmp";
+                File.WriteAllText(tempPath, json);
+                File.Move(tempPath, fullFilePath, overwrite: true);
+            }
             Console.WriteLine($"[CHAR] -> PERSISTENZA: Scheda di '{safeHandle}' salvata con successo in '{fullFilePath}'.");
         }
         catch (SecurityException)
