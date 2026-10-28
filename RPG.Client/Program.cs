@@ -1,10 +1,33 @@
 using CommandLine;
+using NAudio.Wave;
 using Spectre.Console;
 
 namespace RPG.Client;
 
 internal class Program
 {
+    static Task PlayModemAsync(string wavPath)
+    {
+        return Task.Run(() =>
+        {
+            try
+            {
+                using var reader = new AudioFileReader(wavPath);
+                using var output = new WaveOutEvent();
+                output.Init(reader);
+                output.Play();
+
+                while (output.PlaybackState == PlaybackState.Playing)
+                {
+                    Thread.Sleep(50);
+                }
+            }
+            catch
+            {
+                // fallback silenzioso: nessun audio disponibile
+            }
+        });
+    }
     static async Task<int> Main(string[] args)
     {
         var parserResult = Parser.Default.ParseArguments<ClientOptions>(args);
@@ -28,20 +51,21 @@ internal class Program
 
         var fontFiles = Directory.GetFiles("fonts", "*.flf");
 
+        _ = PlayModemAsync("audio/modem-handshake.mp3");
 
         if (fontFiles.Length == 0)
         {
             AnsiConsole.Write(
                 new FigletText("NIGHT CITY")
                     .Centered()
-                    .Color(Color.Yellow));
+                    .Color(Color.Cyan));
         }
         else {
             var font = FigletFont.Load(fontFiles[Random.Shared.Next(fontFiles.Length)]);
             AnsiConsole.Write(
                     new FigletText(font, "NIGHT CITY")
                     .Centered().
-                    Color(Color.Yellow));
+                    Color(Color.Cyan));
         }
 
         AnsiConsole.Write(new Rule("[bold cyan]NETRUNNER BBS // CYBERPUNK 2020[/]").Centered());
