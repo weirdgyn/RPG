@@ -18,7 +18,12 @@
   <ItemGroup>
     <None Update="client.settings.json" CopyToOutputDirectory="PreserveNewest" Condition="Exists('client.settings.json')" />
   </ItemGroup>
-
+  <ItemGroup>
+		<None Update="fonts\*.flf">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+	</ItemGroup>
+	
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>

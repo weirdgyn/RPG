@@ -25,10 +25,24 @@ internal class Program
         // RETRO CYBERPUNK BBS BANNER
         // ==========================================
         AnsiConsole.Clear();
-        AnsiConsole.Write(
-            new FigletText("NIGHT CITY")
-                .Centered()
-                .Color(Color.Yellow));
+
+        var fontFiles = Directory.GetFiles("fonts", "*.flf");
+
+
+        if (fontFiles.Length == 0)
+        {
+            AnsiConsole.Write(
+                new FigletText("NIGHT CITY")
+                    .Centered()
+                    .Color(Color.Yellow));
+        }
+        else {
+            var font = FigletFont.Load(fontFiles[Random.Shared.Next(fontFiles.Length)]);
+            AnsiConsole.Write(
+                    new FigletText(font, "NIGHT CITY")
+                    .Centered().
+                    Color(Color.Yellow));
+        }
 
         AnsiConsole.Write(new Rule("[bold cyan]NETRUNNER BBS // CYBERPUNK 2020[/]").Centered());
         AnsiConsole.MarkupLine($"[grey]Connessione a:[/] [bold green]{host}:{port}[/]\n");
