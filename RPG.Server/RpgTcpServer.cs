@@ -473,26 +473,38 @@ public class RpgTcpServer(string ipAddress, int port)
             int damageDealt = 0;
             string hitLocationName = string.Empty;
             int hitMultiplier = 1;
+            CombatRules.ArmorResult? armorResult = null;
 
             if (isHit)
             {
                 var damageRoll = GameDice.Roll(weaponToUse.DamageDice);
                 int rawDamage = (int)damageRoll.Total;
 
-                if (weaponToUse.Type == Weapon.WeaponType.Ranged)
+                if (weaponToUse.Type != Weapon.WeaponType.Area)
                 {
+                    // Locazione d'impatto (a distanza e in mischia) e armatura di quella zona
                     var loc = CombatRules.ResolveHitLocation((int)GameDice.Roll("1d10").Total);
                     hitLocationName = loc.Name;
                     hitMultiplier = loc.DamageMultiplier;
+
+                    armorResult = CombatRules.ApplyArmor(target.Armor.GetPiece(loc.ArmorLocation), rawDamage, loc.DamageMultiplier);
+                    damageDealt = armorResult.DamageDealt;
+                }
+                else
+                {
+                    damageDealt = rawDamage;
                 }
 
-                damageDealt = rawDamage * hitMultiplier;
                 target.Health.CurrentHealth = Math.Max(0, target.Health.CurrentHealth - damageDealt);
             }
 
+            string armorNote = armorResult is { SpFaced: > 0 }
+                ? $" Armatura SP {armorResult.SpFaced}: assorbiti {armorResult.Absorbed}{(armorResult.Ablated ? ", SP -1" : "")}."
+                : string.Empty;
+
             string hitDesc = isHit
                 ? hitLocationName.Length > 0
-                    ? $"COLPITO ({damageDealt} dmg, Impatto: {hitLocationName}{(hitMultiplier > 1 ? $" x{hitMultiplier}" : "")})"
+                    ? $"COLPITO ({damageDealt} dmg, Impatto: {hitLocationName}{(hitMultiplier > 1 ? $" x{hitMultiplier}" : "")}){armorNote}"
                     : $"COLPITO ({damageDealt} dmg)"
                 : "MANCATO";
 
@@ -512,10 +524,15 @@ public class RpgTcpServer(string ipAddress, int port)
                 DamageDealt = damageDealt,
                 HitLocation = hitLocationName,
                 DamageMultiplier = hitMultiplier,
+                ArmorSP = armorResult?.SpFaced ?? 0,
+                ArmorAbsorbed = armorResult?.Absorbed ?? 0,
+                ArmorAblated = armorResult?.Ablated ?? false,
                 TargetRemainingHealth = target.Health.CurrentHealth,
                 TargetWoundStatus = target.Health.GetWoundStatusDescription(),
                 Message = isHit
-                    ? $"COLPO A SEGNO! {attacker.Handle} usa '{weaponToUse.Name}' e infligge {damageDealt} danni ({weaponToUse.DamageDice})!{impactSuffix}"
+                    ? (damageDealt > 0
+                        ? $"COLPO A SEGNO! {attacker.Handle} usa '{weaponToUse.Name}' e infligge {damageDealt} danni ({weaponToUse.DamageDice})!{impactSuffix}{armorNote}"
+                        : $"COLPO A SEGNO, MA L'ARMATURA REGGE! {attacker.Handle} colpisce con '{weaponToUse.Name}' ({weaponToUse.DamageDice}) senza infliggere danni.{impactSuffix}{armorNote}")
                     : $"MANCATO! {attacker.Handle} fallisce l'attacco con '{weaponToUse.Name}'."
             };
 

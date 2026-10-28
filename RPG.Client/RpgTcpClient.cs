@@ -172,6 +172,11 @@ namespace RPG.Client
                                     string mult = attackResp.DamageMultiplier > 1 ? $"[bold red](danno x{attackResp.DamageMultiplier})[/]" : "";
                                     grid.AddRow(new Markup($"    Impatto: [bold yellow]{Markup.Escape(attackResp.HitLocation)}[/]{mult}"));
                                 }
+                                if (attackResp.ArmorSP > 0)
+                                {
+                                    string ablated = attackResp.ArmorAblated ? " [grey](SP -1)[/]" : "";
+                                    grid.AddRow(new Markup($"    Armatura: [bold cyan]SP {attackResp.ArmorSP}[/] assorbe [cyan]{attackResp.ArmorAbsorbed}[/]{ablated}"));
+                                }
                                 grid.AddRow(new Markup($"   Danno: [bold red]{attackResp.DamageDealt}[/]"));
                                 grid.AddRow(new Markup($"   Stato {Markup.Escape(attackResp.TargetHandle)}: [bold yellow]{attackResp.TargetRemainingHealth} HP[/] [grey]({Markup.Escape(attackResp.TargetWoundStatus)})[/]"));
                             }

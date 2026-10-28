@@ -90,6 +90,10 @@ public class AttackResponsePayload
     public string HitLocation { get; set; } = string.Empty;
     // Moltiplicatore del danno per locazione (es. Testa = 2). 1 quando non applicabile.
     public int DamageMultiplier { get; set; } = 1;
+    // Armatura sulla locazione colpita: SP affrontato (0 = nessuna protezione), danno assorbito e se l'SP è calato
+    public int ArmorSP { get; set; }
+    public int ArmorAbsorbed { get; set; }
+    public bool ArmorAblated { get; set; }
     public int TargetRemainingHealth { get; set; }
     public string TargetWoundStatus { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;

@@ -1,4 +1,5 @@
-﻿using RPG.Common.World;
+﻿using RPG.Common.Models;
+using RPG.Common.World;
 
 namespace RPG.Common;
 
@@ -30,6 +31,36 @@ public static class CombatRules
         public int Roll { get; init; }
         public string Name { get; init; } = string.Empty;
         public int DamageMultiplier { get; init; } = 1;
+        /// <summary>Locazione dell'armatura che protegge la zona colpita (braccia e gambe: un solo pezzo per lato).</summary>
+        public ArmorLocation ArmorLocation { get; init; } = ArmorLocation.Torso;
+    }
+
+    /// <summary>Esito dell'impatto contro l'armatura.</summary>
+    public sealed record ArmorResult(int DamageDealt, int SpFaced, int Absorbed, bool Ablated);
+
+    /// <summary>
+    /// Applica l'armatura al danno di un colpo a segno, nell'ordine del regolamento CP2020:
+    /// 1) si sottrae l'SP della locazione (dimezzato, arrotondato per eccesso, con proiettili perforanti);
+    /// 2) il danno che passa viene moltiplicato per la locazione (la Testa raddoppia *dopo* l'armatura);
+    /// 3) se l'armatura è penetrata, il suo SP cala di 1 (ablazione). Se il danno è tutto assorbito non succede nulla.
+    /// Modifica <paramref name="piece"/> (ablazione): chiamare sotto il lock del combattimento.
+    /// </summary>
+    public static ArmorResult ApplyArmor(ArmorPiece? piece, int rawDamage, int locationMultiplier, bool armorPiercing = false)
+    {
+        int sp = piece?.CurrentStopPower ?? 0;
+        if (armorPiercing) sp = (sp + 1) / 2;
+
+        int penetrating = Math.Max(0, rawDamage - sp);
+        int absorbed = rawDamage - penetrating;
+        bool ablated = false;
+
+        if (penetrating > 0 && piece != null && piece.CurrentStopPower > 0)
+        {
+            piece.CurrentStopPower--;
+            ablated = true;
+        }
+
+        return new ArmorResult(penetrating * locationMultiplier, sp, absorbed, ablated);
     }
     /// <summary>
     /// Mappa il roll di locazione alla zona colpita:
@@ -40,13 +71,13 @@ public static class CombatRules
     {
         return roll switch
         {
-            1 => new HitLocationResult { Roll = roll, Name = "Testa", DamageMultiplier = 2 },
-            2 or 3 or 4 => new HitLocationResult { Roll = roll, Name = "Torso", DamageMultiplier = 1 },
-            5 => new HitLocationResult { Roll = roll, Name = "Braccio Destro", DamageMultiplier = 1 },
-            6 => new HitLocationResult { Roll = roll, Name = "Braccio Sinistro", DamageMultiplier = 1 },
-            7 or 8 => new HitLocationResult { Roll = roll, Name = "Gamba Destra", DamageMultiplier = 1 },
-            9 or 10 => new HitLocationResult { Roll = roll, Name = "Gamba Sinistra", DamageMultiplier = 1 },
-            _ => new HitLocationResult { Roll = roll, Name = "Torso", DamageMultiplier = 1 }
+            1 => new HitLocationResult { Roll = roll, Name = "Testa", DamageMultiplier = 2, ArmorLocation = ArmorLocation.Head },
+            2 or 3 or 4 => new HitLocationResult { Roll = roll, Name = "Torso", DamageMultiplier = 1, ArmorLocation = ArmorLocation.Torso },
+            5 => new HitLocationResult { Roll = roll, Name = "Braccio Destro", DamageMultiplier = 1, ArmorLocation = ArmorLocation.Arms },
+            6 => new HitLocationResult { Roll = roll, Name = "Braccio Sinistro", DamageMultiplier = 1, ArmorLocation = ArmorLocation.Arms },
+            7 or 8 => new HitLocationResult { Roll = roll, Name = "Gamba Destra", DamageMultiplier = 1, ArmorLocation = ArmorLocation.Legs },
+            9 or 10 => new HitLocationResult { Roll = roll, Name = "Gamba Sinistra", DamageMultiplier = 1, ArmorLocation = ArmorLocation.Legs },
+            _ => new HitLocationResult { Roll = roll, Name = "Torso", DamageMultiplier = 1, ArmorLocation = ArmorLocation.Torso }
         };
     }
 }
