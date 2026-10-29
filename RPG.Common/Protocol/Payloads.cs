@@ -67,6 +67,8 @@ public class SkillCheckResponsePayload
     public int TotalResult { get; set; }
     public int TargetNumber { get; set; }
     public bool IsSuccess { get; set; }
+    // 1 naturale sul primo d10: fallimento automatico
+    public bool IsFumble { get; set; }
     public string Message { get; set; } = string.Empty;
 }
 
@@ -85,6 +87,8 @@ public class AttackResponsePayload
     public int AttackTotal { get; set; }
     public int DefenseTN { get; set; }
     public bool IsHit { get; set; }
+    // 1 naturale sul primo d10: mancato automatico
+    public bool IsFumble { get; set; }
     public int DamageDealt { get; set; }
     // Locazione di impatto (tavola d10): vuoto se l'attacco non è a segno o non applicabile
     public string HitLocation { get; set; } = string.Empty;

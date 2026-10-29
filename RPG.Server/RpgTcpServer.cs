@@ -568,7 +568,10 @@ public class RpgTcpServer(string ipAddress, int port)
             }
 
             string skillName = weaponToUse.SkillName;
-            string statName = Skills.GetStatForSkill(skillName);
+            if (!Skills.TryGetStatForSkill(skillName, out string statName))
+            {
+                return new AttackOutcome($"L'abilità '{skillName}' di {weaponToUse.Name} non è riconosciuta: scheda o arma non valida.", null, null);
+            }
 
             int attackerStat = attacker.Stats.GetStatValue(statName);
             int attackerSkillLvl = attacker.Skills.TryGetValue(skillName, out int lvl) ? lvl : 0;
@@ -624,12 +627,15 @@ public class RpgTcpServer(string ipAddress, int port)
                 attackTypeDesc = $"In Mischia con {weaponToUse.Name} -> Difesa Bersaglio (REF {targetRef} + Schivare {targetDodge}): TN {targetNumber}";
             }
 
-            int diceVal = GameDice.RollExplodingD10();
+            var attackRoll = GameDice.RollExplodingD10Detailed();
+            int diceVal = attackRoll.Total;
             int weaponModifier = weaponToUse.GetAttackModifier();
             int cyberHit = SumCyberBonus(attacker, "HIT");
             int attackTotal = attackerStat + attackerSkillLvl + attackerPenalty + weaponModifier + cyberHit + diceVal;
 
-            bool isHit = attackTotal >= targetNumber;
+            // Un 1 naturale sul primo dado è un fallimento critico: manca comunque (il colpo sparato è perso)
+            bool isFumble = attackRoll.IsFumble;
+            bool isHit = !isFumble && attackTotal >= targetNumber;
             int damageDealt = 0;
             string hitLocationName = string.Empty;
             int hitMultiplier = 1;
@@ -667,7 +673,7 @@ public class RpgTcpServer(string ipAddress, int port)
                 ? hitLocationName.Length > 0
                     ? $"COLPITO ({damageDealt} dmg, Impatto: {hitLocationName}{(hitMultiplier > 1 ? $" x{hitMultiplier}" : "")}){armorNote}"
                     : $"COLPITO ({damageDealt} dmg)"
-                : "MANCATO";
+                : isFumble ? "FALLIMENTO CRITICO" : "MANCATO";
 
             string log = $"[COMBAT] {attacker.Handle} attacca {target.Handle} con '{weaponToUse.Name}'. {attackTypeDesc}. Tiro: {attackTotal} (d10 {diceVal}, arma {weaponModifier:+0;-0;+0}, cyber {cyberHit:+0;-0;+0}) vs TN {targetNumber}. {hitDesc}{(weaponToUse.UsesAmmo ? $" Colpi: {weaponToUse.CurrentAmmo}/{weaponToUse.MagazineCapacity}." : "")}";
 
@@ -678,6 +684,7 @@ public class RpgTcpServer(string ipAddress, int port)
                 AttackTotal = attackTotal,
                 DefenseTN = targetNumber,
                 IsHit = isHit,
+                IsFumble = isFumble,
                 DamageDealt = damageDealt,
                 HitLocation = hitLocationName,
                 DamageMultiplier = hitMultiplier,
@@ -696,7 +703,9 @@ public class RpgTcpServer(string ipAddress, int port)
                     ? (damageDealt > 0
                         ? $"COLPO A SEGNO! {attacker.Handle} usa '{weaponToUse.Name}' e infligge {damageDealt} danni ({weaponToUse.DamageDice})!"
                         : $"COLPO A SEGNO, MA L'ARMATURA REGGE! {attacker.Handle} colpisce con '{weaponToUse.Name}' ({weaponToUse.DamageDice}) senza infliggere danni.")
-                    : $"MANCATO! {attacker.Handle} fallisce l'attacco con '{weaponToUse.Name}'."
+                    : isFumble
+                        ? $"FALLIMENTO CRITICO! {attacker.Handle} sbaglia clamorosamente con '{weaponToUse.Name}'."
+                        : $"MANCATO! {attacker.Handle} fallisce l'attacco con '{weaponToUse.Name}'."
             };
 
             return new AttackOutcome(null, respPayload, log, ammoSpent);
@@ -948,19 +957,27 @@ public class RpgTcpServer(string ipAddress, int port)
     private async Task ResolveSkillCheckAsync(ClientSession reporter, Character actor, SkillCheckRequestPayload skillReq)
     {
         string skillName = InputLimits.Clean(skillReq.SkillName, InputLimits.MaxNameFieldLength);
-        string statName = Skills.GetStatForSkill(skillName);
+        if (!Skills.TryGetStatForSkill(skillName, out string statName))
+        {
+            await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
+            {
+                Message = $"Abilità '{skillName}' sconosciuta: usa /skills per l'elenco."
+            }));
+            return;
+        }
 
         int statVal = actor.Stats.GetStatValue(statName);
         int skillLvl = actor.Skills.TryGetValue(skillName, out int lvl) ? lvl : 0;
         int penalty = actor.Health.GetWoundPenalty();
 
-        var roll = GameDice.Roll("1d10");
-        int diceVal = (int)roll.Total;
+        var roll = GameDice.RollExplodingD10Detailed();
+        int diceVal = roll.Total;
         int totalResult = statVal + skillLvl + penalty + diceVal;
-        bool isSuccess = totalResult >= skillReq.Difficulty;
+        bool isFumble = roll.IsFumble;
+        bool isSuccess = !isFumble && totalResult >= skillReq.Difficulty;
 
-        string outcome = isSuccess ? "SUCCESSO" : "FALLIMENTO";
-        Console.WriteLine($"[SKILL] {actor.Handle} prova '{skillName}' ({statName}:{statVal} + Lvl:{skillLvl} + d10:{diceVal} - Pen:{Math.Abs(penalty)}) = {totalResult} vs TN {skillReq.Difficulty} -> {outcome}");
+        string outcome = isFumble ? "FALLIMENTO CRITICO" : isSuccess ? "SUCCESSO" : "FALLIMENTO";
+        Console.WriteLine($"[SKILL] {actor.Handle} prova '{skillName}' ({statName}:{statVal} + Lvl:{skillLvl} + d10:{diceVal}{(roll.Exploded ? " esploso" : "")} - Pen:{Math.Abs(penalty)}) = {totalResult} vs TN {skillReq.Difficulty} -> {outcome}");
 
         var respPayload = new SkillCheckResponsePayload
         {
@@ -973,6 +990,7 @@ public class RpgTcpServer(string ipAddress, int port)
             TotalResult = totalResult,
             TargetNumber = skillReq.Difficulty,
             IsSuccess = isSuccess,
+            IsFumble = isFumble,
             Message = $"{actor.Handle} effettua una prova di {skillName} ({statName}): {totalResult} vs TN {skillReq.Difficulty} -> {outcome}!"
         };
 

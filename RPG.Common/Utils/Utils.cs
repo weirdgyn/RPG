@@ -65,19 +65,35 @@ public static class GameDice
     /// continuando finché escono altri 10. (La sintassi "1d10!" della libreria non è
     /// registrata di default: l'esplosione è implementata qui in modo esplicito e fedele).
     /// </summary>
-    public static int RollExplodingD10()
+    public static int RollExplodingD10() => RollExplodingD10Detailed().Total;
+
+    /// <summary>
+    /// Come <see cref="RollExplodingD10"/> ma conserva il primo dado: un 1 naturale è un fallimento critico
+    /// (fumble) e non si ritira. <paramref name="DiceCount"/> è il numero di dadi tirati (&gt;1 = esplosione).
+    /// </summary>
+    public readonly record struct D10Roll(int Total, int FirstDie, int DiceCount)
+    {
+        public bool IsFumble => FirstDie == 1;
+        public bool Exploded => DiceCount > 1;
+    }
+
+    public static D10Roll RollExplodingD10Detailed()
     {
         const int maxChain = 20; // guardia anti-loop (~1/10^20, puramente cautelativa)
         int total = 0;
         int chain = maxChain;
+        int first = 0;
+        int dice = 0;
         int roll;
         do
         {
             roll = (int)Roller.Roll("1d10").Value;
+            if (dice == 0) first = roll;
             total += roll;
+            dice++;
             chain--;
         } while (roll == 10 && chain > 0);
 
-        return total;
+        return new D10Roll(total, first, dice);
     }
 }

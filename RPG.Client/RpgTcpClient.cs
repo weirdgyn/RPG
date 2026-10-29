@@ -225,7 +225,8 @@ namespace RPG.Client
                     {
                         PrintServerOutput(() =>
                         {
-                            string icon = skillResp.IsSuccess ? "[bold green] SUCCESSO[/]" : "[bold red] FALLIMENTO[/]";
+                            string icon = skillResp.IsFumble ? "[bold red] FALLIMENTO CRITICO[/]"
+                                : skillResp.IsSuccess ? "[bold green] SUCCESSO[/]" : "[bold red] FALLIMENTO[/]";
                             var grid = new Grid();
                             grid.AddColumn();
                             grid.AddRow(new Markup($"[bold cyan]{Markup.Escape(skillResp.CharacterHandle)}[/] prova [bold yellow]{Markup.Escape(skillResp.SkillName)}[/] ({skillResp.StatName})"));

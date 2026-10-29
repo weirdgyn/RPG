@@ -81,6 +81,24 @@ public static class Skills
         Console.WriteLine($"[CONFIG] -> Fallback attivo: {_skillToStatMap.Count} abilità caricate da codice.");
     }
 
+    /// <summary>True (con la statistica associata) solo per le abilità presenti nella mappa.</summary>
+    public static bool TryGetStatForSkill(string skillName, out string stat)
+    {
+        if (!_isInitialized)
+        {
+            Initialize();
+        }
+
+        if (!string.IsNullOrWhiteSpace(skillName) && _skillToStatMap.TryGetValue(skillName, out var found))
+        {
+            stat = found;
+            return true;
+        }
+
+        stat = string.Empty;
+        return false;
+    }
+
     public static string GetStatForSkill(string skillName)
     {
         // Assicurazione di sicurezza: se per qualsiasi motivo non è stato inizializzato, lo fa al volo
