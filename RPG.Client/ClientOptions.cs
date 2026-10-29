@@ -19,4 +19,7 @@ public class ClientOptions
 
     [Option('i', "intro", HelpText = "Mostra la sequenza intro.")]
     public bool Intro { get; set; } = false;
+
+    [Option('f', "font", HelpText = "Figlet banner font.")]
+    public string Font { get; set; } = string.Empty;
 }

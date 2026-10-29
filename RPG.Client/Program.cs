@@ -6,17 +6,17 @@ namespace RPG.Client;
 
 internal class Program
 {
-    private static async Task ShowBootSequenceAsync()
+    private static async Task ShowBootSequenceAsync(string overrideFont="")
     {
         AnsiConsole.Clear();
 
-        Console.CursorVisible = false;
-
         ConsoleColor previousForeground = Console.ForegroundColor;
         ConsoleColor previousBackground = Console.BackgroundColor;
+        bool previousCursorVisible = Console.CursorVisible;
 
         Console.BackgroundColor = ConsoleColor.Black;
         Console.ForegroundColor = ConsoleColor.Green;
+        Console.CursorVisible = false;
 
         try
         {
@@ -33,107 +33,145 @@ internal class Program
                 "modem-handshake.mp3");
 
             /*
-             * FASE 1
+             * =================================================
+             * FASE 1: COMPOSIZIONE
+             * =================================================
              *
-             * Composizione del numero.
+             * Il cursore solido avanza durante la scrittura
+             * di DIALING...
+             *
+             * Poi lampeggia per tutta la durata del relativo
+             * effetto sonoro.
              */
-            await RunAudioPhaseAsync(
-                prompt: "DIALING",
-                audioPath: dialingAudioPath,
-                typingDelayMs: 110);
+
+            await TypeTextWithSolidCursorAsync(
+                text: "DIALING...",
+                averageDelayMs: 100);
+
+            Task dialingTask = PlayAudioAsync(
+                dialingAudioPath);
+
+            await BlinkSolidCursorUntilCompletedAsync(
+                dialingTask);
+
+            await dialingTask;
 
             Console.WriteLine();
+
 
             /*
-             * FASE 2
-             *
-             * Handshake e negoziazione del protocollo.
+             * =================================================
+             * FASE 2: HANDSHAKE E NEGOZIAZIONE
+             * =================================================
              */
-            await RunAudioPhaseAsync(
-                prompt: "NEGOTIATING PROTOCOL",
-                audioPath: handshakeAudioPath,
-                typingDelayMs: 65);
+
+            await TypeTextWithSolidCursorAsync(
+                text: "NEGOTIATING PROTOCOL...",
+                averageDelayMs: 70);
+
+            Task handshakeTask = PlayAudioAsync(
+                handshakeAudioPath);
+
+            await BlinkSolidCursorUntilCompletedAsync(
+                handshakeTask);
+
+            await handshakeTask;
 
             Console.WriteLine();
-            Console.WriteLine();
+
 
             /*
-             * FASE 3
+             * =================================================
+             * FASE 3: RISULTATO DELLA NEGOZIAZIONE
+             * =================================================
              *
-             * Connessione stabilita.
+             * Questi messaggi appaiono soltanto dopo che
+             * modem-handshake.mp3 è terminato.
              */
+
+            await Task.Delay(250);
+
+            await TypeTextWithSolidCursorAsync(
+                text: "REMOTE SYSTEM IDENTIFIED",
+                averageDelayMs: 45);
+
+            Console.WriteLine();
+
+            await Task.Delay(300);
+
+            await TypeTextWithSolidCursorAsync(
+                text: "ESTABLISHING UPLINK...",
+                averageDelayMs: 55);
+
+            Console.WriteLine();
+
+            await Task.Delay(400);
+
             Console.ForegroundColor = ConsoleColor.White;
 
-            await TypeTextAsync(
-                "CONNECTION ESTABLISHED",
+            await TypeTextWithSolidCursorAsync(
+                text: "CONNECTION ESTABLISHED",
                 averageDelayMs: 55);
 
             Console.ForegroundColor = ConsoleColor.Green;
 
-            await Task.Delay(750);
+            /*
+             * Piccola pausa drammatica prima del banner.
+             * Tecnicamente inutile, artisticamente necessaria.
+             */
+
+            await Task.Delay(1200);
+
 
             /*
-             * Transizione verso il client.
+             * =================================================
+             * BANNER DELLA BBS
+             * =================================================
              */
-            Console.Clear();
+
+            AnsiConsole.Clear();
 
             AnsiConsole.Write(
-                BuildRandomBanner("NIGHT CITY"));
+                BuildRandomBanner("NIGHT CITY", overrideFont));
 
             AnsiConsole.Write(
                 new Rule(
-                    "[bold cyan]NETRUNNER BBS // CYBERPUNK 2020[/]")
-                    .Centered());
+                    "[bold cyan]" +
+                    "NETRUNNER BBS // CYBERPUNK 2020" +
+                    "[/]")
+                .Centered());
         }
         finally
         {
             Console.ForegroundColor = previousForeground;
             Console.BackgroundColor = previousBackground;
-            Console.CursorVisible = true;
+            Console.CursorVisible = previousCursorVisible;
         }
     }
 
-    private static async Task RunAudioPhaseAsync(
-        string prompt,
-        string audioPath,
-        int typingDelayMs)
-    {
-        /*
-         * Prima compare il prompt.
-         */
-        await TypeTextAsync(
-            prompt,
-            typingDelayMs);
-
-        /*
-         * Poi parte il relativo effetto sonoro.
-         *
-         * Il Task termina quando termina effettivamente
-         * la riproduzione del file audio.
-         */
-        Task audioTask = PlayAudioAsync(audioPath);
-
-        /*
-         * Il cursore lampeggia finché il file audio
-         * è in riproduzione.
-         */
-        await BlinkCursorUntilCompletedAsync(audioTask);
-
-        /*
-         * Propaga eventuali eccezioni non gestite
-         * e garantisce la conclusione del Task.
-         */
-        await audioTask;
-    }
-
-    private static async Task TypeTextAsync(
+    /// <summary>
+    /// Scrive il testo carattere per carattere mantenendo
+    /// un cursore solido immediatamente dopo l'ultimo carattere.
+    ///
+    /// Esempio:
+    ///
+    /// █
+    /// D█
+    /// DI█
+    /// DIA█
+    /// DIAL█
+    /// </summary>
+    private static async Task TypeTextWithSolidCursorAsync(
         string text,
         int averageDelayMs)
     {
+        /*
+         * Disegna il cursore nella posizione iniziale.
+         */
+        Console.Write('█');
+
         foreach (char character in text)
         {
-            Console.Write(character);
-
             int variation = Math.Max(
                 1,
                 averageDelayMs / 3);
@@ -150,10 +188,34 @@ internal class Program
                 maximumDelay);
 
             await Task.Delay(delay);
+
+            /*
+             * Il blocco si trova nella posizione in cui deve
+             * comparire il prossimo carattere.
+             *
+             * \b         torna sopra il blocco
+             * character  sostituisce il blocco con la lettera
+             * █          disegna il blocco nella posizione seguente
+             */
+            Console.Write('\b');
+            Console.Write(character);
+            Console.Write('█');
         }
+
+        /*
+         * Rimuove il blocco finale.
+         *
+         * La posizione logica della console resta subito dopo
+         * l'ultimo carattere scritto, pronta per il lampeggio.
+         */
+        EraseSolidCursor();
     }
 
-    private static async Task BlinkCursorUntilCompletedAsync(
+    /// <summary>
+    /// Fa lampeggiare il cursore solido fino al completamento
+    /// del Task monitorato, normalmente la riproduzione audio.
+    /// </summary>
+    private static async Task BlinkSolidCursorUntilCompletedAsync(
         Task monitoredTask)
     {
         const int visibleDurationMs = 380;
@@ -171,16 +233,15 @@ internal class Program
                 Task.Delay(visibleDurationMs));
 
             /*
-             * Cancella soltanto il cursore:
-             *
-             * \b   torna indietro
-             * ' '  sovrascrive il blocco
-             * \b   torna nuovamente nella posizione corretta
+             * Il cursore deve essere cancellato anche quando
+             * il Task termina durante la fase visibile.
              */
-            Console.Write("\b \b");
+            EraseSolidCursor();
 
             if (monitoredTask.IsCompleted)
+            {
                 break;
+            }
 
             /*
              * Cursore spento.
@@ -191,7 +252,21 @@ internal class Program
         }
     }
 
-    private static Task PlayAudioAsync(string audioPath)
+    /// <summary>
+    /// Cancella il cursore solido e riporta la posizione
+    /// di scrittura nella stessa colonna.
+    /// </summary>
+    private static void EraseSolidCursor()
+    {
+        Console.Write("\b \b");
+    }
+
+    /// <summary>
+    /// Riproduce un file audio e completa il Task quando
+    /// la riproduzione è terminata.
+    /// </summary>
+    private static Task PlayAudioAsync(
+        string audioPath)
     {
         return Task.Run(() =>
         {
@@ -222,47 +297,54 @@ internal class Program
                 /*
                  * Fallback silenzioso.
                  *
-                 * Se l'audio non può essere riprodotto,
-                 * l'applicazione continua comunque.
+                 * Se il file non esiste, il dispositivo audio
+                 * non è disponibile o NAudio genera un errore,
+                 * l'introduzione prosegue senza audio.
                  */
             }
         });
     }
 
     private static FigletText BuildRandomBanner(
-        string text)
+        string text, string overrideFont="")
     {
-        string fontDirectory = Path.Combine(
-            AppContext.BaseDirectory,
-            "Fonts");
+        string selectedFont;
+        FigletFont font;
 
-        if (!Directory.Exists(fontDirectory))
+        if (string.IsNullOrWhiteSpace(overrideFont))
         {
-            return new FigletText(text)
-                .Centered()
-                .Color(Color.Yellow);
+            string fontDirectory = Path.Combine(
+                AppContext.BaseDirectory,
+                "Fonts");
+
+            if (!Directory.Exists(fontDirectory))
+            {
+                return new FigletText(text)
+                    .Centered()
+                    .Color(Color.Yellow);
+            }
+
+            string[] fonts = Directory.GetFiles(
+                fontDirectory,
+                "*.flf");
+
+            if (fonts.Length == 0)
+            {
+                return new FigletText(text)
+                    .Centered()
+                    .Color(Color.Yellow);
+            }
+
+            selectedFont = fonts[
+                Random.Shared.Next(fonts.Length)];
         }
+        else selectedFont = overrideFont;
 
-        string[] fonts = Directory.GetFiles(
-            fontDirectory,
-            "*.flf");
-
-        if (fonts.Length == 0)
-        {
-            return new FigletText(text)
-                .Centered()
-                .Color(Color.Yellow);
-        }
-
-        string selectedFont = fonts[
-            Random.Shared.Next(fonts.Length)];
-
-        FigletFont font =
-            FigletFont.Load(selectedFont);
+        font = FigletFont.Load(selectedFont);
 
         return new FigletText(font, text)
             .Centered()
-            .Color(Color.Yellow);
+            .Color(Color.Cyan);
     }
 
     private static async Task<int> Main(
@@ -275,7 +357,7 @@ internal class Program
         /*
          * Se l'utente ha passato --help, -? oppure
          * argomenti errati, CommandLineParser mostra
-         * la guida ed esce con NotParsed.
+         * la guida ed esce restituendo NotParsed.
          */
         if (parserResult.Tag ==
             ParserResultType.NotParsed)
@@ -288,7 +370,7 @@ internal class Program
 
         if (options.Intro)
         {
-            await ShowBootSequenceAsync();
+            await ShowBootSequenceAsync(options.Font);
         }
 
         /*
@@ -308,7 +390,9 @@ internal class Program
         var client = new RpgTcpClient();
 
         bool connected =
-            await client.ConnectAsync(host, port);
+            await client.ConnectAsync(
+                host,
+                port);
 
         if (!connected)
         {
