@@ -576,7 +576,7 @@ public class RpgTcpServer(string ipAddress, int port)
             double deviation = 0;
             if (!onTarget)
             {
-                deviation = GameDice.Roll("1d10").Total * (roll.IsFumble ? 2 : 1);
+                deviation = (double)GameDice.Roll("1d10").Total * (roll.IsFumble ? 2 : 1);
                 double angle = Random.Shared.NextDouble() * 2 * Math.PI;
                 landed.X += (int)Math.Round(deviation * Math.Cos(angle));
                 landed.Y += (int)Math.Round(deviation * Math.Sin(angle));
