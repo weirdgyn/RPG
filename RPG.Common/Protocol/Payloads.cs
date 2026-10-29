@@ -270,6 +270,37 @@ public class InitRequest
 }
 
 /// <summary>Notifica S2C inviata dal master ai giocatori per avviare il tiro di iniziativa.</summary>
+public class CheckRequestPayload
+{
+    // "skill", "init", "status", "close", "cancel"
+    public string Action { get; set; } = string.Empty;
+    public string SkillName { get; set; } = string.Empty;
+    public int TargetNumber { get; set; }
+    // Personaggi iscritti; vuoto = tutti i personaggi del game (giocatori e NPC)
+    public List<string> Handles { get; set; } = [];
+}
+
+public class CheckEntryResult
+{
+    public string Handle { get; set; } = string.Empty;
+    public bool HasRoll { get; set; }
+    public int Total { get; set; }
+    public bool IsFumble { get; set; }
+    public bool IsSuccess { get; set; }
+    // Posizione nell'ordine di gioco (1 = agisce per primo); 0 per le prove di abilità o senza tiro
+    public int Position { get; set; }
+}
+
+public class CheckResultPayload
+{
+    public bool IsInitiative { get; set; }
+    public string SkillName { get; set; } = string.Empty;
+    public int TargetNumber { get; set; }
+    // Chiuso dal master prima che tutti avessero tirato
+    public bool Forced { get; set; }
+    public List<CheckEntryResult> Entries { get; set; } = [];
+}
+
 public class InitRollRequestPayload
 {
     public string Message { get; set; } = string.Empty;

@@ -533,6 +533,58 @@ namespace RPG.Client
                     }
                     break;
 
+                case OpCode.S2C_CheckResult:
+                    var checkResp = packet.DeserializePayload<CheckResultPayload>();
+                    if (checkResp != null)
+                    {
+                        PrintServerOutput(() =>
+                        {
+                            var table = new Table().Border(TableBorder.Rounded).BorderColor(checkResp.IsInitiative ? Color.Yellow : Color.Magenta1);
+                            string header;
+
+                            if (checkResp.IsInitiative)
+                            {
+                                header = "[bold yellow] ORDINE DI INIZIATIVA [/]";
+                                table.AddColumn(new TableColumn("[bold yellow]#[/]").Centered());
+                                table.AddColumn(new TableColumn("[bold cyan]Personaggio[/]"));
+                                table.AddColumn(new TableColumn("[bold white]Iniziativa[/]").Centered());
+                                foreach (var e in checkResp.Entries)
+                                {
+                                    table.AddRow(
+                                        e.HasRoll ? e.Position.ToString() : "-",
+                                        Markup.Escape(e.Handle),
+                                        e.HasRoll ? e.Total.ToString() : "[grey]nessun tiro[/]");
+                                }
+                            }
+                            else
+                            {
+                                header = $"[bold magenta] PROVA DI {Markup.Escape(checkResp.SkillName.ToUpperInvariant())} (TN {checkResp.TargetNumber}) [/]";
+                                table.AddColumn(new TableColumn("[bold cyan]Personaggio[/]"));
+                                table.AddColumn(new TableColumn("[bold white]Tiro[/]").Centered());
+                                table.AddColumn(new TableColumn("[bold white]Esito[/]"));
+                                foreach (var e in checkResp.Entries)
+                                {
+                                    string outcome = !e.HasRoll ? "[grey]nessun tiro[/]"
+                                        : e.IsFumble ? "[bold red]FALLIMENTO CRITICO[/]"
+                                        : e.IsSuccess ? "[bold green]SUCCESSO[/]" : "[red]FALLIMENTO[/]";
+                                    table.AddRow(Markup.Escape(e.Handle), e.HasRoll ? e.Total.ToString() : "-", outcome);
+                                }
+                            }
+
+                            var panel = new Panel(table)
+                            {
+                                Header = new PanelHeader(header),
+                                Border = BoxBorder.Rounded
+                            };
+                            AnsiConsole.Write(panel);
+                            if (checkResp.Forced)
+                            {
+                                AnsiConsole.MarkupLine("[grey]Check chiuso dal master prima che tutti tirassero.[/]");
+                            }
+                        });
+                    }
+                    break;
+
                 case OpCode.S2C_GamesResponse:
                     var gamesResp = packet.DeserializePayload<GamesResponsePayload>();
                     if (gamesResp != null)
@@ -584,6 +636,38 @@ namespace RPG.Client
                 default:
                     PrintServerOutput(() => AnsiConsole.MarkupLine($"[grey][[PACKET]][/] Ricevuto OpCode: [yellow]{packet.OpCode}[/]"));
                     break;
+            }
+        }
+
+        /// <summary>
+        /// Costruisce la richiesta /check dai token del comando (personaggi separati da spazi e/o virgole).
+        /// Restituisce null se i parametri non sono validi.
+        /// </summary>
+        private static CheckRequestPayload? BuildCheckRequest(string[] parts)
+        {
+            if (parts.Length < 2) return null;
+
+            string verb = parts[1].ToLowerInvariant();
+            string[] SplitHandles(int from) => string.Join(' ', parts.Skip(from))
+                .Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            switch (verb)
+            {
+                case "skill" when parts.Length >= 4 && int.TryParse(parts[3], out int tn):
+                    return new CheckRequestPayload { Action = "skill", SkillName = parts[2], TargetNumber = tn, Handles = [.. SplitHandles(4)] };
+
+                case "init":
+                case "initiative":
+                case "iniziativa":
+                    return new CheckRequestPayload { Action = "init", Handles = [.. SplitHandles(2)] };
+
+                case "status":
+                case "close":
+                case "cancel":
+                    return new CheckRequestPayload { Action = verb };
+
+                default:
+                    return null;
             }
         }
 
@@ -688,7 +772,8 @@ namespace RPG.Client
                 table.AddRow("[bold white]/roll[/]", "[cyan]<espressione> [[motivo]][/]", "Tiro di dadi personalizzato (es. /roll 2d6+3 Danno)");
                 table.AddRow("[bold white]/move[/]", "[cyan]<X> <Y> [[Z]][/]", "Muove il personaggio nello spazio 3D");
                 table.AddRow("[bold white]/chat[/]", "[cyan]\"msg\" [[user]][/]", "Messaggio broadcast o privato");
-                table.AddRow("[bold white]/init[/]", "[cyan][[modificatore]][/]", "Tiro di iniziativa / avvio turno di combattimento");
+                table.AddRow("[bold white]/init[/]", "[cyan][[modificatore]][/]", "Tiro di iniziativa (il master: avvia il tiro per tutti, come /check init)");
+                table.AddRow("[bold white]/check[/]", "[cyan]skill <abilità> <TN> [[pg]] | init [[pg]] | status | close | cancel[/]", "Master: prova collettiva con spoglio finale (abilità o iniziativa)");
                 table.AddRow("[bold white]/ping[/]", "[grey]-[/]", "Verifica latenza di rete con il server (RTT)");
                 table.AddRow("[bold white]/help[/]", "[grey]-[/]", "Mostra questo menu dei comandi");
                 table.AddRow("[bold white]/exit[/]", "[grey]-[/]", "Disconnettiti ed esci da Night City");
@@ -1030,6 +1115,21 @@ namespace RPG.Client
                 if (trimmedInput.Equals("/characters", StringComparison.OrdinalIgnoreCase))
                 {
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetCharacters, new { })));
+                    continue;
+                }
+
+                if (trimmedInput.Equals("/check", StringComparison.OrdinalIgnoreCase)
+                    || trimmedInput.StartsWith("/check ", StringComparison.OrdinalIgnoreCase))
+                {
+                    var checkReq = BuildCheckRequest(trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+                    if (checkReq == null)
+                    {
+                        AnsiConsole.MarkupLine("[bold red][[!]]: Uso:[/] [yellow]/check skill <abilità> <TN> [[personaggi]][/] | [yellow]/check init [[personaggi]][/] | [yellow]/check status[/] | [yellow]/check close[/] | [yellow]/check cancel[/]");
+                    }
+                    else
+                    {
+                        await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_Check, checkReq)));
+                    }
                     continue;
                 }
 

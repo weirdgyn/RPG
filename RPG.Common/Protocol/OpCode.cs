@@ -12,6 +12,7 @@ public enum OpCode
     C2S_GetSkills = 60,
     C2S_Attack = 70,        // Richiesta di attacco verso un altro player
     C2S_SkillCheck = 80,
+    C2S_Check = 89,         // Il master apre/chiude una prova collettiva (abilità o iniziativa)
     C2S_GetPlayers = 90,    // Richiesta della lista dei giocatori online
     C2S_Reload = 91,        // Ricaricare l'arma in pugno (opz. scegliendo il tipo di munizioni)
     C2S_Npc = 92,           // Gestione NPC del game (solo master): create, list, remove, status
@@ -41,6 +42,7 @@ public enum OpCode
     S2C_JoinResponse = 210,     // Risposta alla richiesta di entrare in un game
     S2C_LeaveResponse = 211,    // Risposta alla richiesta di uscire da un game
     S2C_InitRollRequest = 220,
+    S2C_CheckResult = 221,      // Spoglio di un check (esiti di gruppo oppure ordine di iniziativa)
     S2C_GamesResponse = 230,
     S2C_CharactersResponse = 240
 }

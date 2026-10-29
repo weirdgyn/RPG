@@ -117,7 +117,7 @@ public class RpgTcpServer(string ipAddress, int port)
         {
             _connectedClients.TryRemove(client.Id, out _);
             client.TcpClient.Close();
-            var masterNotices = RemovePlayerFromGames(client.Player);
+            var masterNotices = RemovePlayerFromGames(client.Player, out var completedChecks);
 
             string userName = !string.IsNullOrEmpty(client.Player.Username) ? client.Player.Username : client.IdShort;
             Console.WriteLine($"[SERVER] Client disconnesso: {userName}");
@@ -131,6 +131,12 @@ public class RpgTcpServer(string ipAddress, int port)
                 foreach (var (gameName, remaining) in masterNotices)
                 {
                     await NotifyPlayersAsync(remaining, $"Il master {userName} si è disconnesso da '{gameName}': il ruolo di master è libero.");
+                }
+
+                // Un check in attesa solo di chi si è disconnesso va spogliato con chi è rimasto
+                foreach (var (checkGame, checkDone) in completedChecks)
+                {
+                    await FinalizeCheckAsync(checkGame, checkDone, forced: false);
                 }
             }
         }
@@ -157,6 +163,9 @@ public class RpgTcpServer(string ipAddress, int port)
                 break;
             case OpCode.C2S_Reload:
                 await HandleReloadAsync(client, packet);
+                break;
+            case OpCode.C2S_Check:
+                await HandleCheckAsync(client, packet);
                 break;
             case OpCode.C2S_Roll:
                 await HandleRollAsync(client, packet);
@@ -954,10 +963,25 @@ public class RpgTcpServer(string ipAddress, int port)
         await ResolveSkillCheckAsync(client, client.Player.Character!, skillReq);
     }
 
+    private sealed record SkillRollResult(string StatName, int StatValue, int SkillLevel, int Penalty, GameDice.D10Roll Dice, int Total);
+
+    // Tiro di abilità (d10 esplosivo + stat + livello + penalità ferite); null se l'abilità non esiste
+    private static SkillRollResult? RollSkill(Character actor, string skillName)
+    {
+        if (!Skills.TryGetStatForSkill(skillName, out string statName)) return null;
+
+        int statVal = actor.Stats.GetStatValue(statName);
+        int skillLvl = actor.Skills.TryGetValue(skillName, out int lvl) ? lvl : 0;
+        int penalty = actor.Health.GetWoundPenalty();
+        var dice = GameDice.RollExplodingD10Detailed();
+        return new SkillRollResult(statName, statVal, skillLvl, penalty, dice, statVal + skillLvl + penalty + dice.Total);
+    }
+
     private async Task ResolveSkillCheckAsync(ClientSession reporter, Character actor, SkillCheckRequestPayload skillReq)
     {
         string skillName = InputLimits.Clean(skillReq.SkillName, InputLimits.MaxNameFieldLength);
-        if (!Skills.TryGetStatForSkill(skillName, out string statName))
+        var rolled = RollSkill(actor, skillName);
+        if (rolled == null)
         {
             await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
             {
@@ -966,14 +990,41 @@ public class RpgTcpServer(string ipAddress, int port)
             return;
         }
 
-        int statVal = actor.Stats.GetStatValue(statName);
-        int skillLvl = actor.Skills.TryGetValue(skillName, out int lvl) ? lvl : 0;
-        int penalty = actor.Health.GetWoundPenalty();
-
-        var roll = GameDice.RollExplodingD10Detailed();
+        string statName = rolled.StatName;
+        int statVal = rolled.StatValue;
+        int skillLvl = rolled.SkillLevel;
+        int penalty = rolled.Penalty;
+        var roll = rolled.Dice;
         int diceVal = roll.Total;
-        int totalResult = statVal + skillLvl + penalty + diceVal;
+        int totalResult = rolled.Total;
         bool isFumble = roll.IsFumble;
+
+        // Se il master ha aperto un check su questa abilità per questo personaggio, il tiro va allo spoglio
+        // (il TN è quello del check) e non viene mostrato agli altri finché non hanno tirato tutti.
+        Game? checkGame;
+        lock (_gamesLock)
+        {
+            checkGame = _games.FirstOrDefault(g => g.Players.Contains(reporter.Player));
+        }
+
+        if (checkGame != null)
+        {
+            CheckRegistration reg;
+            Game.Check? completed;
+            lock (_gamesLock)
+            {
+                reg = RegisterCheckRoll(checkGame, Game.CheckKind.Skill, skillName, actor.Handle, totalResult, isFumble, out completed);
+            }
+
+            if (reg != CheckRegistration.NotInCheck)
+            {
+                Console.WriteLine($"[CHECK] {actor.Handle} tira '{skillName}' ({statName}:{statVal} + Lvl:{skillLvl} + d10:{diceVal}{(roll.Exploded ? " esploso" : "")} - Pen:{Math.Abs(penalty)}) = {totalResult} ({reg})");
+                await ReplyCheckRegistrationAsync(reporter, actor, reg, $"prova di {skillName}");
+                if (completed != null) await FinalizeCheckAsync(checkGame, completed, forced: false);
+                return;
+            }
+        }
+
         bool isSuccess = !isFumble && totalResult >= skillReq.Difficulty;
 
         string outcome = isFumble ? "FALLIMENTO CRITICO" : isSuccess ? "SUCCESSO" : "FALLIMENTO";
@@ -1666,12 +1717,15 @@ public class RpgTcpServer(string ipAddress, int port)
         bool gameClosed = false;
         bool wasMaster = false;
         List<Player> remaining = [];
+        Game? leftGame = null;
+        Game.Check? completedCheck = null;
 
         lock (_gamesLock)
         {
             var game = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
             if (game != null)
             {
+                leftGame = game;
                 gameName = game.Name;
                 wasMaster = client.Player.Role == Player.RoleType.master;
 
@@ -1681,6 +1735,8 @@ public class RpgTcpServer(string ipAddress, int port)
                 if (client.Player.Character != null)
                 {
                     game.InitRolls.RemoveAll(r => r.PlayerName.Equals(client.Player.Character.Handle, StringComparison.OrdinalIgnoreCase));
+                    game.TurnOrder.RemoveAll(t => t.Handle.Equals(client.Player.Character.Handle, StringComparison.OrdinalIgnoreCase));
+                    completedCheck = PruneCheckEntry(game, client.Player.Character.Handle);
                 }
 
                 if (game.Players.Count == 0)
@@ -1731,6 +1787,12 @@ public class RpgTcpServer(string ipAddress, int port)
             : $"{client.Player.Username} ha lasciato '{gameName}'.";
 
         await NotifyPlayersAsync(remaining, notice);
+
+        // Se chi è uscito era l'ultimo a dover tirare, il check si spoglia con chi è rimasto
+        if (completedCheck != null && leftGame != null && !gameClosed)
+        {
+            await FinalizeCheckAsync(leftGame, completedCheck, forced: false);
+        }
     }
 
     // Notifica testuale ai giocatori indicati (le sessioni non più collegate vengono saltate).
@@ -1882,35 +1944,17 @@ public class RpgTcpServer(string ipAddress, int port)
 
         if (client.Player != null && client.Player.Role == Player.RoleType.master)
         {
+            // /init del master = /check init per tutti i personaggi del game
             Game? game;
-            List<Player> playersSnapshot = [];
             lock (_gamesLock)
             {
                 game = _games.FirstOrDefault(g =>
                     g.Players.Any(p => p.Username == client.Player.Username && p.Role == Player.RoleType.master));
-
-                if (game != null) playersSnapshot = [.. game.Players];
             }
 
             if (game != null)
             {
-                lock (_gamesLock) { game.InitRolls.Clear(); }
-
-                foreach (var player in playersSnapshot)
-                {
-                    if (player.Role == Player.RoleType.master) continue;
-
-                    var targetSession = _connectedClients.Values
-                        .FirstOrDefault(s => s.Player?.Username == player.Username);
-
-                    if (targetSession != null)
-                    {
-                        await targetSession.SendPacketAsync(NetworkPacket.Create(
-                            OpCode.S2C_InitRollRequest,
-                            new InitRollRequestPayload { Message = "Il Master ha avviato il tiro di iniziativa." }
-                        ));
-                    }
-                }
+                await OpenCheckAsync(client, game, new CheckRequestPayload { Action = "init" });
             }
             else
             {
@@ -1942,10 +1986,438 @@ public class RpgTcpServer(string ipAddress, int port)
         }
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // /check: prove collettive (abilità o iniziativa) aperte dal master
+    // ---------------------------------------------------------------------------------------------
+
+    private enum CheckRegistration { NotInCheck, Registered, AlreadyRolled }
+
+    private const int MaxCheckHandles = 64;
+    private const int MaxCheckTargetNumber = 99;
+
+    // Da chiamare sotto _gamesLock. Associa il tiro alla voce del check aperto (stesso tipo, stessa abilità,
+    // stesso personaggio). Vale il primo tiro. Se è l'ultimo che mancava, chiude il check e lo restituisce.
+    private static CheckRegistration RegisterCheckRoll(Game game, Game.CheckKind kind, string? skillName, string handle,
+        int total, bool isFumble, out Game.Check? completed)
+    {
+        completed = null;
+        var check = game.ActiveCheck;
+        if (check == null || check.Kind != kind) return CheckRegistration.NotInCheck;
+        if (kind == Game.CheckKind.Skill && !check.SkillName.Equals(skillName, StringComparison.OrdinalIgnoreCase))
+            return CheckRegistration.NotInCheck;
+
+        var entry = check.Entries.FirstOrDefault(e => e.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase));
+        if (entry == null) return CheckRegistration.NotInCheck;
+        if (entry.Total.HasValue) return CheckRegistration.AlreadyRolled;
+
+        entry.Total = total;
+        entry.IsFumble = isFumble;
+        entry.Sequence = ++check.RollCounter;
+
+        if (check.Entries.All(e => e.Total.HasValue))
+        {
+            game.ActiveCheck = null;
+            completed = check;
+        }
+
+        return CheckRegistration.Registered;
+    }
+
+    // Da chiamare sotto _gamesLock. Toglie dal check aperto il personaggio che esce dal game; se così non
+    // manca più nessuno restituisce il check da spogliare, se non resta nessuno lo annulla.
+    private static Game.Check? PruneCheckEntry(Game game, string handle)
+    {
+        var check = game.ActiveCheck;
+        if (check == null) return null;
+
+        check.Entries.RemoveAll(e => e.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase));
+        if (check.Entries.Count == 0)
+        {
+            game.ActiveCheck = null;
+            return null;
+        }
+
+        if (check.Entries.All(e => e.Total.HasValue))
+        {
+            game.ActiveCheck = null;
+            return check;
+        }
+
+        return null;
+    }
+
+    private static bool IsKnockedOut(Character c) => c.Health.CurrentHealth <= 0 || c.Health.GetWoundPenalty() <= -99;
+
+    private async Task ReplyCheckRegistrationAsync(ClientSession reporter, Character actor, CheckRegistration reg, string what)
+    {
+        string message = reg == CheckRegistration.Registered
+            ? $"Tiro registrato per {actor.Handle} ({what}): i risultati usciranno allo spoglio."
+            : $"{actor.Handle} ha già tirato per questo check ({what}): vale il primo tiro.";
+        await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = message }));
+    }
+
+    private async Task HandleCheckAsync(ClientSession client, NetworkPacket packet)
+    {
+        var req = packet.DeserializePayload<CheckRequestPayload>();
+        if (req == null) return;
+
+        async Task Fail(string message) =>
+            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = message }));
+
+        Game? game;
+        lock (_gamesLock)
+        {
+            game = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
+        }
+
+        if (game == null || client.Player.Role != Player.RoleType.master)
+        {
+            await Fail("Solo il master di un game può usare /check.");
+            return;
+        }
+
+        string action = InputLimits.Clean(req.Action, 16).ToLowerInvariant();
+        switch (action)
+        {
+            case "skill":
+            case "init":
+                await OpenCheckAsync(client, game, req);
+                break;
+
+            case "status":
+            {
+                string text;
+                lock (_gamesLock)
+                {
+                    var check = game.ActiveCheck;
+                    if (check == null)
+                    {
+                        text = "Nessun check aperto.";
+                    }
+                    else
+                    {
+                        string what = check.Kind == Game.CheckKind.Skill ? $"{check.SkillName} (TN {check.TargetNumber})" : "iniziativa";
+                        string done = string.Join(", ", check.Entries.Where(e => e.Total.HasValue).Select(e => e.Handle));
+                        string waiting = string.Join(", ", check.Entries.Where(e => !e.Total.HasValue).Select(e => e.Handle));
+                        text = $"Check {what}: hanno tirato [{(done.Length > 0 ? done : "-")}], in attesa di [{(waiting.Length > 0 ? waiting : "-")}].";
+                    }
+                }
+                await Fail(text);
+                break;
+            }
+
+            case "close":
+            {
+                Game.Check? check;
+                lock (_gamesLock)
+                {
+                    check = game.ActiveCheck;
+                    game.ActiveCheck = null;
+                }
+
+                if (check == null)
+                {
+                    await Fail("Nessun check aperto.");
+                }
+                else if (!check.Entries.Any(e => e.Total.HasValue))
+                {
+                    await Fail("Nessuno ha ancora tirato: check annullato.");
+                }
+                else
+                {
+                    await FinalizeCheckAsync(game, check, forced: true);
+                }
+                break;
+            }
+
+            case "cancel":
+            {
+                bool had;
+                lock (_gamesLock)
+                {
+                    had = game.ActiveCheck != null;
+                    game.ActiveCheck = null;
+                }
+
+                if (!had)
+                {
+                    await Fail("Nessun check aperto.");
+                }
+                else
+                {
+                    await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Il master ha annullato il check." }));
+                }
+                break;
+            }
+
+            default:
+                await Fail("Uso: /check skill <abilità> <TN> [personaggi...] | /check init [personaggi...] | /check status | /check close | /check cancel");
+                break;
+        }
+    }
+
+    private async Task OpenCheckAsync(ClientSession master, Game game, CheckRequestPayload req)
+    {
+        async Task Fail(string message) =>
+            await master.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = message }));
+
+        bool isSkill = req.Action.Equals("skill", StringComparison.OrdinalIgnoreCase);
+        string skillName = string.Empty;
+        int targetNumber = 0;
+
+        if (isSkill)
+        {
+            skillName = InputLimits.Clean(req.SkillName, InputLimits.MaxNameFieldLength);
+            if (!Skills.TryGetStatForSkill(skillName, out _))
+            {
+                await Fail($"Abilità '{skillName}' sconosciuta: usa /skills per l'elenco.");
+                return;
+            }
+
+            targetNumber = req.TargetNumber;
+            if (targetNumber < 1 || targetNumber > MaxCheckTargetNumber)
+            {
+                await Fail($"TN non valido: usa un valore tra 1 e {MaxCheckTargetNumber}.");
+                return;
+            }
+        }
+
+        var handles = (req.Handles ?? [])
+            .Select(h => InputLimits.Clean(h, InputLimits.MaxNameFieldLength))
+            .Where(h => h.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(MaxCheckHandles)
+            .ToList();
+
+        var combatants = new List<Combatant>();
+        var excluded = new List<string>();
+        string? error = null;
+
+        lock (_gamesLock)
+        {
+            if (game.ActiveCheck != null)
+            {
+                error = "C'è già un check aperto: usa /check status, /check close o /check cancel.";
+            }
+            else
+            {
+                var candidates = new List<Combatant>();
+                var unknown = new List<string>();
+
+                if (handles.Count == 0)
+                {
+                    foreach (var p in game.Players)
+                    {
+                        if (p.Role == Player.RoleType.master || p.Character == null) continue;
+                        var c = FindCombatantInGame(game, p.Character.Handle);
+                        if (c != null) candidates.Add(c);
+                    }
+                    candidates.AddRange(game.NPCs.Select(n => new Combatant(n, null)));
+                }
+                else
+                {
+                    foreach (var h in handles)
+                    {
+                        var c = FindCombatantInGame(game, h);
+                        if (c == null) unknown.Add(h);
+                        else candidates.Add(c);
+                    }
+                }
+
+                if (unknown.Count > 0)
+                {
+                    error = $"Personaggi non trovati in questo game: {string.Join(", ", unknown)}.";
+                }
+                else
+                {
+                    foreach (var c in candidates)
+                    {
+                        if (IsKnockedOut(c.Character)) excluded.Add(c.Character.Handle);
+                        else if (!combatants.Any(x => ReferenceEquals(x.Character, c.Character))) combatants.Add(c);
+                    }
+
+                    if (combatants.Count == 0)
+                    {
+                        error = "Nessun personaggio disponibile per il check (nessuno in gioco, o tutti K.O.).";
+                    }
+                    else
+                    {
+                        game.ActiveCheck = new Game.Check
+                        {
+                            Kind = isSkill ? Game.CheckKind.Skill : Game.CheckKind.Initiative,
+                            SkillName = skillName,
+                            TargetNumber = targetNumber,
+                            Entries = combatants.Select(x => new Game.CheckEntry { Handle = x.Character.Handle }).ToList()
+                        };
+                    }
+                }
+            }
+        }
+
+        if (error != null)
+        {
+            await Fail(error);
+            return;
+        }
+
+        // Gli NPC non hanno una sessione che tiri per loro: tira il server all'apertura
+        Game.Check? completed = null;
+        var npcRolled = new List<string>();
+        foreach (var c in combatants.Where(x => x.Session == null))
+        {
+            int total;
+            bool fumble = false;
+            if (isSkill)
+            {
+                var r = RollSkill(c.Character, skillName);
+                if (r == null) continue;
+                total = r.Total;
+                fumble = r.Dice.IsFumble;
+            }
+            else
+            {
+                total = RollInitiative(c.Character, null).Total;
+            }
+
+            lock (_gamesLock)
+            {
+                RegisterCheckRoll(game, isSkill ? Game.CheckKind.Skill : Game.CheckKind.Initiative, skillName,
+                    c.Character.Handle, total, fumble, out var done);
+                if (done != null) completed = done;
+            }
+            npcRolled.Add(c.Character.Handle);
+        }
+
+        string what = isSkill ? $"prova di {skillName}" : "iniziativa";
+        Console.WriteLine($"[CHECK] {master.Player.Username} apre un check di {what}{(isSkill ? $" (TN {targetNumber})" : "")}: {string.Join(", ", combatants.Select(x => x.Character.Handle))}");
+
+        // Avviso ai giocatori iscritti (il TN resta nascosto fino allo spoglio)
+        foreach (var c in combatants.Where(x => x.Session != null))
+        {
+            string text = isSkill
+                ? $"Il master ha aperto una prova di {skillName} per {c.Character.Handle}: tira con /skill {skillName}."
+                : $"Il master ha avviato il tiro di iniziativa: tira con /init ({c.Character.Handle}).";
+            try
+            {
+                await c.Session!.SendPacketAsync(isSkill
+                    ? NetworkPacket.Create(OpCode.S2C_Notification, new { Message = text })
+                    : NetworkPacket.Create(OpCode.S2C_InitRollRequest, new InitRollRequestPayload { Message = text }));
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[CHECK] Avviso non consegnato a [{c.Session!.IdShort}]: {ex.Message}");
+            }
+        }
+
+        var waitingFor = combatants.Where(x => x.Session != null).Select(x => x.Character.Handle).ToList();
+        string masterMsg = $"Check di {what} aperto{(isSkill ? $" (TN {targetNumber})" : "")}. In attesa di: {(waitingFor.Count > 0 ? string.Join(", ", waitingFor) : "-")}."
+            + (npcRolled.Count > 0 ? $" NPC già tirati dal server: {string.Join(", ", npcRolled)}." : "")
+            + (excluded.Count > 0 ? $" Esclusi (K.O.): {string.Join(", ", excluded)}." : "");
+        await Fail(masterMsg);
+
+        if (completed != null) await FinalizeCheckAsync(game, completed, forced: false);
+    }
+
+    // Spoglio: esiti contro il TN (abilità) oppure ordine di gioco (iniziativa), inviato a tutto il game
+    private async Task FinalizeCheckAsync(Game game, Game.Check check, bool forced)
+    {
+        List<ClientSession> audience;
+        var payload = new CheckResultPayload
+        {
+            IsInitiative = check.Kind == Game.CheckKind.Initiative,
+            SkillName = check.SkillName,
+            TargetNumber = check.TargetNumber,
+            Forced = forced
+        };
+
+        lock (_gamesLock)
+        {
+            audience = GetGameSessions(game);
+
+            if (check.Kind == Game.CheckKind.Skill)
+            {
+                foreach (var e in check.Entries)
+                {
+                    bool has = e.Total.HasValue;
+                    payload.Entries.Add(new CheckEntryResult
+                    {
+                        Handle = e.Handle,
+                        HasRoll = has,
+                        Total = e.Total ?? 0,
+                        IsFumble = e.IsFumble,
+                        IsSuccess = has && !e.IsFumble && e.Total!.Value >= check.TargetNumber
+                    });
+                }
+            }
+            else
+            {
+                // Più alto prima; a parità REF più alto, poi chi ha tirato per primo
+                var ordered = check.Entries.Where(e => e.Total.HasValue)
+                    .OrderByDescending(e => e.Total!.Value)
+                    .ThenByDescending(e => FindCombatantInGame(game, e.Handle)?.Character.Stats.REF ?? 0)
+                    .ThenBy(e => e.Sequence)
+                    .ToList();
+
+                int pos = 1;
+                foreach (var e in ordered)
+                {
+                    payload.Entries.Add(new CheckEntryResult { Handle = e.Handle, HasRoll = true, Total = e.Total!.Value, Position = pos++ });
+                }
+                foreach (var e in check.Entries.Where(e => !e.Total.HasValue))
+                {
+                    payload.Entries.Add(new CheckEntryResult { Handle = e.Handle });
+                }
+
+                game.TurnOrder = ordered.Select(e => new Game.TurnEntry { Handle = e.Handle, Initiative = e.Total!.Value }).ToList();
+                game.InitRolls = ordered.Select(e => new Game.Roll
+                {
+                    Value = e.Total!.Value,
+                    PlayerName = e.Handle,
+                    Timestamp = TimeOnly.FromDateTime(DateTime.UtcNow)
+                }).ToList();
+            }
+        }
+
+        Console.WriteLine($"[CHECK] Spoglio {(payload.IsInitiative ? "iniziativa" : $"{check.SkillName} TN {check.TargetNumber}")}{(forced ? " (chiuso dal master)" : "")}: "
+            + string.Join(", ", payload.Entries.Select(e => e.HasRoll ? $"{e.Handle}={e.Total}" : $"{e.Handle}=-")));
+
+        var resultPacket = NetworkPacket.Create(OpCode.S2C_CheckResult, payload);
+        foreach (var session in audience)
+        {
+            try { await session.SendPacketAsync(resultPacket); }
+            catch (Exception ex) { Console.WriteLine($"[CHECK] Spoglio non consegnato a [{session.IdShort}]: {ex.Message}"); }
+        }
+    }
+
+    private sealed record InitiativeRollResult(int Ref, int CombatSense, int Cyber, int Modifier, int Dice, int Total);
+
+    // Iniziativa: REF + CombatSense (solo i Solo) + cyberware INIT + modificatore + d10
+    private static InitiativeRollResult RollInitiative(Character actor, string? modifiers)
+    {
+        int refStat = actor.Stats.REF;
+
+        int combatSense = 0;
+        if (actor.Role == Character.RoleType.Solo)
+        {
+            combatSense = actor.Skills.TryGetValue("CombatSense", out int csLvl) ? csLvl : 0;
+        }
+
+        int cyberInit = SumCyberBonus(actor, "INIT");
+
+        int requestedMod = 0;
+        if (!string.IsNullOrWhiteSpace(modifiers))
+        {
+            int.TryParse(modifiers.Trim(), out requestedMod);
+        }
+
+        int dice = (int)GameDice.Roll("1d10").Total;
+        return new InitiativeRollResult(refStat, combatSense, cyberInit, requestedMod, dice, refStat + combatSense + cyberInit + requestedMod + dice);
+    }
+
     /// <summary>
     /// Tiro di iniziativa di <paramref name="actor"/> nel game di <paramref name="reporter"/> (la sessione che ha
-    /// dato il comando: il giocatore stesso, o il master che tira per un NPC). Un nuovo tiro dello stesso
-    /// personaggio sostituisce quello precedente.
+    /// dato il comando: il giocatore stesso, o il master che tira per un NPC). Con un check di iniziativa aperto il tiro va
+    /// allo spoglio (vale il primo); senza, un nuovo tiro sostituisce il precedente.
     /// </summary>
     private async Task ResolveInitiativeAsync(ClientSession reporter, Character actor, string? modifiers)
     {
@@ -1964,43 +2436,40 @@ public class RpgTcpServer(string ipAddress, int port)
             return;
         }
 
-        int refStat = actor.Stats.REF;
+        var init = RollInitiative(actor, modifiers);
+        int total = init.Total;
 
-        int combatSense = 0;
-        if (actor.Role == Character.RoleType.Solo)
-        {
-            combatSense = actor.Skills.TryGetValue("CombatSense", out int csLvl) ? csLvl : 0;
-        }
-
-        int cyberInit = actor.Cyberware
-            .Where(cw => cw.Bonus != null && cw.Bonus.ApplyTo.Equals("INIT", StringComparison.OrdinalIgnoreCase))
-            .Sum(cw => cw.Bonus.Value);
-
-        int requestedMod = 0;
-        if (!string.IsNullOrWhiteSpace(modifiers))
-        {
-            int.TryParse(modifiers.Trim(), out requestedMod);
-        }
-
-        int dice = (int)GameDice.Roll("1d10").Total;
-        int total = refStat + combatSense + cyberInit + requestedMod + dice;
-
+        CheckRegistration reg;
+        Game.Check? completed;
         lock (_gamesLock)
         {
-            game.InitRolls.RemoveAll(r => r.PlayerName.Equals(actor.Handle, StringComparison.OrdinalIgnoreCase));
-            game.InitRolls.Add(new Game.Roll
+            reg = RegisterCheckRoll(game, Game.CheckKind.Initiative, null, actor.Handle, total, false, out completed);
+
+            if (reg == CheckRegistration.NotInCheck)
             {
-                Value = total,
-                PlayerName = actor.Handle,
-                Timestamp = TimeOnly.FromDateTime(DateTime.UtcNow)
-            });
+                // Nessun check di iniziativa aperto per questo personaggio: tiro libero, l'ultimo sostituisce il precedente
+                game.InitRolls.RemoveAll(r => r.PlayerName.Equals(actor.Handle, StringComparison.OrdinalIgnoreCase));
+                game.InitRolls.Add(new Game.Roll
+                {
+                    Value = total,
+                    PlayerName = actor.Handle,
+                    Timestamp = TimeOnly.FromDateTime(DateTime.UtcNow)
+                });
+            }
         }
 
-        Console.WriteLine($"[INIT] {reporter.Player.Username} ({actor.Handle}) tira iniziativa: REF {refStat} + CombatSense {combatSense} + Cyberware {cyberInit} + Mod {requestedMod} + d10 {dice} = {total}");
+        Console.WriteLine($"[INIT] {reporter.Player.Username} ({actor.Handle}) tira iniziativa: REF {init.Ref} + CombatSense {init.CombatSense} + Cyberware {init.Cyber} + Mod {init.Modifier} + d10 {init.Dice} = {total}{(reg == CheckRegistration.NotInCheck ? "" : $" ({reg})")}");
+
+        if (reg != CheckRegistration.NotInCheck)
+        {
+            await ReplyCheckRegistrationAsync(reporter, actor, reg, "iniziativa");
+            if (completed != null) await FinalizeCheckAsync(game, completed, forced: false);
+            return;
+        }
 
         await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
         {
-            Message = $"Tiro di iniziativa registrato per {actor.Handle}: {total} (REF {refStat} + CS {combatSense} + Cyber {cyberInit} + d10 {dice})."
+            Message = $"Tiro di iniziativa registrato per {actor.Handle}: {total} (REF {init.Ref} + CS {init.CombatSense} + Cyber {init.Cyber} + d10 {init.Dice})."
         }));
     }
 
@@ -2069,9 +2538,10 @@ public class RpgTcpServer(string ipAddress, int port)
 
     // Rimuove il giocatore da tutti i game. Restituisce, per ogni game rimasto aperto di cui era master,
     // il nome e i giocatori rimasti (da avvisare).
-    private List<(string GameName, List<Player> Remaining)> RemovePlayerFromGames(Player player)
+    private List<(string GameName, List<Player> Remaining)> RemovePlayerFromGames(Player player, out List<(Game Game, Game.Check Check)> completedChecks)
     {
         var masterNotices = new List<(string, List<Player>)>();
+        completedChecks = [];
 
         lock (_gamesLock)
         {
@@ -2082,6 +2552,9 @@ public class RpgTcpServer(string ipAddress, int port)
                 if (player.Character != null)
                 {
                     game.InitRolls.RemoveAll(r => r.PlayerName.Equals(player.Character.Handle, StringComparison.OrdinalIgnoreCase));
+                    game.TurnOrder.RemoveAll(t => t.Handle.Equals(player.Character.Handle, StringComparison.OrdinalIgnoreCase));
+                    var done = PruneCheckEntry(game, player.Character.Handle);
+                    if (done != null && game.Players.Count > 0) completedChecks.Add((game, done));
                 }
 
                 if (game.Players.Count == 0)
