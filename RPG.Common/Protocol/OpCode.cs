@@ -13,6 +13,7 @@ public enum OpCode
     C2S_Attack = 70,        // Richiesta di attacco verso un altro player
     C2S_SkillCheck = 80,
     C2S_GetPlayers = 90,    // Richiesta della lista dei giocatori online
+    C2S_Reload = 91,        // Ricaricare l'arma in pugno (opz. scegliendo il tipo di munizioni)
     C2S_Npc = 92,           // Gestione NPC del game (solo master): create, list, remove, status
     C2S_As = 93,            // Il master esegue un comando per conto di un suo NPC
     C2S_Leave = 94,         // Uscire dal game corrente (opposto di C2S_Join)

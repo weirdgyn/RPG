@@ -207,8 +207,26 @@ public static class CharacterRepository
         return characters;
     }
 
+    /// <summary>
+    /// L'arma in pugno e la sua copia nell'elenco armi sono due oggetti distinti dopo la deserializzazione:
+    /// le riunisco, così munizioni e caricatore hanno un'unica fonte di verità.
+    /// </summary>
+    public static void NormalizeEquipment(Character character)
+    {
+        character.Weapons ??= [];
+        character.Ammos ??= [];
+
+        var equipped = character.EquippedWeapon;
+        if (equipped == null || string.IsNullOrEmpty(equipped.Id)) return;
+
+        var listed = character.Weapons.FirstOrDefault(w => w.Id.Equals(equipped.Id, StringComparison.OrdinalIgnoreCase));
+        if (listed != null) character.EquippedWeapon = listed;
+    }
+
     public static void NormalizeSkills(Character character)
     {
+        NormalizeEquipment(character);
+
         if (character.Skills == null || character.Skills.Count == 0)
         {
             character.Skills = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);

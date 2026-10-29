@@ -155,6 +155,9 @@ public class RpgTcpServer(string ipAddress, int port)
             case OpCode.C2S_Attack:
                 await HandleAttackAsync(client, packet);
                 break;
+            case OpCode.C2S_Reload:
+                await HandleReloadAsync(client, packet);
+                break;
             case OpCode.C2S_Roll:
                 await HandleRollAsync(client, packet);
                 break;
@@ -307,7 +310,19 @@ public class RpgTcpServer(string ipAddress, int port)
     /// <summary>Un partecipante al combattimento: il personaggio e la sua sessione (se è un giocatore).</summary>
     private sealed record Combatant(Character Character, ClientSession? Session);
 
-    private sealed record AttackOutcome(string? Error, AttackResponsePayload? Result, string? LogLine);
+    private sealed record AttackOutcome(string? Error, AttackResponsePayload? Result, string? LogLine, bool AttackerChanged = false);
+
+    // Somma dei bonus cyberware con un dato ApplyTo ("HIT", "DAMAGE", ...)
+    private static int SumCyberBonus(Character actor, string applyTo) =>
+        actor.Cyberware
+            .Where(cw => cw.Bonus != null && cw.Bonus.ApplyTo.Equals(applyTo, StringComparison.OrdinalIgnoreCase))
+            .Sum(cw => cw.Bonus.Value);
+
+    // Pila di munizioni da cui provengono i colpi attualmente nel caricatore (null = standard)
+    private static Ammo? FindLoadedAmmo(Character owner, Weapon weapon) =>
+        string.IsNullOrEmpty(weapon.LoadedAmmoId)
+            ? null
+            : owner.Ammos.FirstOrDefault(a => a.Id.Equals(weapon.LoadedAmmoId, StringComparison.OrdinalIgnoreCase));
 
     // Da chiamare sotto _gamesLock. Cerca il personaggio per handle tra i partecipanti del game.
     private Combatant? FindCombatantInGame(Game game, string handle)
@@ -393,6 +408,12 @@ public class RpgTcpServer(string ipAddress, int port)
             return;
         }
 
+        // Il colpo sparato consuma munizioni: la scheda dell'attaccante va salvata anche se ha mancato
+        if (outcome.AttackerChanged)
+        {
+            CharacterRepository.TrySaveCharacter(attacker);
+        }
+
         Console.WriteLine(outcome.LogLine);
 
         if (outcome.Result!.IsHit)
@@ -407,6 +428,122 @@ public class RpgTcpServer(string ipAddress, int port)
             try { await session.SendPacketAsync(attackPacket); }
             catch (Exception ex) { Console.WriteLine($"[COMBAT] Risultato non consegnato a [{session.IdShort}]: {ex.Message}"); }
         }
+    }
+
+    private async Task HandleReloadAsync(ClientSession client, NetworkPacket packet)
+    {
+        var reloadReq = packet.DeserializePayload<ReloadRequestPayload>();
+        if (!await EnsureCharacterLinkedAsync(client)) return;
+
+        await ResolveReloadAsync(client, client.Player.Character!, reloadReq);
+    }
+
+    /// <summary>Ricarica l'arma di <paramref name="actor"/> (giocatore o NPC); gli errori vanno a <paramref name="reporter"/>.</summary>
+    private async Task ResolveReloadAsync(ClientSession reporter, Character actor, ReloadRequestPayload? reloadReq)
+    {
+        string ammoKey = InputLimits.Clean(reloadReq?.AmmoKey, InputLimits.MaxNameFieldLength) ?? string.Empty;
+        string weaponKey = InputLimits.Clean(reloadReq?.WeaponKey, InputLimits.MaxNameFieldLength) ?? string.Empty;
+
+        string? error;
+        string? message;
+        lock (_combatLock)
+        {
+            (error, message) = ReloadRules(actor, ammoKey, weaponKey);
+        }
+
+        if (error != null)
+        {
+            await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = error }));
+            return;
+        }
+
+        CharacterRepository.TrySaveCharacter(actor);
+        Console.WriteLine($"[COMBAT] {message}");
+        await BroadcastToGameAsync(reporter, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = message }));
+    }
+
+    // Regole della ricarica, sincrone e sotto _combatLock. I colpi rimasti nel caricatore tornano nella
+    // pila di provenienza, poi si caricano fino a capienza dalla pila scelta.
+    private static (string? Error, string? Message) ReloadRules(Character actor, string ammoKey, string weaponKey)
+    {
+        Weapon? weapon = weaponKey.Length == 0
+            ? actor.EquippedWeapon
+            : actor.Weapons.FirstOrDefault(w =>
+                w.Name.Equals(weaponKey, StringComparison.OrdinalIgnoreCase) ||
+                w.Id.Equals(weaponKey, StringComparison.OrdinalIgnoreCase));
+
+        if (weapon == null || !weapon.UsesAmmo || string.IsNullOrWhiteSpace(weapon.Caliber))
+        {
+            return ("Quest'arma non usa munizioni ricaricabili.", null);
+        }
+
+        string caliber = weapon.Caliber;
+        bool SameCaliber(Ammo a) => a.Caliber.Equals(caliber, StringComparison.OrdinalIgnoreCase);
+
+        // Pila da cui vengono i colpi già nel caricatore (senza indicazione: munizioni standard)
+        Ammo? loadedStack = FindLoadedAmmo(actor, weapon)
+            ?? actor.Ammos.FirstOrDefault(a => SameCaliber(a) && a.Effect == AmmoEffect.Standard);
+
+        Ammo? chosen;
+        if (ammoKey.Length > 0)
+        {
+            // Prima l'Id esatto, poi una corrispondenza parziale su Id o nome (es. "ap", "perforanti")
+            chosen = actor.Ammos.FirstOrDefault(a => SameCaliber(a) && a.Id.Equals(ammoKey, StringComparison.OrdinalIgnoreCase))
+                ?? actor.Ammos.FirstOrDefault(a => SameCaliber(a) &&
+                    (a.Id.Contains(ammoKey, StringComparison.OrdinalIgnoreCase) ||
+                     a.Name.Contains(ammoKey, StringComparison.OrdinalIgnoreCase)));
+            if (chosen == null)
+            {
+                return ($"Nessuna munizione '{ammoKey}' compatibile con {weapon.Name} ({caliber}).", null);
+            }
+        }
+        else
+        {
+            chosen = loadedStack is { Quantity: > 0 }
+                ? loadedStack
+                : actor.Ammos.FirstOrDefault(a => SameCaliber(a) && a.Quantity > 0) ?? loadedStack;
+        }
+
+        if (chosen == null)
+        {
+            return ($"Nessuna munizione {caliber} nell'inventario.", null);
+        }
+
+        bool sameStack = ReferenceEquals(chosen, loadedStack);
+        if (sameStack && weapon.CurrentAmmo >= weapon.MagazineCapacity)
+        {
+            return ($"{weapon.Name} ha già il caricatore pieno.", null);
+        }
+
+        if (chosen.Quantity <= 0)
+        {
+            return ($"Munizioni esaurite: '{chosen.Name}'.", null);
+        }
+
+        // Scarico il caricatore nella pila di provenienza (creandola se mancava)...
+        if (weapon.CurrentAmmo > 0)
+        {
+            if (loadedStack == null)
+            {
+                loadedStack = new Ammo
+                {
+                    Id = $"ammo_{caliber}_std".Replace(' ', '_'),
+                    Name = $"Munizioni {caliber} standard",
+                    Caliber = caliber,
+                    Effect = AmmoEffect.Standard
+                };
+                actor.Ammos.Add(loadedStack);
+            }
+            loadedStack.Quantity += weapon.CurrentAmmo;
+        }
+
+        // ...e carico fino a capienza dalla pila scelta
+        int loaded = Math.Min(weapon.MagazineCapacity, chosen.Quantity);
+        chosen.Quantity -= loaded;
+        weapon.CurrentAmmo = loaded;
+        weapon.LoadedAmmoId = chosen.Id;
+
+        return (null, $"{actor.Handle} ricarica {weapon.Name} con {chosen.Name}: {loaded}/{weapon.MagazineCapacity} colpi (in riserva: {chosen.Quantity}).");
     }
 
     // Regole dell'attacco, sincrone e sotto _combatLock. Nessun I/O di rete qui dentro.
@@ -446,10 +583,31 @@ public class RpgTcpServer(string ipAddress, int port)
             int targetNumber = 15;
             string attackTypeDesc = string.Empty;
 
+            Ammo? loadedAmmo = null;
+            bool ammoSpent = false;
+
             if (weaponToUse.Type == Weapon.WeaponType.Ranged)
             {
-                targetNumber = CombatRules.GetRangedTargetNumber(distance);
-                attackTypeDesc = $"A Distanza con {weaponToUse.Name} ({distance:F1}m) -> TN Fisso: {targetNumber}";
+                if (weaponToUse.UsesAmmo && weaponToUse.CurrentAmmo <= 0)
+                {
+                    return new AttackOutcome($"{weaponToUse.Name} ha il caricatore vuoto: usa /reload.", null, null);
+                }
+
+                int? rangedTn = CombatRules.GetRangedTargetNumber(distance, weaponToUse.OptimalRangeMeters);
+                if (rangedTn == null)
+                {
+                    return new AttackOutcome($"Bersaglio fuori portata: {distance:F1}m, la gittata massima di {weaponToUse.Name} è {weaponToUse.OptimalRangeMeters * 2}m.", null, null);
+                }
+
+                targetNumber = rangedTn.Value;
+                attackTypeDesc = $"A Distanza con {weaponToUse.Name} ({distance:F1}m, gittata {weaponToUse.OptimalRangeMeters}m) -> TN: {targetNumber}";
+
+                if (weaponToUse.UsesAmmo)
+                {
+                    loadedAmmo = FindLoadedAmmo(attacker, weaponToUse);
+                    weaponToUse.CurrentAmmo--;
+                    ammoSpent = true;
+                }
             }
             else if (weaponToUse.Type == Weapon.WeaponType.Melee)
             {
@@ -467,7 +625,9 @@ public class RpgTcpServer(string ipAddress, int port)
             }
 
             int diceVal = GameDice.RollExplodingD10();
-            int attackTotal = attackerStat + attackerSkillLvl + attackerPenalty + diceVal;
+            int weaponModifier = weaponToUse.GetAttackModifier();
+            int cyberHit = SumCyberBonus(attacker, "HIT");
+            int attackTotal = attackerStat + attackerSkillLvl + attackerPenalty + weaponModifier + cyberHit + diceVal;
 
             bool isHit = attackTotal >= targetNumber;
             int damageDealt = 0;
@@ -478,7 +638,7 @@ public class RpgTcpServer(string ipAddress, int port)
             if (isHit)
             {
                 var damageRoll = GameDice.Roll(weaponToUse.DamageDice);
-                int rawDamage = (int)damageRoll.Total;
+                int rawDamage = Math.Max(0, (int)damageRoll.Total + (loadedAmmo?.DamageModifier ?? 0) + SumCyberBonus(attacker, "DAMAGE"));
 
                 if (weaponToUse.Type != Weapon.WeaponType.Area)
                 {
@@ -487,7 +647,8 @@ public class RpgTcpServer(string ipAddress, int port)
                     hitLocationName = loc.Name;
                     hitMultiplier = loc.DamageMultiplier;
 
-                    armorResult = CombatRules.ApplyArmor(target.Armor.GetPiece(loc.ArmorLocation), rawDamage, loc.DamageMultiplier);
+                    armorResult = CombatRules.ApplyArmor(target.Armor.GetPiece(loc.ArmorLocation), rawDamage, loc.DamageMultiplier,
+                        armorPiercing: loadedAmmo?.HalvesArmorSP == true);
                     damageDealt = armorResult.DamageDealt;
                 }
                 else
@@ -508,11 +669,7 @@ public class RpgTcpServer(string ipAddress, int port)
                     : $"COLPITO ({damageDealt} dmg)"
                 : "MANCATO";
 
-            string log = $"[COMBAT] {attacker.Handle} attacca {target.Handle} con '{weaponToUse.Name}'. {attackTypeDesc}. Tiro: {attackTotal} vs TN {targetNumber}. {hitDesc}";
-
-            string impactSuffix = hitLocationName.Length > 0
-                ? $" Impatto: {hitLocationName}{(hitMultiplier > 1 ? $" (x{hitMultiplier})" : "")}"
-                : string.Empty;
+            string log = $"[COMBAT] {attacker.Handle} attacca {target.Handle} con '{weaponToUse.Name}'. {attackTypeDesc}. Tiro: {attackTotal} (d10 {diceVal}, arma {weaponModifier:+0;-0;+0}, cyber {cyberHit:+0;-0;+0}) vs TN {targetNumber}. {hitDesc}{(weaponToUse.UsesAmmo ? $" Colpi: {weaponToUse.CurrentAmmo}/{weaponToUse.MagazineCapacity}." : "")}";
 
             var respPayload = new AttackResponsePayload
             {
@@ -528,15 +685,21 @@ public class RpgTcpServer(string ipAddress, int port)
                 ArmorAbsorbed = armorResult?.Absorbed ?? 0,
                 ArmorAblated = armorResult?.Ablated ?? false,
                 TargetRemainingHealth = target.Health.CurrentHealth,
+                TargetMaxHealth = target.Health.MaxHealth,
                 TargetWoundStatus = target.Health.GetWoundStatusDescription(),
+                WeaponName = weaponToUse.Name,
+                AmmoLeft = weaponToUse.UsesAmmo ? weaponToUse.CurrentAmmo : 0,
+                AmmoCapacity = weaponToUse.UsesAmmo ? weaponToUse.MagazineCapacity : 0,
+                AmmoName = weaponToUse.UsesAmmo ? (loadedAmmo?.Name ?? "Munizioni standard") : string.Empty,
+                // Locazione e armatura sono righe a parte nel pannello: qui solo l'esito
                 Message = isHit
                     ? (damageDealt > 0
-                        ? $"COLPO A SEGNO! {attacker.Handle} usa '{weaponToUse.Name}' e infligge {damageDealt} danni ({weaponToUse.DamageDice})!{impactSuffix}{armorNote}"
-                        : $"COLPO A SEGNO, MA L'ARMATURA REGGE! {attacker.Handle} colpisce con '{weaponToUse.Name}' ({weaponToUse.DamageDice}) senza infliggere danni.{impactSuffix}{armorNote}")
+                        ? $"COLPO A SEGNO! {attacker.Handle} usa '{weaponToUse.Name}' e infligge {damageDealt} danni ({weaponToUse.DamageDice})!"
+                        : $"COLPO A SEGNO, MA L'ARMATURA REGGE! {attacker.Handle} colpisce con '{weaponToUse.Name}' ({weaponToUse.DamageDice}) senza infliggere danni.")
                     : $"MANCATO! {attacker.Handle} fallisce l'attacco con '{weaponToUse.Name}'."
             };
 
-            return new AttackOutcome(null, respPayload, log);
+            return new AttackOutcome(null, respPayload, log, ammoSpent);
         }
     }
 
@@ -1163,7 +1326,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
     // Comandi che il master può dare a un NPC con /as (gli stessi dei giocatori, con l'NPC come attore)
     private static readonly HashSet<OpCode> NpcAllowedCommands =
-        [OpCode.C2S_Attack, OpCode.C2S_SkillCheck, OpCode.C2S_Move, OpCode.C2S_Init];
+        [OpCode.C2S_Attack, OpCode.C2S_SkillCheck, OpCode.C2S_Move, OpCode.C2S_Init, OpCode.C2S_Reload];
 
     private static Task SendNpcResponseAsync(ClientSession client, NpcResponsePayload payload)
         => client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_NpcResponse, payload));
@@ -1419,7 +1582,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
         if (!NpcAllowedCommands.Contains(req.InnerOpCode))
         {
-            await Fail("Con /as si possono usare solo: attack, skill, move, init.");
+            await Fail("Con /as si possono usare solo: attack, skill, move, init, reload.");
             return;
         }
 
@@ -1462,6 +1625,13 @@ public class RpgTcpServer(string ipAddress, int port)
                 {
                     var initReq = JsonSerializer.Deserialize<InitRequest>(req.InnerPayload);
                     await ResolveInitiativeAsync(client, npc, initReq?.Modifiers);
+                    break;
+                }
+
+                case OpCode.C2S_Reload:
+                {
+                    var reloadReq = JsonSerializer.Deserialize<ReloadRequestPayload>(req.InnerPayload);
+                    await ResolveReloadAsync(client, npc, reloadReq);
                     break;
                 }
             }

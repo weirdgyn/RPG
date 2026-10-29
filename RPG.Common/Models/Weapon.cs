@@ -1,4 +1,6 @@
-﻿namespace RPG.Common.Models;
+﻿using System.Text.Json.Serialization;
+
+namespace RPG.Common.Models;
 
 public class Weapon
 {
@@ -32,6 +34,11 @@ public class Weapon
     public int MagazineCapacity { get; set; } = 0;
     /// <summary>Colpi attualmente presenti nel caricatore.</summary>
     public int CurrentAmmo { get; set; } = 0;
+    /// <summary>
+    /// Id della pila di munizioni (<see cref="Ammo.Id"/>) da cui provengono i colpi nel caricatore.
+    /// Null = munizioni standard (nessun effetto speciale).
+    /// </summary>
+    public string? LoadedAmmoId { get; set; }
     /// <summary>Raggio della deflagrazione per le armi d'area (null per armi non area).</summary>
     public double? BlastRadiusMeters { get; set; }
     /// <summary>
@@ -43,6 +50,16 @@ public class Weapon
     public string ScatterSkillName { get; set; } = "Atletica";
     /// <summary>Indica se l'arma (da mischia) è adatta alla parata.</summary>
     public bool CanParry { get; set; } = true;
+
+    /// <summary>True se l'arma spara cartucce dal caricatore (a distanza, con capacità &gt; 0).</summary>
+    [JsonIgnore]
+    public bool UsesAmmo => Type == WeaponType.Ranged && MagazineCapacity > 0;
+
+    /// <summary>
+    /// Modificatore al tiro per colpire dato dalla qualità dell'arma:
+    /// AccuracyBonus 0 = difettosa (-1), 1 = standard (0), 2 = ottima (+1).
+    /// </summary>
+    public int GetAttackModifier() => AccuracyBonus - 1;
 }
 
 /// <summary>

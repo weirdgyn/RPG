@@ -13,14 +13,17 @@ public static class CombatRules
         double dz = pos1.Z - pos2.Z;
         return Math.Sqrt(dx * dx + dy * dy + dz * dz);
     }
-    // Determina il TN per un'arma a distanza basato sulla tabella canonica Cyberpunk 2020
-    public static int GetRangedTargetNumber(double distanceMeters)
+    // TN per un'arma a distanza: fasce della tabella Cyberpunk 2020 scalate sulla gittata dell'arma.
+    // Con gittata 50 m: 1 / 12,5 / 25 / 50 / 100 m. Oltre il doppio della gittata il bersaglio è fuori portata (null).
+    public static int? GetRangedTargetNumber(double distanceMeters, double weaponRangeMeters)
     {
-        if (distanceMeters <= 1.0) return 10; // Point Blank (A bruciapelo)
-        if (distanceMeters <= 12.5) return 15; // Close (Ravvicinata)
-        if (distanceMeters <= 25.0) return 20; // Medium (Media)
-        if (distanceMeters <= 50.0) return 25; // Long (Lunga)
-        return 30;                             // Extreme (Estrema)
+        double range = weaponRangeMeters > 0 ? weaponRangeMeters : 50.0;
+        if (distanceMeters <= 1.0) return 10;          // Point Blank (A bruciapelo)
+        if (distanceMeters <= range / 4) return 15;    // Close (Ravvicinata)
+        if (distanceMeters <= range / 2) return 20;    // Medium (Media)
+        if (distanceMeters <= range) return 25;        // Long (Lunga)
+        if (distanceMeters <= range * 2) return 30;    // Extreme (Estrema)
+        return null;                                   // Fuori portata
     }
     /// <summary>
     /// Risultato della locazione di impatto (tabella roll Cyberpunk 2020).

@@ -178,7 +178,14 @@ namespace RPG.Client
                                     grid.AddRow(new Markup($"    Armatura: [bold cyan]SP {attackResp.ArmorSP}[/] assorbe [cyan]{attackResp.ArmorAbsorbed}[/]{ablated}"));
                                 }
                                 grid.AddRow(new Markup($"   Danno: [bold red]{attackResp.DamageDealt}[/]"));
-                                grid.AddRow(new Markup($"   Stato {Markup.Escape(attackResp.TargetHandle)}: [bold yellow]{attackResp.TargetRemainingHealth} HP[/] [grey]({Markup.Escape(attackResp.TargetWoundStatus)})[/]"));
+                                string maxHp = attackResp.TargetMaxHealth > 0 ? $"/{attackResp.TargetMaxHealth}" : "";
+                                grid.AddRow(new Markup($"   Stato {Markup.Escape(attackResp.TargetHandle)}: [bold yellow]{attackResp.TargetRemainingHealth}{maxHp} HP[/] [grey]({Markup.Escape(attackResp.TargetWoundStatus)})[/]"));
+                            }
+
+                            if (attackResp.AmmoCapacity > 0)
+                            {
+                                string ammoColor = attackResp.AmmoLeft == 0 ? "bold red" : "cyan";
+                                grid.AddRow(new Markup($"   Colpi: [{ammoColor}]{attackResp.AmmoLeft}/{attackResp.AmmoCapacity}[/] [grey]({Markup.Escape(attackResp.AmmoName)})[/]"));
                             }
 
                             var panel = new Panel(grid)
@@ -620,6 +627,15 @@ namespace RPG.Client
                     });
                     break;
 
+                case "reload":
+                    innerOp = OpCode.C2S_Reload;
+                    innerJson = JsonSerializer.Serialize(new ReloadRequestPayload
+                    {
+                        AmmoKey = args.Length >= 1 ? args[0] : null,
+                        WeaponKey = args.Length >= 2 ? args[1] : null
+                    });
+                    break;
+
                 case "init":
                     innerOp = OpCode.C2S_Init;
                     innerJson = JsonSerializer.Serialize(new InitRequest
@@ -664,8 +680,9 @@ namespace RPG.Client
                 table.AddRow("[bold white]/join[/]", "[cyan]<game> [[master|player]][/]", "Entra in un gioco o ne crea uno (solo Master)");
                 table.AddRow("[bold white]/leave[/]", "", "Esce dal gioco corrente");
                 table.AddRow("[bold white]/npc[/]", "[cyan]add <h> | list | remove <h> | status <h>[/]", "Master: usa una scheda esistente come NPC del game");
-                table.AddRow("[bold white]/as[/]", "[cyan]<npc> attack|skill|move|init ...[/]", "Master: esegue il comando per conto di un NPC");
+                table.AddRow("[bold white]/as[/]", "[cyan]<npc> attack|skill|move|init|reload ...[/]", "Master: esegue il comando per conto di un NPC");
                 table.AddRow("[bold white]/attack[/]", "[cyan]<target> [[arma|skill]][/]", "Attacca un bersaglio con arma in pugno o specificata");
+                table.AddRow("[bold white]/reload[/]", "[cyan][[munizioni]] [[arma]][/]", "Ricarica l'arma in pugno (opz. tipo di munizioni, es. /reload ap)");
                 table.AddRow("[bold white]/skill[/]", "[cyan]<nome> [[TN]][/]", "Effettua una prova di abilità d10 (es. /skill Pistola 15)");
                 table.AddRow("[bold white]/roll[/]", "[cyan]<espressione> [[motivo]][/]", "Tiro di dadi personalizzato (es. /roll 2d6+3 Danno)");
                 table.AddRow("[bold white]/move[/]", "[cyan]<X> <Y> [[Z]][/]", "Muove il personaggio nello spazio 3D");
@@ -977,7 +994,7 @@ namespace RPG.Client
 
                     if (asPacket == null)
                     {
-                        AnsiConsole.MarkupLine("[bold red][[!]]: Uso:[/] [yellow]/as <npc> attack <bersaglio> [[arma|skill]][/] | [yellow]/as <npc> skill <abilità> [[TN]][/] | [yellow]/as <npc> move <X> <Y> [[Z]][/] | [yellow]/as <npc> init [[mod]][/]");
+                        AnsiConsole.MarkupLine("[bold red][[!]]: Uso:[/] [yellow]/as <npc> attack <bersaglio> [[arma|skill]][/] | [yellow]/as <npc> skill <abilità> [[TN]][/] | [yellow]/as <npc> move <X> <Y> [[Z]][/] | [yellow]/as <npc> init [[mod]][/] | [yellow]/as <npc> reload [[munizioni]] [[arma]][/]");
                         continue;
                     }
 
@@ -1066,6 +1083,25 @@ namespace RPG.Client
                     {
                         AnsiConsole.MarkupLine("[bold red][[!]]: Sintassi non valida. Usa: /move <X> <Y> [[Z]][/]");
                     }
+                    continue;
+                }
+
+                if (trimmedInput.Equals("/reload", StringComparison.OrdinalIgnoreCase)
+                    || trimmedInput.StartsWith("/reload ", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (string.IsNullOrWhiteSpace(_player.Handle))
+                    {
+                        AnsiConsole.MarkupLine("[bold red][[!]]: Devi collegarti a un personaggio prima con /link <character>[/]");
+                        continue;
+                    }
+
+                    string[] reloadParts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    var reloadPacket = NetworkPacket.Create(OpCode.C2S_Reload, new ReloadRequestPayload
+                    {
+                        AmmoKey = reloadParts.Length >= 2 ? reloadParts[1] : null,
+                        WeaponKey = reloadParts.Length >= 3 ? reloadParts[2] : null
+                    });
+                    await _writer.WriteLineAsync(JsonSerializer.Serialize(reloadPacket));
                     continue;
                 }
 

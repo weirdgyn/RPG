@@ -95,8 +95,22 @@ public class AttackResponsePayload
     public int ArmorAbsorbed { get; set; }
     public bool ArmorAblated { get; set; }
     public int TargetRemainingHealth { get; set; }
+    public int TargetMaxHealth { get; set; }
     public string TargetWoundStatus { get; set; } = string.Empty;
+    public string WeaponName { get; set; } = string.Empty;
+    // Munizioni dell'attaccante dopo il colpo (AmmoCapacity = 0: arma senza caricatore)
+    public int AmmoLeft { get; set; }
+    public int AmmoCapacity { get; set; }
+    public string AmmoName { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
+}
+
+public class ReloadRequestPayload
+{
+    // Opzionale: Id o nome della pila di munizioni da caricare (default: il tipo già in uso)
+    public string? AmmoKey { get; set; }
+    // Opzionale: arma da ricaricare per Id o nome (default: l'arma in pugno)
+    public string? WeaponKey { get; set; }
 }
 
 public class RollRequestPayload
