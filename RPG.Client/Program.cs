@@ -6,14 +6,79 @@ namespace RPG.Client;
 
 internal class Program
 {
-    static Task PlayModemAsync(string wavPath)
+    private static async Task ShowBootSequenceAsync()
+    {
+        using var cts = new CancellationTokenSource();
+
+        AnsiConsole.Clear();
+
+        var cursorTask = Task.Run(async () =>
+        {
+            var frames = new[] { "_", " ", "_", " " };
+            var i = 0;
+
+            Color _color = Console.ForegroundColor;
+            Console.ForegroundColor = Color.Green;
+            while (!cts.IsCancellationRequested)
+            {
+                Console.SetCursorPosition(0, 0);
+                Console.Write("DIALING..." + frames[i % frames.Length]);
+                i++;
+                await Task.Delay(180);
+            }
+            Console.ForegroundColor = _color;
+        });
+
+        _ = PlayModemAsync(Path.Combine(AppContext.BaseDirectory, "audio", "modem-handshake.mp3"));
+
+        await Task.Delay(28000);
+
+        cts.Cancel();
+        await cursorTask;
+
+        Console.Clear();
+        AnsiConsole.Write(BuildRandomBanner("NIGHT CITY"));
+        AnsiConsole.Write(new Rule("[bold cyan]NETRUNNER BBS // CYBERPUNK 2020[/]").Centered());
+    }
+    private static FigletText BuildRandomBanner(string text)
+    {
+        var fontDir = Path.Combine(AppContext.BaseDirectory, "Fonts");
+
+        if (!Directory.Exists(fontDir))
+        {
+            return new FigletText(text)
+                .Centered()
+                .Color(Color.Yellow);
+        }
+
+        var fonts = Directory.GetFiles(fontDir, "*.flf");
+
+        if (fonts.Length == 0)
+        {
+            return new FigletText(text)
+                .Centered()
+                .Color(Color.Yellow);
+        }
+
+        var selected = fonts[Random.Shared.Next(fonts.Length)];
+        var font = FigletFont.Load(selected);
+
+        return new FigletText(font, text)
+            .Centered()
+            .Color(Color.Yellow);
+    }
+    private static Task PlayModemAsync(string wavPath)
     {
         return Task.Run(() =>
         {
             try
             {
+                if (!File.Exists(wavPath))
+                    return;
+
                 using var reader = new AudioFileReader(wavPath);
                 using var output = new WaveOutEvent();
+
                 output.Init(reader);
                 output.Play();
 
@@ -24,7 +89,7 @@ internal class Program
             }
             catch
             {
-                // fallback silenzioso: nessun audio disponibile
+                // fallback silenzioso
             }
         });
     }
@@ -41,34 +106,12 @@ internal class Program
 
         var options = parserResult.Value;
 
+        if(options.Intro)
+            await ShowBootSequenceAsync();
+
         // Riga di comando > client.settings.json > default (127.0.0.1:5000)
-        var (host, port) = ClientSettings.Resolve(options);
-
-        // ==========================================
-        // RETRO CYBERPUNK BBS BANNER
-        // ==========================================
-        AnsiConsole.Clear();
-
-        var fontFiles = Directory.GetFiles("fonts", "*.flf");
-
-        _ = PlayModemAsync("audio/modem-handshake.mp3");
-
-        if (fontFiles.Length == 0)
-        {
-            AnsiConsole.Write(
-                new FigletText("NIGHT CITY")
-                    .Centered()
-                    .Color(Color.Cyan));
-        }
-        else {
-            var font = FigletFont.Load(fontFiles[Random.Shared.Next(fontFiles.Length)]);
-            AnsiConsole.Write(
-                    new FigletText(font, "NIGHT CITY")
-                    .Centered().
-                    Color(Color.Cyan));
-        }
-
-        AnsiConsole.Write(new Rule("[bold cyan]NETRUNNER BBS // CYBERPUNK 2020[/]").Centered());
+        var (host, port) = ClientSettings.Resolve(options);  
+        
         AnsiConsole.MarkupLine($"[grey]Connessione a:[/] [bold green]{host}:{port}[/]\n");
 
         var client = new RpgTcpClient();

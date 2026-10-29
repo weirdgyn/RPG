@@ -16,4 +16,7 @@ public class ClientOptions
 
     [Option('p', "port", HelpText = "Porta TCP del server. Se omessa: 'Port' di client.settings.json, altrimenti 5000.")]
     public int? Port { get; set; }
+
+    [Option('i', "intro", HelpText = "Mostra la sequenza intro.")]
+    public bool Intro { get; set; } = false;
 }

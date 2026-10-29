@@ -29,9 +29,9 @@
 		<None Update="audio\*.mp3">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</None>
-	</ItemGroup>	
+	</ItemGroup>
 	
-  <PropertyGroup>
+	<PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
