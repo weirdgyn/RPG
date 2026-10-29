@@ -19,7 +19,8 @@
     "RiparareArmi": 3,
     "Schivare": 3,
     "ArtiMarziali": 3,
-    "Streetwise": 2
+    "Streetwise": 2,
+    "Atletica": 3
   },
   "Weapons": [
     {
@@ -45,6 +46,35 @@
       "Caliber": "9mm",
       "MagazineCapacity": 15,
       "CurrentAmmo": 15
+    },
+    {
+      "Id": "grenade_frag",
+      "Name": "Granata a frammentazione",
+      "Type": 0,
+      "SkillName": "Atletica",
+      "DamageDice": "2d6",
+      "OptimalRangeMeters": 25,
+      "AccuracyBonus": 1,
+      "CurrentAmmo": 2,
+      "BlastRadiusMeters": 10,
+      "AreaDamageBands": [
+        { "FromMeters": 0, "ToMeters": 2, "DamageDice": "5d6" },
+        { "FromMeters": 2, "ToMeters": 5, "DamageDice": "3d6" },
+        { "FromMeters": 5, "ToMeters": 10, "DamageDice": "2d6" }
+      ],
+      "ScatterSkillName": "Atletica"
+    },
+    {
+      "Id": "grenade_incendiary",
+      "Name": "Granata incendiaria",
+      "Type": 0,
+      "SkillName": "Atletica",
+      "DamageDice": "3d6",
+      "OptimalRangeMeters": 25,
+      "AccuracyBonus": 1,
+      "CurrentAmmo": 2,
+      "BlastRadiusMeters": 3,
+      "ScatterSkillName": "Atletica"
     }
   ],
   "EquippedWeapon": {

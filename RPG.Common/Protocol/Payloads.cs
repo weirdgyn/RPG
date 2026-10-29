@@ -72,6 +72,44 @@ public class SkillCheckResponsePayload
     public string Message { get; set; } = string.Empty;
 }
 
+public class ThrowRequestPayload
+{
+    // Punto di mira del lancio
+    public Position3D Position { get; set; } = new();
+    // Opzionale: arma ad area da usare per Id o nome (default: la prima con pezzi disponibili)
+    public string? WeaponKey { get; set; }
+}
+
+public class AreaVictim
+{
+    public string Handle { get; set; } = string.Empty;
+    public double Distance { get; set; }
+    public int RawDamage { get; set; }
+    public int ArmorSP { get; set; }
+    public int DamageDealt { get; set; }
+    public int RemainingHealth { get; set; }
+    public int MaxHealth { get; set; }
+    public string WoundStatus { get; set; } = string.Empty;
+}
+
+public class AreaResultPayload
+{
+    public string ThrowerHandle { get; set; } = string.Empty;
+    public string WeaponName { get; set; } = string.Empty;
+    public int ThrowTotal { get; set; }
+    public int ThrowTN { get; set; }
+    public bool IsFumble { get; set; }
+    // True se la granata è esplosa nel punto indicato; altrimenti è deviata
+    public bool OnTarget { get; set; }
+    public double DeviationMeters { get; set; }
+    public Position3D Aimed { get; set; } = new();
+    public Position3D Landed { get; set; } = new();
+    public double BlastRadius { get; set; }
+    public int PiecesLeft { get; set; }
+    public List<AreaVictim> Victims { get; set; } = [];
+    public string Message { get; set; } = string.Empty;
+}
+
 public class AttackRequestPayload
 {
     public string TargetHandle { get; set; } = string.Empty; // Nome del bersaglio!

@@ -12,6 +12,7 @@ public enum OpCode
     C2S_GetSkills = 60,
     C2S_Attack = 70,        // Richiesta di attacco verso un altro player
     C2S_SkillCheck = 80,
+    C2S_Throw = 88,         // Lancio di un'arma ad area (granata) verso un punto della mappa
     C2S_Check = 89,         // Il master apre/chiude una prova collettiva (abilità o iniziativa)
     C2S_GetPlayers = 90,    // Richiesta della lista dei giocatori online
     C2S_Reload = 91,        // Ricaricare l'arma in pugno (opz. scegliendo il tipo di munizioni)
@@ -34,6 +35,7 @@ public enum OpCode
     S2C_PlayerMoved = 160,
     S2C_SkillListResponse = 170,
     S2C_AttackResult = 180,     // Risultato dell'attacco (notificato a chi attacca, al bersaglio e alla stanza)
+    S2C_AreaResult = 181,       // Esito di un lancio/esplosione ad area (notificato a tutto il game)
     S2C_SkillCheckResult = 190,
     S2C_Players = 200,          // Elenco dei giocatori online
     S2C_LinkResponse = 205,     // Risposta alla richiesta di collegare un player ad un personaggio

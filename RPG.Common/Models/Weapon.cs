@@ -32,7 +32,7 @@ public class Weapon
     public string? Caliber { get; set; }
     /// <summary>Capacità del caricatore (0 se non applicabile).</summary>
     public int MagazineCapacity { get; set; } = 0;
-    /// <summary>Colpi attualmente presenti nel caricatore.</summary>
+    /// <summary>Colpi attualmente presenti nel caricatore. Per le armi ad area: pezzi rimasti (granate).</summary>
     public int CurrentAmmo { get; set; } = 0;
     /// <summary>
     /// Id della pila di munizioni (<see cref="Ammo.Id"/>) da cui provengono i colpi nel caricatore.

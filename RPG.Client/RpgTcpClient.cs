@@ -533,6 +533,53 @@ namespace RPG.Client
                     }
                     break;
 
+                case OpCode.S2C_AreaResult:
+                    var areaResp = packet.DeserializePayload<AreaResultPayload>();
+                    if (areaResp != null)
+                    {
+                        PrintServerOutput(() =>
+                        {
+                            var grid = new Grid();
+                            grid.AddColumn();
+                            grid.AddRow(new Markup($"[bold yellow]{Markup.Escape(areaResp.ThrowerHandle)}[/] [red]lancia[/] [bold yellow]{Markup.Escape(areaResp.WeaponName)}[/]"));
+                            grid.AddRow(new Markup($"   Lancio: [cyan]{areaResp.ThrowTotal}[/] vs TN: [cyan]{areaResp.ThrowTN}[/]"));
+                            grid.AddRow(new Markup($"   Esito: [white]{Markup.Escape(areaResp.Message)}[/]"));
+                            grid.AddRow(new Markup($"   Esplosione in [bold]({areaResp.Landed.X}, {areaResp.Landed.Y}, {areaResp.Landed.Z})[/], raggio [cyan]{areaResp.BlastRadius:0.#}m[/] - pezzi rimasti: [cyan]{areaResp.PiecesLeft}[/]"));
+
+                            if (areaResp.Victims.Count == 0)
+                            {
+                                grid.AddRow(new Markup("   [grey]Nessuno nel raggio dell'esplosione.[/]"));
+                            }
+                            else
+                            {
+                                var table = new Table().Border(TableBorder.Rounded).BorderColor(Color.Red1);
+                                table.AddColumn(new TableColumn("[bold cyan]Personaggio[/]"));
+                                table.AddColumn(new TableColumn("[bold white]Distanza[/]").Centered());
+                                table.AddColumn(new TableColumn("[bold red]Danno[/]").Centered());
+                                table.AddColumn(new TableColumn("[bold white]Stato[/]"));
+                                foreach (var v in areaResp.Victims)
+                                {
+                                    string armor = v.ArmorSP > 0 ? $" [grey](SP {v.ArmorSP}, tirati {v.RawDamage})[/]" : "";
+                                    string maxHp = v.MaxHealth > 0 ? $"/{v.MaxHealth}" : "";
+                                    table.AddRow(
+                                        Markup.Escape(v.Handle),
+                                        $"{v.Distance:0.#}m",
+                                        $"{v.DamageDealt}{armor}",
+                                        $"[bold yellow]{v.RemainingHealth}{maxHp} HP[/] [grey]({Markup.Escape(v.WoundStatus)})[/]");
+                                }
+                                grid.AddRow(table);
+                            }
+
+                            AnsiConsole.Write(new Panel(grid)
+                            {
+                                Header = new PanelHeader("[bold red] ESPLOSIONE [/]"),
+                                Border = BoxBorder.Heavy,
+                                BorderStyle = new Style(Color.Red1)
+                            });
+                        });
+                    }
+                    break;
+
                 case OpCode.S2C_CheckResult:
                     var checkResp = packet.DeserializePayload<CheckResultPayload>();
                     if (checkResp != null)
@@ -640,6 +687,29 @@ namespace RPG.Client
         }
 
         /// <summary>
+        /// Argomenti di /throw: X Y [Z] [arma]. Lo Z è opzionale (default: quello del personaggio): se il terzo
+        /// argomento non è un numero è già il nome dell'arma. Restituisce null se i parametri non sono validi.
+        /// </summary>
+        private static ThrowRequestPayload? BuildThrowRequest(string[] args, int defaultZ)
+        {
+            if (args.Length < 2 || !int.TryParse(args[0], out int x) || !int.TryParse(args[1], out int y)) return null;
+
+            int z = defaultZ;
+            int weaponIndex = 2;
+            if (args.Length >= 3 && int.TryParse(args[2], out int parsedZ))
+            {
+                z = parsedZ;
+                weaponIndex = 3;
+            }
+
+            return new ThrowRequestPayload
+            {
+                Position = new Position3D { X = x, Y = y, Z = z },
+                WeaponKey = args.Length > weaponIndex ? string.Join(' ', args.Skip(weaponIndex)) : null
+            };
+        }
+
+        /// <summary>
         /// Costruisce la richiesta /check dai token del comando (personaggi separati da spazi e/o virgole).
         /// Restituisce null se i parametri non sono validi.
         /// </summary>
@@ -721,6 +791,15 @@ namespace RPG.Client
                     });
                     break;
 
+                case "throw":
+                {
+                    var throwPayload = BuildThrowRequest(args, 0);
+                    if (throwPayload == null) return null;
+                    innerOp = OpCode.C2S_Throw;
+                    innerJson = JsonSerializer.Serialize(throwPayload);
+                    break;
+                }
+
                 case "init":
                     innerOp = OpCode.C2S_Init;
                     innerJson = JsonSerializer.Serialize(new InitRequest
@@ -765,8 +844,9 @@ namespace RPG.Client
                 table.AddRow("[bold white]/join[/]", "[cyan]<game> [[master|player]][/]", "Entra in un gioco o ne crea uno (solo Master)");
                 table.AddRow("[bold white]/leave[/]", "", "Esce dal gioco corrente");
                 table.AddRow("[bold white]/npc[/]", "[cyan]add <h> | list | remove <h> | status <h>[/]", "Master: usa una scheda esistente come NPC del game");
-                table.AddRow("[bold white]/as[/]", "[cyan]<npc> attack|skill|move|init|reload ...[/]", "Master: esegue il comando per conto di un NPC");
+                table.AddRow("[bold white]/as[/]", "[cyan]<npc> attack|skill|move|init|reload|throw ...[/]", "Master: esegue il comando per conto di un NPC");
                 table.AddRow("[bold white]/attack[/]", "[cyan]<target> [[arma|skill]][/]", "Attacca un bersaglio con arma in pugno o specificata");
+                table.AddRow("[bold white]/throw[/]", "[cyan]<X> <Y> [[Z]] [[arma]][/]", "Lancia un'arma ad area (granata) verso un punto: se manca devia");
                 table.AddRow("[bold white]/reload[/]", "[cyan][[munizioni]] [[arma]][/]", "Ricarica l'arma in pugno (opz. tipo di munizioni, es. /reload ap)");
                 table.AddRow("[bold white]/skill[/]", "[cyan]<nome> [[TN]][/]", "Effettua una prova di abilità d10 (es. /skill Pistola 15)");
                 table.AddRow("[bold white]/roll[/]", "[cyan]<espressione> [[motivo]][/]", "Tiro di dadi personalizzato (es. /roll 2d6+3 Danno)");
@@ -1080,7 +1160,7 @@ namespace RPG.Client
 
                     if (asPacket == null)
                     {
-                        AnsiConsole.MarkupLine("[bold red][[!]]: Uso:[/] [yellow]/as <npc> attack <bersaglio> [[arma|skill]][/] | [yellow]/as <npc> skill <abilità> [[TN]][/] | [yellow]/as <npc> move <X> <Y> [[Z]][/] | [yellow]/as <npc> init [[mod]][/] | [yellow]/as <npc> reload [[munizioni]] [[arma]][/]");
+                        AnsiConsole.MarkupLine("[bold red][[!]]: Uso:[/] [yellow]/as <npc> attack <bersaglio> [[arma|skill]][/] | [yellow]/as <npc> skill <abilità> [[TN]][/] | [yellow]/as <npc> move <X> <Y> [[Z]][/] | [yellow]/as <npc> init [[mod]][/] | [yellow]/as <npc> reload [[munizioni]] [[arma]][/] | [yellow]/as <npc> throw <X> <Y> [[Z]] [[arma]][/]");
                         continue;
                     }
 
@@ -1146,6 +1226,27 @@ namespace RPG.Client
                                 Modifiers = modifier
                             }
                     )));
+                    continue;
+                }
+
+                if (trimmedInput.Equals("/throw", StringComparison.OrdinalIgnoreCase)
+                    || trimmedInput.StartsWith("/throw ", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (string.IsNullOrWhiteSpace(_player.Handle))
+                    {
+                        AnsiConsole.MarkupLine("[bold red][[!]]: Devi collegarti a un personaggio prima con /link <character>[/]");
+                        continue;
+                    }
+
+                    var throwReq = BuildThrowRequest(trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries).Skip(1).ToArray(), _player.Character?.Position.Z ?? 0);
+                    if (throwReq == null)
+                    {
+                        AnsiConsole.MarkupLine("[bold red][[!]]: Sintassi non valida. Usa: /throw <X> <Y> [[Z]] [[arma]][/]");
+                    }
+                    else
+                    {
+                        await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_Throw, throwReq)));
+                    }
                     continue;
                 }
 

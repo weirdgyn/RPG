@@ -167,6 +167,9 @@ public class RpgTcpServer(string ipAddress, int port)
             case OpCode.C2S_Check:
                 await HandleCheckAsync(client, packet);
                 break;
+            case OpCode.C2S_Throw:
+                await HandleThrowAsync(client, packet);
+                break;
             case OpCode.C2S_Roll:
                 await HandleRollAsync(client, packet);
                 break;
@@ -439,6 +442,228 @@ public class RpgTcpServer(string ipAddress, int port)
         }
     }
 
+    private async Task HandleThrowAsync(ClientSession client, NetworkPacket packet)
+    {
+        var throwReq = packet.DeserializePayload<ThrowRequestPayload>();
+        if (throwReq?.Position == null) return;
+        throwReq.WeaponKey = InputLimits.Clean(throwReq.WeaponKey, InputLimits.MaxNameFieldLength);
+
+        if (!await EnsureCharacterLinkedAsync(client)) return;
+
+        await ResolveThrowAsync(client, client.Player.Character!, throwReq);
+    }
+
+    private sealed record ThrowOutcome(string? Error, AreaResultPayload? Result, string? LogLine, List<Character> Changed);
+
+    /// <summary>
+    /// Lancio di un'arma ad area di <paramref name="thrower"/> verso un punto. Colpisce tutti i personaggi del game
+    /// (giocatori e NPC, lanciatore compreso) entro il raggio dell'esplosione.
+    /// </summary>
+    private async Task ResolveThrowAsync(ClientSession reporter, Character thrower, ThrowRequestPayload throwReq)
+    {
+        Game? game;
+        GameMap? map = null;
+        List<Character> everyone = [];
+        List<ClientSession> audience = [];
+
+        lock (_gamesLock)
+        {
+            game = _games.FirstOrDefault(g => g.Players.Contains(reporter.Player));
+            if (game != null)
+            {
+                map = game.Map;
+                audience = GetGameSessions(game);
+                foreach (var p in game.Players)
+                {
+                    if (p.Character != null && !everyone.Contains(p.Character)) everyone.Add(p.Character);
+                }
+                foreach (var npc in game.NPCs)
+                {
+                    if (!everyone.Contains(npc)) everyone.Add(npc);
+                }
+            }
+        }
+
+        if (game == null || map == null)
+        {
+            await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Devi essere in un game per lanciare: usa /join <game>." }));
+            return;
+        }
+
+        if (map.GetMovementResult(throwReq.Position) == GameMap.MovementResult.OutOfBounds)
+        {
+            await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Il punto indicato è fuori dai confini della mappa." }));
+            return;
+        }
+
+        var outcome = ResolveThrowRules(thrower, throwReq.Position, throwReq.WeaponKey, everyone);
+        if (outcome.Error != null)
+        {
+            await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = outcome.Error }));
+            return;
+        }
+
+        Console.WriteLine(outcome.LogLine);
+
+        foreach (var changed in outcome.Changed)
+        {
+            CharacterRepository.TrySaveCharacter(changed);
+        }
+
+        var packet = NetworkPacket.Create(OpCode.S2C_AreaResult, outcome.Result);
+        foreach (var session in audience)
+        {
+            try { await session.SendPacketAsync(packet); }
+            catch (Exception ex) { Console.WriteLine($"[COMBAT] Esito area non consegnato a [{session.IdShort}]: {ex.Message}"); }
+        }
+    }
+
+    // Regole del lancio/esplosione, sincrone e sotto _combatLock. Nessun I/O di rete qui dentro.
+    private ThrowOutcome ResolveThrowRules(Character thrower, Position3D aimed, string? weaponKey, List<Character> everyone)
+    {
+        ThrowOutcome Error(string message) => new(message, null, null, []);
+
+        lock (_combatLock)
+        {
+            Weapon? weapon;
+            if (!string.IsNullOrWhiteSpace(weaponKey))
+            {
+                string key = weaponKey.Trim();
+                weapon = thrower.Weapons.FirstOrDefault(w => w.Type == Weapon.WeaponType.Area &&
+                    (w.Name.Equals(key, StringComparison.OrdinalIgnoreCase) || w.Id.Equals(key, StringComparison.OrdinalIgnoreCase)));
+                if (weapon == null) return Error($"Nessuna arma ad area '{key}' nell'inventario.");
+            }
+            else
+            {
+                weapon = thrower.EquippedWeapon is { Type: Weapon.WeaponType.Area, CurrentAmmo: > 0 }
+                    ? thrower.EquippedWeapon
+                    : thrower.Weapons.FirstOrDefault(w => w.Type == Weapon.WeaponType.Area && w.CurrentAmmo > 0)
+                      ?? thrower.Weapons.FirstOrDefault(w => w.Type == Weapon.WeaponType.Area);
+                if (weapon == null) return Error("Non hai armi ad area da lanciare.");
+            }
+
+            if (weapon.CurrentAmmo <= 0) return Error($"{weapon.Name}: pezzi esauriti.");
+
+            double radius = weapon.BlastRadiusMeters ?? 0;
+            if (radius <= 0) return Error($"{weapon.Name} non ha un raggio d'esplosione valido.");
+
+            int penalty = thrower.Health.GetWoundPenalty();
+            if (penalty <= -99) return Error("Sei K.O., non puoi lanciare!");
+
+            if (!Skills.TryGetStatForSkill(weapon.ScatterSkillName, out string statName))
+            {
+                return Error($"L'abilità '{weapon.ScatterSkillName}' di {weapon.Name} non è riconosciuta: scheda o arma non valida.");
+            }
+
+            double throwRange = weapon.OptimalRangeMeters > 0 ? weapon.OptimalRangeMeters : 15;
+            double distance = CombatRules.CalculateDistance(thrower.Position, aimed);
+            if (distance > throwRange)
+            {
+                return Error($"Troppo lontano per {weapon.Name}: {distance:F1}m, gittata di lancio {throwRange:F0}m.");
+            }
+
+            int throwTn = CombatRules.GetRangedTargetNumber(distance, throwRange) ?? 30;
+            int statVal = thrower.Stats.GetStatValue(statName);
+            int skillLvl = thrower.Skills.TryGetValue(weapon.ScatterSkillName, out int lvl) ? lvl : 0;
+            var roll = GameDice.RollExplodingD10Detailed();
+            int total = statVal + skillLvl + penalty + roll.Total;
+
+            bool onTarget = !roll.IsFumble && total >= throwTn;
+            weapon.CurrentAmmo--;
+
+            // Se il lancio fallisce la granata devia: d10 metri in direzione casuale (doppio con un fallimento critico)
+            var landed = new Position3D { X = aimed.X, Y = aimed.Y, Z = aimed.Z };
+            double deviation = 0;
+            if (!onTarget)
+            {
+                deviation = GameDice.Roll("1d10").Total * (roll.IsFumble ? 2 : 1);
+                double angle = Random.Shared.NextDouble() * 2 * Math.PI;
+                landed.X += (int)Math.Round(deviation * Math.Cos(angle));
+                landed.Y += (int)Math.Round(deviation * Math.Sin(angle));
+            }
+
+            // Un solo tiro di danno per fascia: tutti quelli nella stessa fascia subiscono lo stesso danno
+            var bandRolls = new Dictionary<string, int>();
+            var victims = new List<AreaVictim>();
+            var changed = new List<Character> { thrower };
+
+            foreach (var target in everyone)
+            {
+                double d = CombatRules.CalculateDistance(target.Position, landed);
+                if (d > radius) continue;
+
+                string? dice;
+                string bandKey;
+                if (weapon.AreaDamageBands is { Count: > 0 })
+                {
+                    var band = weapon.AreaDamageBands.FirstOrDefault(b => d >= b.FromMeters && d < b.ToMeters);
+                    if (band == null) continue;
+                    dice = band.DamageDice;
+                    bandKey = $"{band.FromMeters}-{band.ToMeters}";
+                }
+                else
+                {
+                    dice = weapon.DamageDice;
+                    bandKey = "all";
+                }
+
+                if (!bandRolls.TryGetValue(bandKey, out int rawDamage))
+                {
+                    rawDamage = Math.Max(0, (int)GameDice.Roll(dice).Total);
+                    bandRolls[bandKey] = rawDamage;
+                }
+
+                // L'esplosione colpisce il corpo: protegge l'armatura del torso, nessun moltiplicatore di locazione
+                var armor = CombatRules.ApplyArmor(target.Armor.GetPiece(ArmorLocation.Torso), rawDamage, 1);
+                target.Health.CurrentHealth = Math.Max(0, target.Health.CurrentHealth - armor.DamageDealt);
+                if (!changed.Contains(target)) changed.Add(target);
+
+                victims.Add(new AreaVictim
+                {
+                    Handle = target.Handle,
+                    Distance = Math.Round(d, 1),
+                    RawDamage = rawDamage,
+                    ArmorSP = armor.SpFaced,
+                    DamageDealt = armor.DamageDealt,
+                    RemainingHealth = target.Health.CurrentHealth,
+                    MaxHealth = target.Health.MaxHealth,
+                    WoundStatus = target.Health.GetWoundStatusDescription()
+                });
+            }
+
+            string aimText = $"({aimed.X}, {aimed.Y}, {aimed.Z})";
+            string landText = $"({landed.X}, {landed.Y}, {landed.Z})";
+            string message = onTarget
+                ? $"{thrower.Handle} lancia {weapon.Name} su {aimText}: centro perfetto! Esplode nel punto indicato."
+                : roll.IsFumble
+                    ? $"FALLIMENTO CRITICO! {thrower.Handle} lancia {weapon.Name} su {aimText} e la granata devia di {deviation:F0}m: esplode in {landText}."
+                    : $"{thrower.Handle} lancia {weapon.Name} su {aimText}, ma devia di {deviation:F0}m: esplode in {landText}.";
+
+            var result = new AreaResultPayload
+            {
+                ThrowerHandle = thrower.Handle,
+                WeaponName = weapon.Name,
+                ThrowTotal = total,
+                ThrowTN = throwTn,
+                IsFumble = roll.IsFumble,
+                OnTarget = onTarget,
+                DeviationMeters = deviation,
+                Aimed = aimed,
+                Landed = landed,
+                BlastRadius = radius,
+                PiecesLeft = weapon.CurrentAmmo,
+                Victims = victims,
+                Message = message
+            };
+
+            string log = $"[COMBAT] {thrower.Handle} lancia '{weapon.Name}' su {aimText} ({distance:F1}m). Tiro: {total} (d10 {roll.Total}) vs TN {throwTn} -> "
+                + (onTarget ? "a segno" : $"devia di {deviation:F0}m in {landText}")
+                + $". Colpiti: {(victims.Count > 0 ? string.Join(", ", victims.Select(v => $"{v.Handle} -{v.DamageDealt}")) : "nessuno")}. Pezzi rimasti: {weapon.CurrentAmmo}.";
+
+            return new ThrowOutcome(null, result, log, changed);
+        }
+    }
+
     private async Task HandleReloadAsync(ClientSession client, NetworkPacket packet)
     {
         var reloadReq = packet.DeserializePayload<ReloadRequestPayload>();
@@ -574,6 +799,11 @@ public class RpgTcpServer(string ipAddress, int port)
             if (weaponToUse == null)
             {
                 return new AttackOutcome("Nessuna arma o abilità d'attacco disponibile!", null, null);
+            }
+
+            if (weaponToUse.Type == Weapon.WeaponType.Area)
+            {
+                return new AttackOutcome($"{weaponToUse.Name} è un'arma ad area: usa /throw <X> <Y> [Z] [arma].", null, null);
             }
 
             string skillName = weaponToUse.SkillName;
@@ -1395,7 +1625,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
     // Comandi che il master può dare a un NPC con /as (gli stessi dei giocatori, con l'NPC come attore)
     private static readonly HashSet<OpCode> NpcAllowedCommands =
-        [OpCode.C2S_Attack, OpCode.C2S_SkillCheck, OpCode.C2S_Move, OpCode.C2S_Init, OpCode.C2S_Reload];
+        [OpCode.C2S_Attack, OpCode.C2S_SkillCheck, OpCode.C2S_Move, OpCode.C2S_Init, OpCode.C2S_Reload, OpCode.C2S_Throw];
 
     private static Task SendNpcResponseAsync(ClientSession client, NpcResponsePayload payload)
         => client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_NpcResponse, payload));
@@ -1651,7 +1881,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
         if (!NpcAllowedCommands.Contains(req.InnerOpCode))
         {
-            await Fail("Con /as si possono usare solo: attack, skill, move, init, reload.");
+            await Fail("Con /as si possono usare solo: attack, skill, move, init, reload, throw.");
             return;
         }
 
@@ -1701,6 +1931,16 @@ public class RpgTcpServer(string ipAddress, int port)
                 {
                     var reloadReq = JsonSerializer.Deserialize<ReloadRequestPayload>(req.InnerPayload);
                     await ResolveReloadAsync(client, npc, reloadReq);
+                    break;
+                }
+
+                case OpCode.C2S_Throw:
+                {
+                    var throwReq = JsonSerializer.Deserialize<ThrowRequestPayload>(req.InnerPayload);
+                    if (throwReq?.Position == null) { await Fail("Uso: /as <npc> throw <X> <Y> [Z] [arma]"); return; }
+
+                    throwReq.WeaponKey = InputLimits.Clean(throwReq.WeaponKey, InputLimits.MaxNameFieldLength);
+                    await ResolveThrowAsync(client, npc, throwReq);
                     break;
                 }
             }
