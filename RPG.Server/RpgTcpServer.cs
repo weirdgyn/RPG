@@ -1302,6 +1302,19 @@ public class RpgTcpServer(string ipAddress, int port)
         }
 
         var requested = moveReq.Position;
+
+        // Ogni spostamento è limitato dal Movement Allowance (MA metri, distanza 3D dalla posizione attuale)
+        double moveDistance = CombatRules.CalculateDistance(actor.Position, requested);
+        int allowance = Math.Max(0, actor.Stats.MA);
+        if (moveDistance > allowance)
+        {
+            await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
+            {
+                Message = $"Troppo lontano: {actor.Handle} può muoversi al massimo di {allowance}m per volta (MA {allowance}), la destinazione dista {moveDistance:F1}m."
+            }));
+            return;
+        }
+
         GameMap.MovementResult result = map.GetMovementResult(requested);
 
         string message;
