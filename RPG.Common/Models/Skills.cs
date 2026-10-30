@@ -59,9 +59,18 @@ public static class Skills
 
                 if (loadedMap != null && loadedMap.Count > 0)
                 {
-                    _skillToStatMap = new Dictionary<string, string>(loadedMap, StringComparer.OrdinalIgnoreCase);
+                    // La mappa integrata è la base: il file aggiunge o sovrascrive. Una copia vecchia del JSON
+                    // (es. in una cartella di output non aggiornata) non fa più sparire le abilità nuove.
+                    _skillToStatMap = new Dictionary<string, string>(DefaultMap, StringComparer.OrdinalIgnoreCase);
+                    int fromFile = 0, extra = 0;
+                    foreach (var kv in loadedMap)
+                    {
+                        if (!_skillToStatMap.ContainsKey(kv.Key)) extra++;
+                        _skillToStatMap[kv.Key] = kv.Value;
+                        fromFile++;
+                    }
                     _isInitialized = true;
-                    Console.WriteLine($"[CONFIG] -> SUCCESSO: Caricate {_skillToStatMap.Count} abilità da '{filePath}'.");
+                    Console.WriteLine($"[CONFIG] -> SUCCESSO: {fromFile} abilità lette da '{fullPath}' ({extra} oltre a quelle integrate), totale {_skillToStatMap.Count}.");
                     return;
                 }
             }
