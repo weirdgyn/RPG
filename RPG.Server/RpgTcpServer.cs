@@ -2646,7 +2646,7 @@ public class RpgTcpServer(string ipAddress, int port)
                 }
             }
 
-            if (success)
+            if (success && game != null)
             {
                 game.Players.Add(client.Player);
                 client.Player.Role = joinReq.Role;
@@ -3141,9 +3141,9 @@ public class RpgTcpServer(string ipAddress, int port)
         int cyberInit = SumCyberBonus(actor, "INIT");
 
         int requestedMod = 0;
-        if (!string.IsNullOrWhiteSpace(modifiers))
+        if (!string.IsNullOrWhiteSpace(modifiers) && !int.TryParse(modifiers.Trim(), out requestedMod))
         {
-            int.TryParse(modifiers.Trim(), out requestedMod);
+            requestedMod = 0;
         }
 
         int dice = (int)GameDice.Roll("1d10").Total;
