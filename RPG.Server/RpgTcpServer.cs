@@ -2857,6 +2857,8 @@ public class RpgTcpServer(string ipAddress, int port)
         foreach (var client in _connectedClients.Values)
         {
             if (excludeClientId.HasValue && client.Id == excludeClientId.Value) continue;
+            // Chi è ancora nel login non riceve le notifiche di rete
+            if (!client.IsAuthenticated) continue;
             try
             {
                 await client.SendPacketAsync(packet);
