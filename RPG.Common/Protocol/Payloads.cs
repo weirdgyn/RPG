@@ -143,6 +143,7 @@ public class AreaVictim
     public double Distance { get; set; }
     public int RawDamage { get; set; }
     public int ArmorSP { get; set; }
+    public int BtmReduction { get; set; }
     public int DamageDealt { get; set; }
     public int RemainingHealth { get; set; }
     public int MaxHealth { get; set; }
@@ -193,6 +194,8 @@ public class AttackResponsePayload
     public int ArmorSP { get; set; }
     public int ArmorAbsorbed { get; set; }
     public bool ArmorAblated { get; set; }
+    // Danno tolto dal Body Type Modifier del bersaglio (dopo l'armatura)
+    public int BtmReduction { get; set; }
     public int TargetRemainingHealth { get; set; }
     public int TargetMaxHealth { get; set; }
     public string TargetWoundStatus { get; set; } = string.Empty;

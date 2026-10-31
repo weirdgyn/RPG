@@ -1051,7 +1051,8 @@ public class RpgTcpServer(string ipAddress, int port)
 
                 // L'esplosione colpisce il corpo: protegge l'armatura del torso, nessun moltiplicatore di locazione
                 var armor = CombatRules.ApplyArmor(target.Armor.GetPiece(ArmorLocation.Torso), rawDamage, 1);
-                target.Health.CurrentHealth = Math.Max(0, target.Health.CurrentHealth - armor.DamageDealt);
+                int afterBtm = CombatRules.ApplyBodyTypeModifier(armor.DamageDealt, CombatRules.GetBodyTypeReduction(target.Stats.BODY));
+                target.Health.CurrentHealth = Math.Max(0, target.Health.CurrentHealth - afterBtm);
                 if (!changed.Contains(target)) changed.Add(target);
 
                 victims.Add(new AreaVictim
@@ -1060,7 +1061,8 @@ public class RpgTcpServer(string ipAddress, int port)
                     Distance = Math.Round(d, 1),
                     RawDamage = rawDamage,
                     ArmorSP = armor.SpFaced,
-                    DamageDealt = armor.DamageDealt,
+                    DamageDealt = afterBtm,
+                    BtmReduction = armor.DamageDealt - afterBtm,
                     RemainingHealth = target.Health.CurrentHealth,
                     MaxHealth = target.Health.MaxHealth,
                     WoundStatus = target.Health.GetWoundStatusDescription()
@@ -1325,6 +1327,7 @@ public class RpgTcpServer(string ipAddress, int port)
             string hitLocationName = string.Empty;
             int hitMultiplier = 1;
             CombatRules.ArmorResult? armorResult = null;
+            int btmReduction = 0;
 
             if (isHit)
             {
@@ -1340,7 +1343,8 @@ public class RpgTcpServer(string ipAddress, int port)
 
                     armorResult = CombatRules.ApplyArmor(target.Armor.GetPiece(loc.ArmorLocation), rawDamage, loc.DamageMultiplier,
                         armorPiercing: loadedAmmo?.HalvesArmorSP == true);
-                    damageDealt = armorResult.DamageDealt;
+                    btmReduction = CombatRules.GetBodyTypeReduction(target.Stats.BODY);
+                    damageDealt = CombatRules.ApplyBodyTypeModifier(armorResult.DamageDealt, btmReduction);
                 }
                 else
                 {
@@ -1376,6 +1380,7 @@ public class RpgTcpServer(string ipAddress, int port)
                 ArmorSP = armorResult?.SpFaced ?? 0,
                 ArmorAbsorbed = armorResult?.Absorbed ?? 0,
                 ArmorAblated = armorResult?.Ablated ?? false,
+                BtmReduction = armorResult != null ? armorResult.DamageDealt - damageDealt : 0,
                 TargetRemainingHealth = target.Health.CurrentHealth,
                 TargetMaxHealth = target.Health.MaxHealth,
                 TargetWoundStatus = target.Health.GetWoundStatusDescription(),

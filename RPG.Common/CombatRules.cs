@@ -66,6 +66,27 @@ public static class CombatRules
         return new ArmorResult(penetrating * locationMultiplier, sp, absorbed, ablated);
     }
     /// <summary>
+    /// Body Type Modifier CP2020 (riduzione del danno data dalla corporatura): BODY 2 o meno = 0,
+    /// 3-4 = 1, 5-7 = 2, 8-9 = 3, 10 = 4, 11 o più = 5. Restituisce il valore di riduzione (positivo).
+    /// </summary>
+    public static int GetBodyTypeReduction(int body) => body switch
+    {
+        <= 2 => 0,
+        <= 4 => 1,
+        <= 7 => 2,
+        <= 9 => 3,
+        10 => 4,
+        _ => 5
+    };
+
+    /// <summary>
+    /// Applica il BTM al danno che ha superato l'armatura (e il moltiplicatore di locazione):
+    /// un colpo che ha penetrato fa comunque almeno 1 danno; un colpo assorbito (0) resta 0.
+    /// </summary>
+    public static int ApplyBodyTypeModifier(int damageAfterArmor, int reduction)
+        => damageAfterArmor <= 0 ? 0 : Math.Max(1, damageAfterArmor - reduction);
+
+    /// <summary>
     /// Mappa il roll di locazione alla zona colpita:
     /// 1 = Testa (x2), 2-4 = Torso, 5 = Braccio Destro, 6 = Braccio Sinistro,
     /// 7-8 = Gamba Destra, 9-10 = Gamba Sinistra.

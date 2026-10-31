@@ -177,6 +177,10 @@ namespace RPG.Client
                                     string ablated = attackResp.ArmorAblated ? " [grey](SP -1)[/]" : "";
                                     grid.AddRow(new Markup($"    Armatura: [bold cyan]SP {attackResp.ArmorSP}[/] assorbe [cyan]{attackResp.ArmorAbsorbed}[/]{ablated}"));
                                 }
+                                if (attackResp.BtmReduction > 0)
+                                {
+                                    grid.AddRow(new Markup($"    Corporatura (BTM): [bold cyan]-{attackResp.BtmReduction}[/]"));
+                                }
                                 grid.AddRow(new Markup($"   Danno: [bold red]{attackResp.DamageDealt}[/]"));
                                 string maxHp = attackResp.TargetMaxHealth > 0 ? $"/{attackResp.TargetMaxHealth}" : "";
                                 grid.AddRow(new Markup($"   Stato {Markup.Escape(attackResp.TargetHandle)}: [bold yellow]{attackResp.TargetRemainingHealth}{maxHp} HP[/] [grey]({Markup.Escape(attackResp.TargetWoundStatus)})[/]"));
@@ -559,7 +563,9 @@ namespace RPG.Client
                                 table.AddColumn(new TableColumn("[bold white]Stato[/]"));
                                 foreach (var v in areaResp.Victims)
                                 {
-                                    string armor = v.ArmorSP > 0 ? $" [grey](SP {v.ArmorSP}, tirati {v.RawDamage})[/]" : "";
+                                    string armor = v.ArmorSP > 0 || v.BtmReduction > 0
+                                        ? $" [grey](tirati {v.RawDamage}{(v.ArmorSP > 0 ? $", SP {v.ArmorSP}" : "")}{(v.BtmReduction > 0 ? $", BTM -{v.BtmReduction}" : "")})[/]"
+                                        : "";
                                     string maxHp = v.MaxHealth > 0 ? $"/{v.MaxHealth}" : "";
                                     table.AddRow(
                                         Markup.Escape(v.Handle),
