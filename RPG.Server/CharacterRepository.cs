@@ -95,8 +95,8 @@ public static class CharacterRepository
         Console.WriteLine($"[CHAR] -> Nessun salvataggio precedente per '{safeHandle}'. Procedo alla generazione.");
         Character newChar = CharacterTemplateFactory.CreateFromDefaultTemplateOrRandom();
         newChar.Handle = safeHandle;
-        newChar.Health.MaxHealth = newChar.Stats.BODY * 5;
-        newChar.Health.CurrentHealth = newChar.Health.MaxHealth;
+        newChar.Health.MaxHealth = HealthSystem.TrackBoxes;
+        newChar.Health.CurrentHealth = HealthSystem.TrackBoxes;
         NormalizeSkills(newChar);
 
         SaveCharacter(newChar, directoryPath);
@@ -223,9 +223,25 @@ public static class CharacterRepository
         if (listed != null) character.EquippedWeapon = listed;
     }
 
+    /// <summary>
+    /// Schede salvate con la vecchia salute (BODY*5): porto la scheda a 40 caselle mantenendo il danno
+    /// già subito in valore assoluto (non in percentuale), con minimo 0 punti rimasti.
+    /// </summary>
+    public static void NormalizeHealth(Character character)
+    {
+        character.Health ??= new HealthSystem();
+        var h = character.Health;
+        if (h.MaxHealth == HealthSystem.TrackBoxes) return;
+
+        int damage = Math.Max(0, h.MaxHealth - h.CurrentHealth);
+        h.MaxHealth = HealthSystem.TrackBoxes;
+        h.CurrentHealth = Math.Max(0, HealthSystem.TrackBoxes - damage);
+    }
+
     public static void NormalizeSkills(Character character)
     {
         NormalizeEquipment(character);
+        NormalizeHealth(character);
 
         if (character.Skills == null || character.Skills.Count == 0)
         {

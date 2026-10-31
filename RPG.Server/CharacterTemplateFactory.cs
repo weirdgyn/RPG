@@ -65,7 +65,7 @@ public static class CharacterTemplateFactory
 
     /// <summary>
     /// Aggiunge una leggera variazione casuale alle statistiche del personaggio (-2..+2),
-    /// mantenendo i valori canonici CP2020 nel range 2-10, e aggiorna i punti ferita (BODY * 5).
+    /// mantenendo i valori canonici CP2020 nel range 2-10, e riporta la salute piena (le caselle ferite sono 40 per tutti).
     /// </summary>
     public static void RandomizeStats(Character character)
     {
@@ -78,8 +78,8 @@ public static class CharacterTemplateFactory
         character.Stats.BODY = RandomizeStatValue(character.Stats.BODY);
         character.Stats.EMP = RandomizeStatValue(character.Stats.EMP);
 
-        character.Health.MaxHealth = character.Stats.BODY * 5;
-        character.Health.CurrentHealth = character.Health.MaxHealth;
+        character.Health.MaxHealth = HealthSystem.TrackBoxes;
+        character.Health.CurrentHealth = HealthSystem.TrackBoxes;
     }
 
     private static int RandomizeStatValue(int baseVal)
