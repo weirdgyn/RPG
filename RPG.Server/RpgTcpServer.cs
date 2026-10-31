@@ -117,7 +117,7 @@ public class RpgTcpServer(string ipAddress, int port)
         {
             _connectedClients.TryRemove(client.Id, out _);
             client.TcpClient.Close();
-            var masterNotices = RemovePlayerFromGames(client.Player, out var completedChecks);
+            var masterNotices = RemovePlayerFromGames(client.Player, out var completedChecks, out var turnNotices);
 
             string userName = !string.IsNullOrEmpty(client.Player.Username) ? client.Player.Username : client.IdShort;
             Console.WriteLine($"[SERVER] Client disconnesso: {userName}");
@@ -131,6 +131,11 @@ public class RpgTcpServer(string ipAddress, int port)
                 foreach (var (gameName, remaining) in masterNotices)
                 {
                     await NotifyPlayersAsync(remaining, $"Il master {userName} si è disconnesso da '{gameName}': il ruolo di master è libero.");
+                }
+
+                foreach (var (turnPlayers, turnText) in turnNotices)
+                {
+                    await NotifyPlayersAsync(turnPlayers, turnText);
                 }
 
                 // Un check in attesa solo di chi si è disconnesso va spogliato con chi è rimasto
@@ -514,17 +519,19 @@ public class RpgTcpServer(string ipAddress, int port)
     }
 
     // Da chiamare sotto _gamesLock. Toglie un personaggio dall'ordine di gioco tenendo coerente il turno corrente.
-    private static void RemoveFromTurnOrder(Game game, string handle)
+    // Restituisce l'annuncio da inviare al game se il turno corrente è cambiato (o il combattimento è finito), altrimenti null.
+    private string? RemoveFromTurnOrder(Game game, string handle)
     {
         int i = game.TurnOrder.FindIndex(t => t.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase));
-        if (i < 0) return;
+        if (i < 0) return null;
 
         game.TurnOrder.RemoveAt(i);
-        if (!game.CombatActive) return;
+        if (!game.CombatActive) return null;
 
         if (game.TurnOrder.Count == 0)
         {
             game.CombatActive = false;
+            return $"{handle} ha lasciato il combattimento: nessuno è rimasto nell'ordine, combattimento terminato.";
         }
         else if (i < game.TurnIndex)
         {
@@ -540,7 +547,10 @@ public class RpgTcpServer(string ipAddress, int port)
             }
             game.TurnMoveUsed = 0;
             game.TurnActionUsed = false;
+            return $"{handle} ha lasciato il combattimento durante il suo turno. {DescribeTurn(game)}";
         }
+
+        return null;
     }
 
     private string DescribeTurn(Game game)
@@ -2049,14 +2059,20 @@ public class RpgTcpServer(string ipAddress, int port)
             case "remove":
             {
                 bool removed;
+                string? turnNotice = null;
                 lock (_gamesLock)
                 {
                     removed = game.NPCs.RemoveAll(n => n.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase)) > 0;
                     if (removed)
                     {
                         game.InitRolls.RemoveAll(r => r.PlayerName.Equals(handle, StringComparison.OrdinalIgnoreCase));
-                        RemoveFromTurnOrder(game, handle);
+                        turnNotice = RemoveFromTurnOrder(game, handle);
                     }
+                }
+
+                if (turnNotice != null)
+                {
+                    await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = turnNotice }));
                 }
 
                 if (removed) Console.WriteLine($"[NPC] {client.Player.Username} ha rimosso l'NPC '{handle}' da '{game.Name}'.");
@@ -2304,6 +2320,7 @@ public class RpgTcpServer(string ipAddress, int port)
         List<Player> remaining = [];
         Game? leftGame = null;
         Game.Check? completedCheck = null;
+        string? leaveTurnNotice = null;
 
         lock (_gamesLock)
         {
@@ -2320,7 +2337,7 @@ public class RpgTcpServer(string ipAddress, int port)
                 if (client.Player.Character != null)
                 {
                     game.InitRolls.RemoveAll(r => r.PlayerName.Equals(client.Player.Character.Handle, StringComparison.OrdinalIgnoreCase));
-                    RemoveFromTurnOrder(game, client.Player.Character.Handle);
+                    leaveTurnNotice = RemoveFromTurnOrder(game, client.Player.Character.Handle);
                     completedCheck = PruneCheckEntry(game, client.Player.Character.Handle);
                 }
 
@@ -2372,6 +2389,11 @@ public class RpgTcpServer(string ipAddress, int port)
             : $"{client.Player.Username} ha lasciato '{gameName}'.";
 
         await NotifyPlayersAsync(remaining, notice);
+
+        if (leaveTurnNotice != null)
+        {
+            await NotifyPlayersAsync(remaining, leaveTurnNotice);
+        }
 
         // Se chi è uscito era l'ultimo a dover tirare, il check si spoglia con chi è rimasto
         if (completedCheck != null && leftGame != null && !gameClosed)
@@ -3127,10 +3149,11 @@ public class RpgTcpServer(string ipAddress, int port)
 
     // Rimuove il giocatore da tutti i game. Restituisce, per ogni game rimasto aperto di cui era master,
     // il nome e i giocatori rimasti (da avvisare).
-    private List<(string GameName, List<Player> Remaining)> RemovePlayerFromGames(Player player, out List<(Game Game, Game.Check Check)> completedChecks)
+    private List<(string GameName, List<Player> Remaining)> RemovePlayerFromGames(Player player, out List<(Game Game, Game.Check Check)> completedChecks, out List<(List<Player> Remaining, string Text)> turnNotices)
     {
         var masterNotices = new List<(string, List<Player>)>();
         completedChecks = [];
+        turnNotices = [];
 
         lock (_gamesLock)
         {
@@ -3141,7 +3164,8 @@ public class RpgTcpServer(string ipAddress, int port)
                 if (player.Character != null)
                 {
                     game.InitRolls.RemoveAll(r => r.PlayerName.Equals(player.Character.Handle, StringComparison.OrdinalIgnoreCase));
-                    RemoveFromTurnOrder(game, player.Character.Handle);
+                    var turnText = RemoveFromTurnOrder(game, player.Character.Handle);
+                    if (turnText != null && game.Players.Count > 0) turnNotices.Add(([.. game.Players], turnText));
                     var done = PruneCheckEntry(game, player.Character.Handle);
                     if (done != null && game.Players.Count > 0) completedChecks.Add((game, done));
                 }
