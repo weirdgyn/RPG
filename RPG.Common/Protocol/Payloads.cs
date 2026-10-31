@@ -72,6 +72,12 @@ public class SkillCheckResponsePayload
     public string Message { get; set; } = string.Empty;
 }
 
+public class CombatRequestPayload
+{
+    // "start", "end", "status"
+    public string Action { get; set; } = string.Empty;
+}
+
 public class ThrowRequestPayload
 {
     // Punto di mira del lancio

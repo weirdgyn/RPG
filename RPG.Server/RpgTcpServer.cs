@@ -170,6 +170,12 @@ public class RpgTcpServer(string ipAddress, int port)
             case OpCode.C2S_Throw:
                 await HandleThrowAsync(client, packet);
                 break;
+            case OpCode.C2S_Combat:
+                await HandleCombatAsync(client, packet);
+                break;
+            case OpCode.C2S_Next:
+                await HandleNextAsync(client);
+                break;
             case OpCode.C2S_Roll:
                 await HandleRollAsync(client, packet);
                 break;
@@ -413,12 +419,16 @@ public class RpgTcpServer(string ipAddress, int port)
             return;
         }
 
+        if (!await CheckTurnAsync(reporter, game, attacker, needsAction: true)) return;
+
         var outcome = ResolveAttackRules(attacker, target.Character, attackReq.WeaponOrSkill);
         if (outcome.Error != null)
         {
             await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = outcome.Error }));
             return;
         }
+
+        SpendAction(game);
 
         // Il colpo sparato consuma munizioni: la scheda dell'attaccante va salvata anche se ha mancato
         if (outcome.AttackerChanged)
@@ -440,6 +450,293 @@ public class RpgTcpServer(string ipAddress, int port)
             try { await session.SendPacketAsync(attackPacket); }
             catch (Exception ex) { Console.WriteLine($"[COMBAT] Risultato non consegnato a [{session.IdShort}]: {ex.Message}"); }
         }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Combattimento a turni
+    // ---------------------------------------------------------------------------------------------
+
+    // Fuori dal combattimento nessun limite. In combattimento agisce solo chi è di turno e, per le azioni
+    // (attacco, lancio, ricarica), una sola per turno. Vale anche per gli NPC pilotati dal master con /as.
+    private async Task<bool> CheckTurnAsync(ClientSession reporter, Game game, Character actor, bool needsAction)
+    {
+        string? error = null;
+        lock (_gamesLock)
+        {
+            if (game.CombatActive)
+            {
+                string? current = game.CurrentTurnHandle;
+                if (current == null || !current.Equals(actor.Handle, StringComparison.OrdinalIgnoreCase))
+                {
+                    error = $"Non è il turno di {actor.Handle}: tocca a {current ?? "nessuno"} (round {game.Round}).";
+                }
+                else if (needsAction && game.TurnActionUsed)
+                {
+                    error = $"{actor.Handle} ha già usato l'azione di questo turno: termina il turno con /next.";
+                }
+            }
+        }
+
+        if (error == null) return true;
+
+        await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = error }));
+        return false;
+    }
+
+    private void SpendAction(Game game)
+    {
+        lock (_gamesLock)
+        {
+            if (game.CombatActive) game.TurnActionUsed = true;
+        }
+    }
+
+    // Da chiamare sotto _gamesLock. Passa al prossimo personaggio valido dell'ordine (ancora nel game e non K.O.),
+    // incrementando il round al giro completo, e azzera movimento e azione. False se non c'è più nessuno.
+    private bool MoveToNextTurn(Game game)
+    {
+        int n = game.TurnOrder.Count;
+        for (int step = 1; step <= n; step++)
+        {
+            int raw = game.TurnIndex + step;
+            int idx = raw % n;
+            var combatant = FindCombatantInGame(game, game.TurnOrder[idx].Handle);
+            if (combatant == null || IsKnockedOut(combatant.Character)) continue;
+
+            game.Round += raw / n;
+            game.TurnIndex = idx;
+            game.TurnMoveUsed = 0;
+            game.TurnActionUsed = false;
+            return true;
+        }
+
+        return false;
+    }
+
+    // Da chiamare sotto _gamesLock. Toglie un personaggio dall'ordine di gioco tenendo coerente il turno corrente.
+    private static void RemoveFromTurnOrder(Game game, string handle)
+    {
+        int i = game.TurnOrder.FindIndex(t => t.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase));
+        if (i < 0) return;
+
+        game.TurnOrder.RemoveAt(i);
+        if (!game.CombatActive) return;
+
+        if (game.TurnOrder.Count == 0)
+        {
+            game.CombatActive = false;
+        }
+        else if (i < game.TurnIndex)
+        {
+            game.TurnIndex--;
+        }
+        else if (i == game.TurnIndex)
+        {
+            // Se n'è andato chi era di turno: tocca a chi lo seguiva, con movimento e azione freschi
+            if (game.TurnIndex >= game.TurnOrder.Count)
+            {
+                game.TurnIndex = 0;
+                game.Round++;
+            }
+            game.TurnMoveUsed = 0;
+            game.TurnActionUsed = false;
+        }
+    }
+
+    private string DescribeTurn(Game game)
+    {
+        string current = game.CurrentTurnHandle ?? "nessuno";
+        var combatant = game.CurrentTurnHandle != null ? FindCombatantInGame(game, game.CurrentTurnHandle) : null;
+        string budget = combatant != null
+            ? $" Movimento: {Math.Max(0, combatant.Character.Stats.MA - game.TurnMoveUsed):F1}/{combatant.Character.Stats.MA}m, azione: {(game.TurnActionUsed ? "usata" : "disponibile")}."
+            : string.Empty;
+        return $"Round {game.Round} - tocca a {current}.{budget}";
+    }
+
+    private async Task HandleCombatAsync(ClientSession client, NetworkPacket packet)
+    {
+        var req = packet.DeserializePayload<CombatRequestPayload>();
+        if (req == null) return;
+
+        async Task Reply(string message) =>
+            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = message }));
+
+        Game? game;
+        bool isMaster;
+        lock (_gamesLock)
+        {
+            game = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
+            isMaster = client.Player.Role == Player.RoleType.master;
+        }
+
+        if (game == null)
+        {
+            await Reply("Non sei in nessun game: usa /join <game>.");
+            return;
+        }
+
+        string action = InputLimits.Clean(req.Action, 16).ToLowerInvariant();
+
+        if (action == "status")
+        {
+            string text;
+            lock (_gamesLock)
+            {
+                if (!game.CombatActive)
+                {
+                    text = game.TurnOrder.Count > 0
+                        ? $"Nessun combattimento in corso. Ordine di iniziativa pronto: {string.Join(", ", game.TurnOrder.Select(t => $"{t.Handle} ({t.Initiative})"))}."
+                        : "Nessun combattimento in corso.";
+                }
+                else
+                {
+                    var order = game.TurnOrder.Select((t, i) => i == game.TurnIndex ? $"[{t.Handle}]" : t.Handle);
+                    text = $"{DescribeTurn(game)} Ordine: {string.Join(" > ", order)}.";
+                }
+            }
+            await Reply(text);
+            return;
+        }
+
+        if (!isMaster)
+        {
+            await Reply("Solo il master può avviare o terminare il combattimento.");
+            return;
+        }
+
+        switch (action)
+        {
+            case "start":
+            {
+                string? error = null;
+                string announce = string.Empty;
+                lock (_gamesLock)
+                {
+                    if (game.CombatActive)
+                    {
+                        error = "Il combattimento è già in corso: usa /combat status oppure /combat end.";
+                    }
+                    else if (game.ActiveCheck is { Kind: Game.CheckKind.Initiative })
+                    {
+                        error = "L'iniziativa è ancora aperta: attendi lo spoglio o chiudila con /check close.";
+                    }
+                    else if (game.TurnOrder.Count == 0)
+                    {
+                        error = "Nessun ordine di iniziativa: usa prima /check init.";
+                    }
+                    else
+                    {
+                        game.CombatActive = true;
+                        game.Round = 0;
+                        game.TurnIndex = game.TurnOrder.Count - 1;
+                        if (!MoveToNextTurn(game))
+                        {
+                            game.CombatActive = false;
+                            error = "Nessun personaggio in grado di agire nell'ordine di iniziativa.";
+                        }
+                        else
+                        {
+                            announce = $"COMBATTIMENTO INIZIATO! Ordine: {string.Join(" > ", game.TurnOrder.Select(t => t.Handle))}. {DescribeTurn(game)}";
+                        }
+                    }
+                }
+
+                if (error != null) await Reply(error);
+                else
+                {
+                    Console.WriteLine($"[TURN] {client.Player.Username} avvia il combattimento in '{game.Name}'.");
+                    await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = announce }));
+                }
+                break;
+            }
+
+            case "end":
+            {
+                bool was;
+                lock (_gamesLock)
+                {
+                    was = game.CombatActive;
+                    game.CombatActive = false;
+                    game.TurnMoveUsed = 0;
+                    game.TurnActionUsed = false;
+                }
+
+                if (!was) await Reply("Nessun combattimento in corso.");
+                else
+                {
+                    Console.WriteLine($"[TURN] {client.Player.Username} termina il combattimento in '{game.Name}'.");
+                    await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Il master ha terminato il combattimento: movimento e azioni tornano liberi." }));
+                }
+                break;
+            }
+
+            default:
+                await Reply("Uso: /combat start | /combat end | /combat status");
+                break;
+        }
+    }
+
+    // /next: il giocatore di turno (o il master, sempre) termina il turno corrente
+    private async Task HandleNextAsync(ClientSession client)
+    {
+        Game? game;
+        lock (_gamesLock)
+        {
+            game = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
+        }
+
+        async Task Reply(string message) =>
+            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = message }));
+
+        if (game == null)
+        {
+            await Reply("Non sei in nessun game: usa /join <game>.");
+            return;
+        }
+
+        string? error = null;
+        string announce = string.Empty;
+        lock (_gamesLock)
+        {
+            if (!game.CombatActive)
+            {
+                error = "Nessun combattimento in corso.";
+            }
+            else
+            {
+                bool isMaster = client.Player.Role == Player.RoleType.master;
+                string? current = game.CurrentTurnHandle;
+                bool isCurrent = client.Player.Character != null && current != null
+                    && current.Equals(client.Player.Character.Handle, StringComparison.OrdinalIgnoreCase);
+
+                if (!isMaster && !isCurrent)
+                {
+                    error = $"Non è il tuo turno: tocca a {current ?? "nessuno"}.";
+                }
+                else
+                {
+                    string ended = current ?? "nessuno";
+                    if (MoveToNextTurn(game))
+                    {
+                        announce = $"Fine turno di {ended}. {DescribeTurn(game)}";
+                    }
+                    else
+                    {
+                        game.CombatActive = false;
+                        announce = "Nessun personaggio in grado di agire: combattimento terminato.";
+                    }
+                }
+            }
+        }
+
+        if (error != null)
+        {
+            await Reply(error);
+            return;
+        }
+
+        Console.WriteLine($"[TURN] {announce}");
+        await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = announce }));
     }
 
     private async Task HandleThrowAsync(ClientSession client, NetworkPacket packet)
@@ -496,12 +793,16 @@ public class RpgTcpServer(string ipAddress, int port)
             return;
         }
 
+        if (!await CheckTurnAsync(reporter, game, thrower, needsAction: true)) return;
+
         var outcome = ResolveThrowRules(thrower, throwReq.Position, throwReq.WeaponKey, everyone);
         if (outcome.Error != null)
         {
             await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = outcome.Error }));
             return;
         }
+
+        SpendAction(game);
 
         Console.WriteLine(outcome.LogLine);
 
@@ -678,6 +979,14 @@ public class RpgTcpServer(string ipAddress, int port)
         string ammoKey = InputLimits.Clean(reloadReq?.AmmoKey, InputLimits.MaxNameFieldLength) ?? string.Empty;
         string weaponKey = InputLimits.Clean(reloadReq?.WeaponKey, InputLimits.MaxNameFieldLength) ?? string.Empty;
 
+        Game? game;
+        lock (_gamesLock)
+        {
+            game = _games.FirstOrDefault(g => g.Players.Contains(reporter.Player));
+        }
+
+        if (game != null && !await CheckTurnAsync(reporter, game, actor, needsAction: true)) return;
+
         string? error;
         string? message;
         lock (_combatLock)
@@ -690,6 +999,8 @@ public class RpgTcpServer(string ipAddress, int port)
             await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = error }));
             return;
         }
+
+        if (game != null) SpendAction(game);
 
         CharacterRepository.TrySaveCharacter(actor);
         Console.WriteLine($"[COMBAT] {message}");
@@ -1289,13 +1600,15 @@ public class RpgTcpServer(string ipAddress, int port)
 
     private async Task ResolveMoveAsync(ClientSession reporter, Character actor, MoveRequestPayload moveReq)
     {
+        Game? game;
         GameMap? map;
         lock (_gamesLock)
         {
-            map = _games.FirstOrDefault(g => g.Players.Contains(reporter.Player))?.Map;
+            game = _games.FirstOrDefault(g => g.Players.Contains(reporter.Player));
+            map = game?.Map;
         }
 
-        if (map == null)
+        if (game == null || map == null)
         {
             await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Non sei in una partita attiva. Non puoi muoverti." }));
             return;
@@ -1303,14 +1616,28 @@ public class RpgTcpServer(string ipAddress, int port)
 
         var requested = moveReq.Position;
 
-        // Ogni spostamento è limitato dal Movement Allowance (MA metri, distanza 3D dalla posizione attuale)
+        // In combattimento si agisce solo nel proprio turno
+        if (!await CheckTurnAsync(reporter, game, actor, needsAction: false)) return;
+
+        // Ogni spostamento è limitato dal Movement Allowance (MA metri, distanza 3D dalla posizione attuale);
+        // in combattimento MA è il totale del turno, quindi si sottrae quanto già percorso.
         double moveDistance = CombatRules.CalculateDistance(actor.Position, requested);
         int allowance = Math.Max(0, actor.Stats.MA);
-        if (moveDistance > allowance)
+        double available = allowance;
+        bool inCombat;
+        lock (_gamesLock)
+        {
+            inCombat = game.CombatActive;
+            if (inCombat) available = Math.Max(0, allowance - game.TurnMoveUsed);
+        }
+
+        if (moveDistance > available + 1e-9)
         {
             await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
             {
-                Message = $"Troppo lontano: {actor.Handle} può muoversi al massimo di {allowance}m per volta (MA {allowance}), la destinazione dista {moveDistance:F1}m."
+                Message = inCombat
+                    ? $"Troppo lontano: a {actor.Handle} restano {available:F1}m di movimento in questo turno (MA {allowance}), la destinazione dista {moveDistance:F1}m."
+                    : $"Troppo lontano: {actor.Handle} può muoversi al massimo di {allowance}m per volta (MA {allowance}), la destinazione dista {moveDistance:F1}m."
             }));
             return;
         }
@@ -1321,6 +1648,10 @@ public class RpgTcpServer(string ipAddress, int port)
         if (result == GameMap.MovementResult.Success)
         {
             actor.Position = requested;
+            lock (_gamesLock)
+            {
+                if (game.CombatActive) game.TurnMoveUsed += moveDistance;
+            }
             CharacterRepository.TrySaveCharacter(actor);
 
             message = $"Posizione aggiornata a ({requested.X}, {requested.Y}, {requested.Z})";
@@ -1724,6 +2055,7 @@ public class RpgTcpServer(string ipAddress, int port)
                     if (removed)
                     {
                         game.InitRolls.RemoveAll(r => r.PlayerName.Equals(handle, StringComparison.OrdinalIgnoreCase));
+                        RemoveFromTurnOrder(game, handle);
                     }
                 }
 
@@ -1988,7 +2320,7 @@ public class RpgTcpServer(string ipAddress, int port)
                 if (client.Player.Character != null)
                 {
                     game.InitRolls.RemoveAll(r => r.PlayerName.Equals(client.Player.Character.Handle, StringComparison.OrdinalIgnoreCase));
-                    game.TurnOrder.RemoveAll(t => t.Handle.Equals(client.Player.Character.Handle, StringComparison.OrdinalIgnoreCase));
+                    RemoveFromTurnOrder(game, client.Player.Character.Handle);
                     completedCheck = PruneCheckEntry(game, client.Player.Character.Handle);
                 }
 
@@ -2452,6 +2784,10 @@ public class RpgTcpServer(string ipAddress, int port)
             {
                 error = "C'è già un check aperto: usa /check status, /check close o /check cancel.";
             }
+            else if (!isSkill && game.CombatActive)
+            {
+                error = "Combattimento in corso: termina con /combat end prima di tirare una nuova iniziativa.";
+            }
             else
             {
                 var candidates = new List<Combatant>();
@@ -2805,7 +3141,7 @@ public class RpgTcpServer(string ipAddress, int port)
                 if (player.Character != null)
                 {
                     game.InitRolls.RemoveAll(r => r.PlayerName.Equals(player.Character.Handle, StringComparison.OrdinalIgnoreCase));
-                    game.TurnOrder.RemoveAll(t => t.Handle.Equals(player.Character.Handle, StringComparison.OrdinalIgnoreCase));
+                    RemoveFromTurnOrder(game, player.Character.Handle);
                     var done = PruneCheckEntry(game, player.Character.Handle);
                     if (done != null && game.Players.Count > 0) completedChecks.Add((game, done));
                 }

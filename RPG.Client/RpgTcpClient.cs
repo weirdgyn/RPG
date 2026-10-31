@@ -846,6 +846,8 @@ namespace RPG.Client
                 table.AddRow("[bold white]/npc[/]", "[cyan]add <h> | list | remove <h> | status <h>[/]", "Master: usa una scheda esistente come NPC del game");
                 table.AddRow("[bold white]/as[/]", "[cyan]<npc> attack|skill|move|init|reload|throw ...[/]", "Master: esegue il comando per conto di un NPC");
                 table.AddRow("[bold white]/attack[/]", "[cyan]<target> [[arma|skill]][/]", "Attacca un bersaglio con arma in pugno o specificata");
+                table.AddRow("[bold white]/combat[/]", "[cyan]start | end | status[/]", "Master: avvia/termina il combattimento a turni (dopo /check init); status per tutti");
+                table.AddRow("[bold white]/next[/]", "[grey]-[/]", "Termina il tuo turno (il master può sempre farlo)");
                 table.AddRow("[bold white]/throw[/]", "[cyan]<X> <Y> [[Z]] [[arma]][/]", "Lancia un'arma ad area (granata) verso un punto: se manca devia");
                 table.AddRow("[bold white]/reload[/]", "[cyan][[munizioni]] [[arma]][/]", "Ricarica l'arma in pugno (opz. tipo di munizioni, es. /reload ap)");
                 table.AddRow("[bold white]/skill[/]", "[cyan]<nome> [[TN]][/]", "Effettua una prova di abilità d10 (es. /skill Pistola 15)");
@@ -1284,6 +1286,30 @@ namespace RPG.Client
                     else
                     {
                         AnsiConsole.MarkupLine("[bold red][[!]]: Sintassi non valida. Usa: /move <X> <Y> [[Z]][/]");
+                    }
+                    continue;
+                }
+
+                if (trimmedInput.Equals("/next", StringComparison.OrdinalIgnoreCase)
+                    || trimmedInput.Equals("/endturn", StringComparison.OrdinalIgnoreCase))
+                {
+                    await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_Next, new { })));
+                    continue;
+                }
+
+                if (trimmedInput.Equals("/combat", StringComparison.OrdinalIgnoreCase)
+                    || trimmedInput.StartsWith("/combat ", StringComparison.OrdinalIgnoreCase))
+                {
+                    string[] combatParts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    string combatAction = combatParts.Length >= 2 ? combatParts[1].ToLowerInvariant() : "status";
+                    if (combatAction is "start" or "end" or "status")
+                    {
+                        await _writer.WriteLineAsync(JsonSerializer.Serialize(
+                            NetworkPacket.Create(OpCode.C2S_Combat, new CombatRequestPayload { Action = combatAction })));
+                    }
+                    else
+                    {
+                        AnsiConsole.MarkupLine("[bold red][[!]]: Uso:[/] [yellow]/combat start[/] | [yellow]/combat end[/] | [yellow]/combat status[/]");
                     }
                     continue;
                 }

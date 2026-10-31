@@ -52,4 +52,15 @@ public class Game
 
     public Check? ActiveCheck { get; set; }
     public List<TurnEntry> TurnOrder { get; set; } = [];
+
+    // Combattimento a turni (avviato dal master con /combat start): in ogni turno agisce un solo personaggio,
+    // con movimento fino a MA metri in totale e una sola azione (attacco, lancio, ricarica).
+    public bool CombatActive { get; set; }
+    public int Round { get; set; }
+    public int TurnIndex { get; set; }
+    public double TurnMoveUsed { get; set; }
+    public bool TurnActionUsed { get; set; }
+
+    public string? CurrentTurnHandle =>
+        CombatActive && TurnIndex >= 0 && TurnIndex < TurnOrder.Count ? TurnOrder[TurnIndex].Handle : null;
 }
