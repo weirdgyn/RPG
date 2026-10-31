@@ -241,7 +241,7 @@ public class RpgTcpServer(string ipAddress, int port)
         }
     }
 
-    private async Task HandlePingAsync(ClientSession client)
+    private static async Task HandlePingAsync(ClientSession client)
     {
         var pong = new PongPayload
         {
@@ -373,11 +373,10 @@ public class RpgTcpServer(string ipAddress, int port)
     // Da chiamare sotto _gamesLock. Sessioni dei partecipanti del game.
     private List<ClientSession> GetGameSessions(Game game)
     {
-        return game.Players
+        return [.. game.Players
             .Select(p => _connectedClients.Values.FirstOrDefault(s => ReferenceEquals(s.Player, p)))
             .Where(s => s != null)
-            .Select(s => s!)
-            .ToList();
+            .Select(s => s!)];
     }
 
     private async Task HandleAttackAsync(ClientSession client, NetworkPacket packet)
@@ -623,68 +622,68 @@ public class RpgTcpServer(string ipAddress, int port)
         switch (action)
         {
             case "start":
-            {
-                string? error = null;
-                string announce = string.Empty;
-                lock (_gamesLock)
                 {
-                    if (game.CombatActive)
+                    string? error = null;
+                    string announce = string.Empty;
+                    lock (_gamesLock)
                     {
-                        error = "Il combattimento è già in corso: usa /combat status oppure /combat end.";
-                    }
-                    else if (game.ActiveCheck is { Kind: Game.CheckKind.Initiative })
-                    {
-                        error = "L'iniziativa è ancora aperta: attendi lo spoglio o chiudila con /check close.";
-                    }
-                    else if (game.TurnOrder.Count == 0)
-                    {
-                        error = "Nessun ordine di iniziativa: usa prima /check init.";
-                    }
-                    else
-                    {
-                        game.CombatActive = true;
-                        game.Round = 0;
-                        game.TurnIndex = game.TurnOrder.Count - 1;
-                        if (!MoveToNextTurn(game))
+                        if (game.CombatActive)
                         {
-                            game.CombatActive = false;
-                            error = "Nessun personaggio in grado di agire nell'ordine di iniziativa.";
+                            error = "Il combattimento è già in corso: usa /combat status oppure /combat end.";
+                        }
+                        else if (game.ActiveCheck is { Kind: Game.CheckKind.Initiative })
+                        {
+                            error = "L'iniziativa è ancora aperta: attendi lo spoglio o chiudila con /check close.";
+                        }
+                        else if (game.TurnOrder.Count == 0)
+                        {
+                            error = "Nessun ordine di iniziativa: usa prima /check init.";
                         }
                         else
                         {
-                            announce = $"COMBATTIMENTO INIZIATO! Ordine: {string.Join(" > ", game.TurnOrder.Select(t => t.Handle))}. {DescribeTurn(game)}";
+                            game.CombatActive = true;
+                            game.Round = 0;
+                            game.TurnIndex = game.TurnOrder.Count - 1;
+                            if (!MoveToNextTurn(game))
+                            {
+                                game.CombatActive = false;
+                                error = "Nessun personaggio in grado di agire nell'ordine di iniziativa.";
+                            }
+                            else
+                            {
+                                announce = $"COMBATTIMENTO INIZIATO! Ordine: {string.Join(" > ", game.TurnOrder.Select(t => t.Handle))}. {DescribeTurn(game)}";
+                            }
                         }
                     }
-                }
 
-                if (error != null) await Reply(error);
-                else
-                {
-                    Console.WriteLine($"[TURN] {client.Player.Username} avvia il combattimento in '{game.Name}'.");
-                    await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = announce }));
+                    if (error != null) await Reply(error);
+                    else
+                    {
+                        Console.WriteLine($"[TURN] {client.Player.Username} avvia il combattimento in '{game.Name}'.");
+                        await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = announce }));
+                    }
+                    break;
                 }
-                break;
-            }
 
             case "end":
-            {
-                bool was;
-                lock (_gamesLock)
                 {
-                    was = game.CombatActive;
-                    game.CombatActive = false;
-                    game.TurnMoveUsed = 0;
-                    game.TurnActionUsed = false;
-                }
+                    bool was;
+                    lock (_gamesLock)
+                    {
+                        was = game.CombatActive;
+                        game.CombatActive = false;
+                        game.TurnMoveUsed = 0;
+                        game.TurnActionUsed = false;
+                    }
 
-                if (!was) await Reply("Nessun combattimento in corso.");
-                else
-                {
-                    Console.WriteLine($"[TURN] {client.Player.Username} termina il combattimento in '{game.Name}'.");
-                    await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Il master ha terminato il combattimento: movimento e azioni tornano liberi." }));
+                    if (!was) await Reply("Nessun combattimento in corso.");
+                    else
+                    {
+                        Console.WriteLine($"[TURN] {client.Player.Username} termina il combattimento in '{game.Name}'.");
+                        await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Il master ha terminato il combattimento: movimento e azioni tornano liberi." }));
+                    }
+                    break;
                 }
-                break;
-            }
 
             default:
                 await Reply("Uso: /combat start | /combat end | /combat status");
@@ -795,7 +794,7 @@ public class RpgTcpServer(string ipAddress, int port)
                     var cur = game.CurrentTurnHandle != null ? FindCombatantInGame(game, game.CurrentTurnHandle) : null;
                     if (cur != null) payload.MoveLeft = Math.Max(0, cur.Character.Stats.MA - game.TurnMoveUsed);
                 }
-                payload.TurnOrder = game.TurnOrder.Select(t => t.Handle).ToList();
+                payload.TurnOrder = [.. game.TurnOrder.Select(t => t.Handle)];
 
                 var check = game.ActiveCheck;
                 if (check != null)
@@ -803,8 +802,8 @@ public class RpgTcpServer(string ipAddress, int port)
                     payload.CheckDescription = check.Kind == Game.CheckKind.Skill
                         ? $"Prova di {check.SkillName}{(viewerIsMaster ? $" (TN {check.TargetNumber})" : "")}"
                         : "Tiro di iniziativa";
-                    payload.CheckRolled = check.Entries.Where(e => e.Total.HasValue).Select(e => e.Handle).ToList();
-                    payload.CheckWaiting = check.Entries.Where(e => !e.Total.HasValue).Select(e => e.Handle).ToList();
+                    payload.CheckRolled = [.. check.Entries.Where(e => e.Total.HasValue).Select(e => e.Handle)];
+                    payload.CheckWaiting = [.. check.Entries.Where(e => !e.Total.HasValue).Select(e => e.Handle)];
                 }
             }
         }
@@ -958,7 +957,7 @@ public class RpgTcpServer(string ipAddress, int port)
     // Regole del lancio/esplosione, sincrone e sotto _combatLock. Nessun I/O di rete qui dentro.
     private ThrowOutcome ResolveThrowRules(Character thrower, Position3D aimed, string? weaponKey, List<Character> everyone)
     {
-        ThrowOutcome Error(string message) => new(message, null, null, []);
+        static ThrowOutcome Error(string message) => new(message, null, null, []);
 
         lock (_combatLock)
         {
@@ -1407,7 +1406,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
         // Il motivo è testo libero che finisce nel log e nelle notifiche di tutti: tolgo i caratteri di
         // controllo (niente righe finte nel log) e lo limito in lunghezza.
-        string reason = new string((rollReq?.Reason ?? string.Empty).Where(c => !char.IsControl(c)).ToArray()).Trim();
+        string reason = new string([.. (rollReq?.Reason ?? string.Empty).Where(c => !char.IsControl(c))]).Trim();
         if (reason.Length > MaxRollReasonLength) reason = reason[..MaxRollReasonLength];
         if (reason.Length == 0) reason = "Tiro generico";
 
@@ -1429,7 +1428,7 @@ public class RpgTcpServer(string ipAddress, int port)
         }
 
         int total = (int)rollResult.Total;
-        string loggedExpr = new string(expr.Where(c => !char.IsControl(c)).ToArray());
+        string loggedExpr = new([.. expr.Where(c => !char.IsControl(c))]);
 
         Console.WriteLine($"[ROLL] {client.Player.Username} tira {loggedExpr} ({reason}): {total}");
 
@@ -1518,7 +1517,7 @@ public class RpgTcpServer(string ipAddress, int port)
         Console.WriteLine($"[CHAT] {client.Player.Username} -> {target.Player.Username} (privato): {message}");
     }
 
-    private async Task HandleGetSkillsAsync(ClientSession client)
+    private static async Task HandleGetSkillsAsync(ClientSession client)
     {
         if (client.Player.Character != null)
         {
@@ -1565,7 +1564,7 @@ public class RpgTcpServer(string ipAddress, int port)
         await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_SkillListResponse, skillListPayload));
     }
 
-    private async Task HandleGetStatusAsync(ClientSession client)
+    private static async Task HandleGetStatusAsync(ClientSession client)
     {
         if (client.Player.Character != null)
         {
@@ -1619,7 +1618,7 @@ public class RpgTcpServer(string ipAddress, int port)
             });
         }
 
-        playerInfos = playerInfos.OrderBy(p => p.Handle, StringComparer.OrdinalIgnoreCase).ToList();
+        playerInfos = [.. playerInfos.OrderBy(p => p.Handle, StringComparer.OrdinalIgnoreCase)];
 
         Console.WriteLine($"[LIST] {client.Player.Username} richiede l'elenco (Filtro Game: '{filterGame ?? "nessuno"}'): {playerInfos.Count} trovati.");
 
@@ -2157,78 +2156,78 @@ public class RpgTcpServer(string ipAddress, int port)
                 break;
 
             case "list":
-            {
-                List<NpcInfoPayload> infos;
-                lock (_gamesLock)
                 {
-                    infos = game.NPCs.Select(n => new NpcInfoPayload
+                    List<NpcInfoPayload> infos;
+                    lock (_gamesLock)
                     {
-                        Handle = n.Handle,
-                        Role = n.Role,
-                        CurrentHealth = n.Health.CurrentHealth,
-                        MaxHealth = n.Health.MaxHealth,
-                        WoundStatus = n.Health.GetWoundStatusDescription(),
-                        Position = n.Position
-                    }).ToList();
-                }
+                        infos = [.. game.NPCs.Select(n => new NpcInfoPayload
+                        {
+                            Handle = n.Handle,
+                            Role = n.Role,
+                            CurrentHealth = n.Health.CurrentHealth,
+                            MaxHealth = n.Health.MaxHealth,
+                            WoundStatus = n.Health.GetWoundStatusDescription(),
+                            Position = n.Position
+                        })];
+                    }
 
-                await SendNpcResponseAsync(client, new NpcResponsePayload
-                {
-                    Success = true,
-                    Action = action,
-                    Message = infos.Count == 0 ? "Nessun NPC in questo game." : $"{infos.Count} NPC nel game '{game.Name}'.",
-                    Npcs = infos
-                });
-                break;
-            }
+                    await SendNpcResponseAsync(client, new NpcResponsePayload
+                    {
+                        Success = true,
+                        Action = action,
+                        Message = infos.Count == 0 ? "Nessun NPC in questo game." : $"{infos.Count} NPC nel game '{game.Name}'.",
+                        Npcs = infos
+                    });
+                    break;
+                }
 
             case "remove":
-            {
-                bool removed;
-                string? turnNotice = null;
-                lock (_gamesLock)
                 {
-                    removed = game.NPCs.RemoveAll(n => n.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase)) > 0;
-                    if (removed)
+                    bool removed;
+                    string? turnNotice = null;
+                    lock (_gamesLock)
                     {
-                        game.InitRolls.RemoveAll(r => r.PlayerName.Equals(handle, StringComparison.OrdinalIgnoreCase));
-                        turnNotice = RemoveFromTurnOrder(game, handle);
+                        removed = game.NPCs.RemoveAll(n => n.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase)) > 0;
+                        if (removed)
+                        {
+                            game.InitRolls.RemoveAll(r => r.PlayerName.Equals(handle, StringComparison.OrdinalIgnoreCase));
+                            turnNotice = RemoveFromTurnOrder(game, handle);
+                        }
                     }
+
+                    if (turnNotice != null)
+                    {
+                        await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = turnNotice }));
+                    }
+
+                    if (removed) Console.WriteLine($"[NPC] {client.Player.Username} ha rimosso l'NPC '{handle}' da '{game.Name}'.");
+
+                    await SendNpcResponseAsync(client, new NpcResponsePayload
+                    {
+                        Success = removed,
+                        Action = action,
+                        Message = removed ? $"NPC '{handle}' rimosso." : $"NPC '{handle}' non trovato in questo game."
+                    });
+                    break;
                 }
-
-                if (turnNotice != null)
-                {
-                    await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = turnNotice }));
-                }
-
-                if (removed) Console.WriteLine($"[NPC] {client.Player.Username} ha rimosso l'NPC '{handle}' da '{game.Name}'.");
-
-                await SendNpcResponseAsync(client, new NpcResponsePayload
-                {
-                    Success = removed,
-                    Action = action,
-                    Message = removed ? $"NPC '{handle}' rimosso." : $"NPC '{handle}' non trovato in questo game."
-                });
-                break;
-            }
 
             case "status":
-            {
-                Character? npc;
-                lock (_gamesLock)
                 {
-                    npc = game.NPCs.FirstOrDefault(n => n.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase));
-                }
+                    Character? npc;
+                    lock (_gamesLock)
+                    {
+                        npc = game.NPCs.FirstOrDefault(n => n.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase));
+                    }
 
-                await SendNpcResponseAsync(client, new NpcResponsePayload
-                {
-                    Success = npc != null,
-                    Action = action,
-                    Message = npc != null ? $"Scheda dell'NPC '{npc.Handle}'." : $"NPC '{handle}' non trovato in questo game.",
-                    Character = npc
-                });
-                break;
-            }
+                    await SendNpcResponseAsync(client, new NpcResponsePayload
+                    {
+                        Success = npc != null,
+                        Action = action,
+                        Message = npc != null ? $"Scheda dell'NPC '{npc.Handle}'." : $"NPC '{handle}' non trovato in questo game.",
+                        Character = npc
+                    });
+                    break;
+                }
 
             default:
                 await SendNpcResponseAsync(client, new NpcResponsePayload
@@ -2377,59 +2376,59 @@ public class RpgTcpServer(string ipAddress, int port)
             switch (req.InnerOpCode)
             {
                 case OpCode.C2S_Attack:
-                {
-                    var attackReq = JsonSerializer.Deserialize<AttackRequestPayload>(req.InnerPayload);
-                    if (attackReq == null) { await Fail("Comando non valido."); return; }
+                    {
+                        var attackReq = JsonSerializer.Deserialize<AttackRequestPayload>(req.InnerPayload);
+                        if (attackReq == null) { await Fail("Comando non valido."); return; }
 
-                    attackReq.TargetHandle = InputLimits.Clean(attackReq.TargetHandle, InputLimits.MaxNameFieldLength);
-                    attackReq.WeaponOrSkill = InputLimits.Clean(attackReq.WeaponOrSkill, InputLimits.MaxNameFieldLength);
-                    if (attackReq.TargetHandle.Length == 0) { await Fail("Uso: /as <npc> attack <bersaglio> [arma|skill]"); return; }
+                        attackReq.TargetHandle = InputLimits.Clean(attackReq.TargetHandle, InputLimits.MaxNameFieldLength);
+                        attackReq.WeaponOrSkill = InputLimits.Clean(attackReq.WeaponOrSkill, InputLimits.MaxNameFieldLength);
+                        if (attackReq.TargetHandle.Length == 0) { await Fail("Uso: /as <npc> attack <bersaglio> [arma|skill]"); return; }
 
-                    await ResolveAttackAsync(client, npc, attackReq);
-                    break;
-                }
+                        await ResolveAttackAsync(client, npc, attackReq);
+                        break;
+                    }
 
                 case OpCode.C2S_SkillCheck:
-                {
-                    var skillReq = JsonSerializer.Deserialize<SkillCheckRequestPayload>(req.InnerPayload);
-                    if (skillReq == null || string.IsNullOrWhiteSpace(skillReq.SkillName)) { await Fail("Uso: /as <npc> skill <abilità> [TN]"); return; }
+                    {
+                        var skillReq = JsonSerializer.Deserialize<SkillCheckRequestPayload>(req.InnerPayload);
+                        if (skillReq == null || string.IsNullOrWhiteSpace(skillReq.SkillName)) { await Fail("Uso: /as <npc> skill <abilità> [TN]"); return; }
 
-                    await ResolveSkillCheckAsync(client, npc, skillReq);
-                    break;
-                }
+                        await ResolveSkillCheckAsync(client, npc, skillReq);
+                        break;
+                    }
 
                 case OpCode.C2S_Move:
-                {
-                    var moveReq = JsonSerializer.Deserialize<MoveRequestPayload>(req.InnerPayload);
-                    if (moveReq?.Position == null) { await Fail("Uso: /as <npc> move <X> <Y> [Z]"); return; }
+                    {
+                        var moveReq = JsonSerializer.Deserialize<MoveRequestPayload>(req.InnerPayload);
+                        if (moveReq?.Position == null) { await Fail("Uso: /as <npc> move <X> <Y> [Z]"); return; }
 
-                    await ResolveMoveAsync(client, npc, moveReq);
-                    break;
-                }
+                        await ResolveMoveAsync(client, npc, moveReq);
+                        break;
+                    }
 
                 case OpCode.C2S_Init:
-                {
-                    var initReq = JsonSerializer.Deserialize<InitRequest>(req.InnerPayload);
-                    await ResolveInitiativeAsync(client, npc, initReq?.Modifiers);
-                    break;
-                }
+                    {
+                        var initReq = JsonSerializer.Deserialize<InitRequest>(req.InnerPayload);
+                        await ResolveInitiativeAsync(client, npc, initReq?.Modifiers);
+                        break;
+                    }
 
                 case OpCode.C2S_Reload:
-                {
-                    var reloadReq = JsonSerializer.Deserialize<ReloadRequestPayload>(req.InnerPayload);
-                    await ResolveReloadAsync(client, npc, reloadReq);
-                    break;
-                }
+                    {
+                        var reloadReq = JsonSerializer.Deserialize<ReloadRequestPayload>(req.InnerPayload);
+                        await ResolveReloadAsync(client, npc, reloadReq);
+                        break;
+                    }
 
                 case OpCode.C2S_Throw:
-                {
-                    var throwReq = JsonSerializer.Deserialize<ThrowRequestPayload>(req.InnerPayload);
-                    if (throwReq?.Position == null) { await Fail("Uso: /as <npc> throw <X> <Y> [Z] [arma]"); return; }
+                    {
+                        var throwReq = JsonSerializer.Deserialize<ThrowRequestPayload>(req.InnerPayload);
+                        if (throwReq?.Position == null) { await Fail("Uso: /as <npc> throw <X> <Y> [Z] [arma]"); return; }
 
-                    throwReq.WeaponKey = InputLimits.Clean(throwReq.WeaponKey, InputLimits.MaxNameFieldLength);
-                    await ResolveThrowAsync(client, npc, throwReq);
-                    break;
-                }
+                        throwReq.WeaponKey = InputLimits.Clean(throwReq.WeaponKey, InputLimits.MaxNameFieldLength);
+                        await ResolveThrowAsync(client, npc, throwReq);
+                        break;
+                    }
             }
         }
         catch (JsonException)
@@ -2781,7 +2780,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
     private static bool IsKnockedOut(Character c) => c.Health.CurrentHealth <= 0 || c.Health.GetWoundPenalty() <= -99;
 
-    private async Task ReplyCheckRegistrationAsync(ClientSession reporter, Character actor, CheckRegistration reg, string what)
+    private static async Task ReplyCheckRegistrationAsync(ClientSession reporter, Character actor, CheckRegistration reg, string what)
     {
         string message = reg == CheckRegistration.Registered
             ? $"Tiro registrato per {actor.Handle} ({what}): i risultati usciranno allo spoglio."
@@ -2818,70 +2817,70 @@ public class RpgTcpServer(string ipAddress, int port)
                 break;
 
             case "status":
-            {
-                string text;
-                lock (_gamesLock)
                 {
-                    var check = game.ActiveCheck;
+                    string text;
+                    lock (_gamesLock)
+                    {
+                        var check = game.ActiveCheck;
+                        if (check == null)
+                        {
+                            text = "Nessun check aperto.";
+                        }
+                        else
+                        {
+                            string what = check.Kind == Game.CheckKind.Skill ? $"{check.SkillName} (TN {check.TargetNumber})" : "iniziativa";
+                            string done = string.Join(", ", check.Entries.Where(e => e.Total.HasValue).Select(e => e.Handle));
+                            string waiting = string.Join(", ", check.Entries.Where(e => !e.Total.HasValue).Select(e => e.Handle));
+                            text = $"Check {what}: hanno tirato [{(done.Length > 0 ? done : "-")}], in attesa di [{(waiting.Length > 0 ? waiting : "-")}].";
+                        }
+                    }
+                    await Fail(text);
+                    break;
+                }
+
+            case "close":
+                {
+                    Game.Check? check;
+                    lock (_gamesLock)
+                    {
+                        check = game.ActiveCheck;
+                        game.ActiveCheck = null;
+                    }
+
                     if (check == null)
                     {
-                        text = "Nessun check aperto.";
+                        await Fail("Nessun check aperto.");
+                    }
+                    else if (!check.Entries.Any(e => e.Total.HasValue))
+                    {
+                        await Fail("Nessuno ha ancora tirato: check annullato.");
                     }
                     else
                     {
-                        string what = check.Kind == Game.CheckKind.Skill ? $"{check.SkillName} (TN {check.TargetNumber})" : "iniziativa";
-                        string done = string.Join(", ", check.Entries.Where(e => e.Total.HasValue).Select(e => e.Handle));
-                        string waiting = string.Join(", ", check.Entries.Where(e => !e.Total.HasValue).Select(e => e.Handle));
-                        text = $"Check {what}: hanno tirato [{(done.Length > 0 ? done : "-")}], in attesa di [{(waiting.Length > 0 ? waiting : "-")}].";
+                        await FinalizeCheckAsync(game, check, forced: true);
                     }
+                    break;
                 }
-                await Fail(text);
-                break;
-            }
-
-            case "close":
-            {
-                Game.Check? check;
-                lock (_gamesLock)
-                {
-                    check = game.ActiveCheck;
-                    game.ActiveCheck = null;
-                }
-
-                if (check == null)
-                {
-                    await Fail("Nessun check aperto.");
-                }
-                else if (!check.Entries.Any(e => e.Total.HasValue))
-                {
-                    await Fail("Nessuno ha ancora tirato: check annullato.");
-                }
-                else
-                {
-                    await FinalizeCheckAsync(game, check, forced: true);
-                }
-                break;
-            }
 
             case "cancel":
-            {
-                bool had;
-                lock (_gamesLock)
                 {
-                    had = game.ActiveCheck != null;
-                    game.ActiveCheck = null;
-                }
+                    bool had;
+                    lock (_gamesLock)
+                    {
+                        had = game.ActiveCheck != null;
+                        game.ActiveCheck = null;
+                    }
 
-                if (!had)
-                {
-                    await Fail("Nessun check aperto.");
+                    if (!had)
+                    {
+                        await Fail("Nessun check aperto.");
+                    }
+                    else
+                    {
+                        await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Il master ha annullato il check." }));
+                    }
+                    break;
                 }
-                else
-                {
-                    await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Il master ha annullato il check." }));
-                }
-                break;
-            }
 
             default:
                 await Fail("Uso: /check skill <abilità> <TN> [personaggi...] | /check init [personaggi...] | /check status | /check close | /check cancel");
@@ -2984,7 +2983,7 @@ public class RpgTcpServer(string ipAddress, int port)
                             Kind = isSkill ? Game.CheckKind.Skill : Game.CheckKind.Initiative,
                             SkillName = skillName,
                             TargetNumber = targetNumber,
-                            Entries = combatants.Select(x => new Game.CheckEntry { Handle = x.Character.Handle }).ToList()
+                            Entries = [.. combatants.Select(x => new Game.CheckEntry { Handle = x.Character.Handle })]
                         };
                     }
                 }
@@ -3105,13 +3104,8 @@ public class RpgTcpServer(string ipAddress, int port)
                     payload.Entries.Add(new CheckEntryResult { Handle = e.Handle });
                 }
 
-                game.TurnOrder = ordered.Select(e => new Game.TurnEntry { Handle = e.Handle, Initiative = e.Total!.Value }).ToList();
-                game.InitRolls = ordered.Select(e => new Game.Roll
-                {
-                    Value = e.Total!.Value,
-                    PlayerName = e.Handle,
-                    Timestamp = TimeOnly.FromDateTime(DateTime.UtcNow)
-                }).ToList();
+                game.TurnOrder = [.. ordered.Select(e => new Game.TurnEntry { Handle = e.Handle, Initiative = e.Total!.Value })];
+                game.InitRolls = [.. ordered.Select(e => new Game.Roll { Value = e.Total!.Value, PlayerName = e.Handle, Timestamp = TimeOnly.FromDateTime(DateTime.UtcNow) })];
             }
         }
 

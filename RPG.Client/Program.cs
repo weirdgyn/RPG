@@ -6,7 +6,7 @@ namespace RPG.Client;
 
 internal class Program
 {
-    private static async Task ShowBootSequenceAsync(string overrideFont="")
+    private static async Task ShowBootSequenceAsync(string overrideFont = "")
     {
         AnsiConsole.Clear();
 
@@ -306,7 +306,7 @@ internal class Program
     }
 
     private static FigletText BuildRandomBanner(
-        string text, string overrideFont="")
+        string text, string overrideFont = "")
     {
         string selectedFont;
         FigletFont font;

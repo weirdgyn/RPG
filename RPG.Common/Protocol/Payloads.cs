@@ -401,14 +401,15 @@ public class InitRollRequestPayload
     public string Message { get; set; } = string.Empty;
 }
 
-public class GamesResponsePayload 
+public class GamesResponsePayload
 {
     public List<string> Games { get; set; } = [];
 }
 
-public class CharactersResponsePayload 
+public class CharactersResponsePayload
 {
-    public class CharacterNode {
+    public class CharacterNode
+    {
         public string Handle { get; set; } = string.Empty;
         public Character.RoleType Role { get; set; } = Character.RoleType.Solo;
         // "libero", "in uso da <giocatore>" oppure "NPC di <game>"

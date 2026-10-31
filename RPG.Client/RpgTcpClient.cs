@@ -879,13 +879,13 @@ namespace RPG.Client
                     break;
 
                 case "throw":
-                {
-                    var throwPayload = BuildThrowRequest(args, 0);
-                    if (throwPayload == null) return null;
-                    innerOp = OpCode.C2S_Throw;
-                    innerJson = JsonSerializer.Serialize(throwPayload);
-                    break;
-                }
+                    {
+                        var throwPayload = BuildThrowRequest(args, 0);
+                        if (throwPayload == null) return null;
+                        innerOp = OpCode.C2S_Throw;
+                        innerJson = JsonSerializer.Serialize(throwPayload);
+                        break;
+                    }
 
                 case "init":
                     innerOp = OpCode.C2S_Init;

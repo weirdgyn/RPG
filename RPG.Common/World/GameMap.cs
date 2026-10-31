@@ -36,7 +36,7 @@ public class GameMap
         // Controlla i confini
         if (pos.X < _minX || pos.X > _maxX ||
             pos.Y < _minY || pos.Y > _maxY ||
-            pos.Z < _minZ || pos.Z > _maxZ)         
+            pos.Z < _minZ || pos.Z > _maxZ)
         {
             return MovementResult.OutOfBounds;
         }

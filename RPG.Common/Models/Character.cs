@@ -4,7 +4,8 @@ namespace RPG.Common.Models;
 
 public class Character
 {
-    public enum RoleType {
+    public enum RoleType
+    {
         Solo,
         NetRunner,
         Nomad,
@@ -23,7 +24,8 @@ public class Character
         public string ApplyTo { get; set; } = "NONE"; // "STAT:BODY", "SKILL:GUNS", "HIT", "DAMAGE", "NONE", "ARMOR", "HEALTH", "INIT"
         public int Value { get; set; } = 0;
     }
-    public class CyberWare {
+    public class CyberWare
+    {
         public enum CyberType
         {
             Fashionware,
@@ -34,7 +36,7 @@ public class Character
             Implants,
             Bioware,
             CyberLimbs,
-            CyberWeapons, 
+            CyberWeapons,
             BodyPlating
         }
         public string ID { get; set; } = string.Empty;
