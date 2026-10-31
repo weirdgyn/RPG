@@ -72,6 +72,57 @@ public class SkillCheckResponsePayload
     public string Message { get; set; } = string.Empty;
 }
 
+public class WhoAmIResponsePayload
+{
+    public string Username { get; set; } = string.Empty;
+    public string Role { get; set; } = string.Empty;
+    public string GameName { get; set; } = string.Empty;
+    public bool HasCharacter { get; set; }
+    public string CharacterHandle { get; set; } = string.Empty;
+    public int Health { get; set; }
+    public int MaxHealth { get; set; }
+    public string WoundStatus { get; set; } = string.Empty;
+    public int MA { get; set; }
+    public Position3D Position { get; set; } = new();
+    public string WeaponName { get; set; } = string.Empty;
+    public int AmmoLeft { get; set; }
+    public int AmmoCapacity { get; set; }
+    // Solo master: NPC del game
+    public int NpcCount { get; set; }
+}
+
+public class GameMemberInfo
+{
+    public string Handle { get; set; } = string.Empty;      // personaggio ("" se non collegato)
+    public string Username { get; set; } = string.Empty;    // vuoto per gli NPC
+    public string Role { get; set; } = string.Empty;        // master, player, npc
+    public bool IsNpc { get; set; }
+    // -1 = valori numerici nascosti (NPC visti da un giocatore)
+    public int Health { get; set; } = -1;
+    public int MaxHealth { get; set; } = -1;
+    public string WoundStatus { get; set; } = string.Empty;
+    public Position3D Position { get; set; } = new();
+}
+
+public class GameStatusResponsePayload
+{
+    public bool InGame { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public string Master { get; set; } = string.Empty;
+    public List<GameMemberInfo> Members { get; set; } = [];
+    public bool CombatActive { get; set; }
+    public int Round { get; set; }
+    public string CurrentTurn { get; set; } = string.Empty;
+    public double MoveLeft { get; set; }
+    public bool ActionUsed { get; set; }
+    public List<string> TurnOrder { get; set; } = [];
+    // Check aperto: descrizione, chi ha tirato e chi manca (il TN lo vede solo il master)
+    public string CheckDescription { get; set; } = string.Empty;
+    public List<string> CheckRolled { get; set; } = [];
+    public List<string> CheckWaiting { get; set; } = [];
+}
+
 public class CombatRequestPayload
 {
     // "start", "end", "status"

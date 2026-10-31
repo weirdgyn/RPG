@@ -580,6 +580,93 @@ namespace RPG.Client
                     }
                     break;
 
+                case OpCode.S2C_WhoAmIResponse:
+                    var whoResp = packet.DeserializePayload<WhoAmIResponsePayload>();
+                    if (whoResp != null)
+                    {
+                        PrintServerOutput(() =>
+                        {
+                            var grid = new Grid();
+                            grid.AddColumn();
+                            grid.AddRow(new Markup($"Utente: [bold cyan]{Markup.Escape(whoResp.Username)}[/]  Ruolo: [bold yellow]{Markup.Escape(whoResp.Role)}[/]"));
+                            grid.AddRow(new Markup(whoResp.GameName.Length > 0
+                                ? $"Game: [bold green]{Markup.Escape(whoResp.GameName)}[/]"
+                                : "Game: [grey]nessuno[/] (usa /join)"));
+                            if (whoResp.NpcCount > 0) grid.AddRow(new Markup($"NPC nel game: [cyan]{whoResp.NpcCount}[/]"));
+
+                            if (whoResp.HasCharacter)
+                            {
+                                grid.AddRow(new Markup($"Personaggio: [bold yellow]{Markup.Escape(whoResp.CharacterHandle)}[/]  HP [bold]{whoResp.Health}/{whoResp.MaxHealth}[/] [grey]({Markup.Escape(whoResp.WoundStatus)})[/]"));
+                                grid.AddRow(new Markup($"Posizione: ({whoResp.Position.X}, {whoResp.Position.Y}, {whoResp.Position.Z})  MA: {whoResp.MA}m"));
+                                if (whoResp.WeaponName.Length > 0)
+                                {
+                                    string ammo = whoResp.AmmoCapacity > 0 ? $" - colpi {whoResp.AmmoLeft}/{whoResp.AmmoCapacity}" : "";
+                                    grid.AddRow(new Markup($"Arma in pugno: [cyan]{Markup.Escape(whoResp.WeaponName)}[/]{ammo}"));
+                                }
+                            }
+                            else
+                            {
+                                grid.AddRow(new Markup("Personaggio: [grey]nessuno[/] (usa /link o /create)"));
+                            }
+
+                            AnsiConsole.Write(new Panel(grid) { Header = new PanelHeader("[bold cyan] CHI SONO [/]"), BorderStyle = new Style(Color.Cyan1) });
+                        });
+                    }
+                    break;
+
+                case OpCode.S2C_GameStatusResponse:
+                    var gs = packet.DeserializePayload<GameStatusResponsePayload>();
+                    if (gs != null)
+                    {
+                        PrintServerOutput(() =>
+                        {
+                            if (!gs.InGame)
+                            {
+                                AnsiConsole.MarkupLine("[bold yellow][[GAME]][/] Non sei in nessun game: usa /join <game>.");
+                                return;
+                            }
+
+                            var grid = new Grid();
+                            grid.AddColumn();
+                            grid.AddRow(new Markup($"Master: [bold yellow]{Markup.Escape(gs.Master.Length > 0 ? gs.Master : "(libero)")}[/]"));
+                            if (gs.Description.Length > 0) grid.AddRow(new Markup($"[grey]{Markup.Escape(gs.Description)}[/]"));
+
+                            var table = new Table().Border(TableBorder.Rounded).BorderColor(Color.Cyan1);
+                            table.AddColumn(new TableColumn("[bold cyan]Personaggio[/]"));
+                            table.AddColumn(new TableColumn("[bold white]Utente / Ruolo[/]"));
+                            table.AddColumn(new TableColumn("[bold white]Salute[/]"));
+                            table.AddColumn(new TableColumn("[bold white]Posizione[/]").Centered());
+                            foreach (var m in gs.Members)
+                            {
+                                string label = m.Handle.Length > 0 ? m.Handle : "[grey]-[/]";
+                                string turn = m.Handle.Length > 0 && m.Handle.Equals(gs.CurrentTurn, StringComparison.OrdinalIgnoreCase) ? " [bold green]<< turno[/]" : "";
+                                string owner = m.IsNpc ? "[magenta]NPC[/]" : $"{Markup.Escape(m.Username)} [grey]({Markup.Escape(m.Role)})[/]";
+                                string hp = m.Handle.Length == 0 ? "[grey]-[/]"
+                                    : m.Health >= 0 ? $"{m.Health}/{m.MaxHealth} [grey]({Markup.Escape(m.WoundStatus)})[/]"
+                                    : $"[grey]{Markup.Escape(m.WoundStatus)}[/]";
+                                table.AddRow(m.Handle.Length > 0 ? Markup.Escape(m.Handle) + turn : label, owner, hp,
+                                    m.Handle.Length > 0 ? $"({m.Position.X}, {m.Position.Y}, {m.Position.Z})" : "-");
+                            }
+                            grid.AddRow(table);
+
+                            if (gs.CombatActive)
+                            {
+                                grid.AddRow(new Markup($"[bold red]Combattimento[/] - round [bold]{gs.Round}[/], di turno: [bold green]{Markup.Escape(gs.CurrentTurn)}[/] (movimento {gs.MoveLeft:0.#}m, azione {(gs.ActionUsed ? "usata" : "disponibile")})"));
+                            }
+                            if (gs.TurnOrder.Count > 0)
+                            {
+                                grid.AddRow(new Markup($"Ordine: {string.Join(" > ", gs.TurnOrder.Select(t => t.Equals(gs.CurrentTurn, StringComparison.OrdinalIgnoreCase) && gs.CombatActive ? $"[bold green]{Markup.Escape(t)}[/]" : Markup.Escape(t)))}"));
+                            }
+                            if (gs.CheckDescription.Length > 0)
+                            {
+                                grid.AddRow(new Markup($"[bold magenta]Check aperto:[/] {Markup.Escape(gs.CheckDescription)} - hanno tirato [[{Markup.Escape(string.Join(", ", gs.CheckRolled))}]], in attesa di [[{Markup.Escape(string.Join(", ", gs.CheckWaiting))}]]"));
+                            }
+
+                            AnsiConsole.Write(new Panel(grid) { Header = new PanelHeader($"[bold green] GAME: {Markup.Escape(gs.Name)} [/]"), BorderStyle = new Style(Color.Green) });
+                        });
+                    }
+                    break;
+
                 case OpCode.S2C_CheckResult:
                     var checkResp = packet.DeserializePayload<CheckResultPayload>();
                     if (checkResp != null)
@@ -846,6 +933,8 @@ namespace RPG.Client
                 table.AddRow("[bold white]/npc[/]", "[cyan]add <h> | list | remove <h> | status <h>[/]", "Master: usa una scheda esistente come NPC del game");
                 table.AddRow("[bold white]/as[/]", "[cyan]<npc> attack|skill|move|init|reload|throw ...[/]", "Master: esegue il comando per conto di un NPC");
                 table.AddRow("[bold white]/attack[/]", "[cyan]<target> [[arma|skill]][/]", "Attacca un bersaglio con arma in pugno o specificata");
+                table.AddRow("[bold white]/whoami[/]", "[grey]-[/]", "Chi sei: utente, ruolo, game e personaggio collegato");
+                table.AddRow("[bold white]/game[/]", "[grey]-[/]", "Stato del game: partecipanti, NPC, combattimento e check (alias /gamestatus)");
                 table.AddRow("[bold white]/combat[/]", "[cyan]start | end | status[/]", "Master: avvia/termina il combattimento a turni (dopo /check init); status per tutti");
                 table.AddRow("[bold white]/next[/]", "[grey]-[/]", "Termina il tuo turno (il master può sempre farlo)");
                 table.AddRow("[bold white]/throw[/]", "[cyan]<X> <Y> [[Z]] [[arma]][/]", "Lancia un'arma ad area (granata) verso un punto: se manca devia");
@@ -1287,6 +1376,19 @@ namespace RPG.Client
                     {
                         AnsiConsole.MarkupLine("[bold red][[!]]: Sintassi non valida. Usa: /move <X> <Y> [[Z]][/]");
                     }
+                    continue;
+                }
+
+                if (trimmedInput.Equals("/whoami", StringComparison.OrdinalIgnoreCase))
+                {
+                    await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_WhoAmI, new { })));
+                    continue;
+                }
+
+                if (trimmedInput.Equals("/game", StringComparison.OrdinalIgnoreCase)
+                    || trimmedInput.Equals("/gamestatus", StringComparison.OrdinalIgnoreCase))
+                {
+                    await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GameStatus, new { })));
                     continue;
                 }
 

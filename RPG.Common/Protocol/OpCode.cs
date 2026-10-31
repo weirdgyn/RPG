@@ -12,6 +12,8 @@ public enum OpCode
     C2S_GetSkills = 60,
     C2S_Attack = 70,        // Richiesta di attacco verso un altro player
     C2S_SkillCheck = 80,
+    C2S_WhoAmI = 84,        // Chi sono: utente, ruolo, game e personaggio collegato
+    C2S_GameStatus = 85,    // Stato del game corrente (partecipanti, combattimento, check)
     C2S_Next = 86,          // Termina il turno corrente (giocatore di turno o master)
     C2S_Combat = 87,        // Il master avvia/termina il combattimento a turni o ne chiede lo stato
     C2S_Throw = 88,         // Lancio di un'arma ad area (granata) verso un punto della mappa
@@ -48,5 +50,7 @@ public enum OpCode
     S2C_InitRollRequest = 220,
     S2C_CheckResult = 221,      // Spoglio di un check (esiti di gruppo oppure ordine di iniziativa)
     S2C_GamesResponse = 230,
-    S2C_CharactersResponse = 240
+    S2C_CharactersResponse = 240,
+    S2C_WhoAmIResponse = 250,
+    S2C_GameStatusResponse = 251
 }

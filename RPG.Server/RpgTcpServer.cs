@@ -181,6 +181,12 @@ public class RpgTcpServer(string ipAddress, int port)
             case OpCode.C2S_Next:
                 await HandleNextAsync(client);
                 break;
+            case OpCode.C2S_WhoAmI:
+                await HandleWhoAmIAsync(client);
+                break;
+            case OpCode.C2S_GameStatus:
+                await HandleGameStatusAsync(client);
+                break;
             case OpCode.C2S_Roll:
                 await HandleRollAsync(client, packet);
                 break;
@@ -684,6 +690,126 @@ public class RpgTcpServer(string ipAddress, int port)
                 await Reply("Uso: /combat start | /combat end | /combat status");
                 break;
         }
+    }
+
+    private async Task HandleWhoAmIAsync(ClientSession client)
+    {
+        var me = client.Player;
+        var payload = new WhoAmIResponsePayload
+        {
+            Username = me.Username,
+            Role = me.Role.ToString()
+        };
+
+        lock (_gamesLock)
+        {
+            var game = _games.FirstOrDefault(g => g.Players.Contains(me));
+            if (game != null)
+            {
+                payload.GameName = game.Name;
+                if (me.Role == Player.RoleType.master) payload.NpcCount = game.NPCs.Count;
+            }
+        }
+
+        var c = me.Character;
+        if (c != null)
+        {
+            payload.HasCharacter = true;
+            payload.CharacterHandle = c.Handle;
+            payload.Health = c.Health.CurrentHealth;
+            payload.MaxHealth = c.Health.MaxHealth;
+            payload.WoundStatus = c.Health.GetWoundStatusDescription();
+            payload.MA = c.Stats.MA;
+            payload.Position = c.Position;
+            var w = c.EquippedWeapon;
+            if (w != null)
+            {
+                payload.WeaponName = w.Name;
+                if (w.UsesAmmo)
+                {
+                    payload.AmmoLeft = w.CurrentAmmo;
+                    payload.AmmoCapacity = w.MagazineCapacity;
+                }
+            }
+        }
+
+        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_WhoAmIResponse, payload));
+    }
+
+    private async Task HandleGameStatusAsync(ClientSession client)
+    {
+        var me = client.Player;
+        var payload = new GameStatusResponsePayload();
+
+        lock (_gamesLock)
+        {
+            var game = _games.FirstOrDefault(g => g.Players.Contains(me));
+            if (game != null)
+            {
+                bool viewerIsMaster = me.Role == Player.RoleType.master;
+                payload.InGame = true;
+                payload.Name = game.Name;
+                payload.Description = game.Description;
+                payload.Master = game.Players.FirstOrDefault(p => p.Role == Player.RoleType.master)?.Username ?? string.Empty;
+
+                foreach (var p in game.Players)
+                {
+                    var ch = p.Character;
+                    var member = new GameMemberInfo
+                    {
+                        Username = p.Username,
+                        Role = p.Role.ToString(),
+                        Handle = ch?.Handle ?? string.Empty
+                    };
+                    if (ch != null)
+                    {
+                        member.Health = ch.Health.CurrentHealth;
+                        member.MaxHealth = ch.Health.MaxHealth;
+                        member.WoundStatus = ch.Health.GetWoundStatusDescription();
+                        member.Position = ch.Position;
+                    }
+                    payload.Members.Add(member);
+                }
+
+                // Gli NPC sono visibili a tutti (si possono attaccare), ma i giocatori ne vedono solo lo stato qualitativo
+                foreach (var npc in game.NPCs)
+                {
+                    payload.Members.Add(new GameMemberInfo
+                    {
+                        Handle = npc.Handle,
+                        Role = "npc",
+                        IsNpc = true,
+                        Health = viewerIsMaster ? npc.Health.CurrentHealth : -1,
+                        MaxHealth = viewerIsMaster ? npc.Health.MaxHealth : -1,
+                        WoundStatus = npc.Health.GetWoundStatusDescription(),
+                        Position = npc.Position
+                    });
+                }
+
+                payload.CombatActive = game.CombatActive;
+                if (game.CombatActive)
+                {
+                    payload.Round = game.Round;
+                    payload.CurrentTurn = game.CurrentTurnHandle ?? string.Empty;
+                    payload.ActionUsed = game.TurnActionUsed;
+                    var cur = game.CurrentTurnHandle != null ? FindCombatantInGame(game, game.CurrentTurnHandle) : null;
+                    if (cur != null) payload.MoveLeft = Math.Max(0, cur.Character.Stats.MA - game.TurnMoveUsed);
+                }
+                payload.TurnOrder = game.TurnOrder.Select(t => t.Handle).ToList();
+
+                var check = game.ActiveCheck;
+                if (check != null)
+                {
+                    payload.CheckDescription = check.Kind == Game.CheckKind.Skill
+                        ? $"Prova di {check.SkillName}{(viewerIsMaster ? $" (TN {check.TargetNumber})" : "")}"
+                        : "Tiro di iniziativa";
+                    payload.CheckRolled = check.Entries.Where(e => e.Total.HasValue).Select(e => e.Handle).ToList();
+                    payload.CheckWaiting = check.Entries.Where(e => !e.Total.HasValue).Select(e => e.Handle).ToList();
+                }
+            }
+        }
+
+        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_GameStatusResponse, payload));
     }
 
     // /next: il giocatore di turno (o il master, sempre) termina il turno corrente
