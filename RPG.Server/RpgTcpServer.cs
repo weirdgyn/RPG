@@ -71,8 +71,28 @@ public class RpgTcpServer(string ipAddress, int port)
         try
         {
             string? line;
-            while ((line = await client.ReadLineLimitedAsync(InputLimits.MaxLineLength)) != null)
+            while (true)
             {
+                // Fino al login la connessione ha una scadenza assoluta dalla connessione (i ping non la
+                // prolungano): chi apre socket senza autenticarsi non può occupare i posti a lungo.
+                using var loginDeadline = new CancellationTokenSource();
+                if (!client.IsAuthenticated)
+                {
+                    var left = TimeSpan.FromSeconds(InputLimits.LoginTimeoutSeconds) - (DateTime.UtcNow - client.ConnectedAtUtc);
+                    loginDeadline.CancelAfter(left > TimeSpan.Zero ? left : TimeSpan.Zero);
+                }
+
+                try
+                {
+                    line = await client.ReadLineLimitedAsync(InputLimits.MaxLineLength, loginDeadline.Token);
+                }
+                catch (OperationCanceledException) when (loginDeadline.IsCancellationRequested && !client.IsAuthenticated)
+                {
+                    Console.WriteLine($"[SERVER] Login non completato entro {InputLimits.LoginTimeoutSeconds}s da [{client.IdShort}]: connessione chiusa.");
+                    break;
+                }
+
+                if (line == null) break;
                 if (string.IsNullOrWhiteSpace(line)) continue;
 
                 NetworkPacket? packet;
@@ -116,7 +136,7 @@ public class RpgTcpServer(string ipAddress, int port)
         finally
         {
             _connectedClients.TryRemove(client.Id, out _);
-            client.TcpClient.Close();
+            await client.CloseAsync();
             var masterNotices = RemovePlayerFromGames(client.Player, out var completedChecks, out var turnNotices);
 
             string userName = !string.IsNullOrEmpty(client.Player.Username) ? client.Player.Username : client.IdShort;

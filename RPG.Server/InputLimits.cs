@@ -16,6 +16,13 @@ internal static class InputLimits
     public const int MaxGames = 50;
     public const int MaxConnections = 100;
 
+    /// <summary>Tempo massimo, dalla connessione, per completare il login: oltre la connessione è chiusa.</summary>
+    public const int LoginTimeoutSeconds = 30;
+    /// <summary>Tempo massimo per scrivere un pacchetto su un client: se non lo legge, la sessione è chiusa.</summary>
+    public const int SendTimeoutSeconds = 10;
+    /// <summary>Pacchetti in attesa di invio per sessione: se la coda si riempie il client è troppo lento e viene chiuso.</summary>
+    public const int MaxQueuedPackets = 256;
+
     public static bool HasControlChars(string? s) => s != null && s.Any(char.IsControl);
 
     /// <summary>Toglie i caratteri di controllo, elimina gli spazi ai bordi e tronca a <paramref name="max"/>.</summary>
