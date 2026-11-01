@@ -530,6 +530,12 @@ public class RpgTcpServer(string ipAddress, int port)
             return;
         }
 
+        if (target.Character.Health.IsDead)
+        {
+            await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"{target.Character.Handle} è già morto." }));
+            return;
+        }
+
         var lease = BeginAction(game, attacker, needsAction: true);
         if (lease.Error != null)
         {
@@ -1296,6 +1302,8 @@ public class RpgTcpServer(string ipAddress, int port)
 
             foreach (var target in everyone)
             {
+                if (target.Health.IsDead) continue;   // i morti non subiscono altro danno
+
                 double d = CombatRules.CalculateDistance(target.Position, landed);
                 if (d > radius) continue;
 
@@ -2434,8 +2442,7 @@ public class RpgTcpServer(string ipAddress, int port)
     // Tecnomedicina ("MedicalTech" è l'alias inglese storico della stessa abilità).
     private static readonly string[] HealSkills = ["Pronto Soccorso", "Tecnomedicina", "MedicalTech"];
 
-    private static int HealSkillLevel(Character c) =>
-        HealSkills.Max(s => c.Skills.TryGetValue(s, out int lvl) ? lvl : 0);
+    private static int HealSkillLevel(Character c) => MedicalRules.BestSkillLevel(c.Skills, HealSkills);
 
     /// <summary>
     /// /heal &lt;personaggio&gt;. Un giocatore tenta la <b>stabilizzazione</b> (Pronto Soccorso/Tecnomedicina,
@@ -2491,18 +2498,28 @@ public class RpgTcpServer(string ipAddress, int port)
         // Master: cura completa, azzera morte e stordimento.
         if (isMaster)
         {
-            target.Health.FullHeal();
+            // La salute si modifica sotto il lock del combattimento, come negli attacchi
+            lock (_combatLock)
+            {
+                target.Health.FullHeal();
+            }
             CharacterRepository.TrySaveCharacter(target);
             string text = $"Il master cura completamente {target.Handle}: salute {target.Health.RemainingBoxes}/{target.Health.MaxHealth}.";
             Console.WriteLine($"[HEAL] {client.Player.Username} (master) cura {target.Handle}.");
-            await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = text }));
+            await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = text }), includeOrigin: false);
             await Reply(true, text, target.Handle);
             return;
         }
 
-        if (target.Health.IsDead)
+        var block = MedicalRules.GetStabilizeBlock(target.Health);
+        if (block != MedicalRules.StabilizeBlock.None)
         {
-            await Reply(false, $"{target.Handle} è morto: solo il master può rianimarlo.");
+            await Reply(false, block switch
+            {
+                MedicalRules.StabilizeBlock.Dead => $"{target.Handle} è morto: solo il master può rianimarlo.",
+                MedicalRules.StabilizeBlock.NotMortal => $"{target.Handle} non è in Mortale ({target.Health.GetWoundStatusDescription()}): non c'è nulla da stabilizzare.",
+                _ => $"{target.Handle} è già stabilizzato."
+            });
             return;
         }
 
@@ -2511,6 +2528,13 @@ public class RpgTcpServer(string ipAddress, int port)
         Character healer = client.Player.Character!;
         if (!await EnsureAliveAsync(client, healer)) return;
 
+        double distance = CombatRules.CalculateDistance(healer.Position, target.Position);
+        if (distance > MedicalRules.HealRangeMeters)
+        {
+            await Reply(false, $"{target.Handle} è troppo lontano per essere curato: {distance:F1} m, serve essere a {MedicalRules.HealRangeMeters} m o meno.");
+            return;
+        }
+
         var lease = BeginAction(game, healer, needsAction: true);
         if (lease.Error != null)
         {
@@ -2518,26 +2542,34 @@ public class RpgTcpServer(string ipAddress, int port)
             return;
         }
 
+        CountFreeAction(game);
+
         int skillLvl = HealSkillLevel(healer);
         int tech = healer.Stats.GetStatValue("TECH");
         int penalty = healer.Health.GetWoundPenalty();
         var roll = GameDice.RollExplodingD10Detailed();
-        int total = tech + skillLvl + penalty + roll.Total;
-        int tn = target.Health.DamageTaken;
-        bool success = !roll.IsFumble && total >= tn;
+        var stab = MedicalRules.ResolveStabilization(roll, tech, skillLvl, penalty, target.Health.DamageTaken);
+        int total = stab.Total;
+        int tn = stab.TargetNumber;
+        bool success = stab.Success;
 
         Console.WriteLine($"[HEAL] {healer.Handle} tenta di stabilizzare {target.Handle}: d10 {roll.Total}{(roll.Exploded ? " (esploso)" : "")} + TECH {tech} + cura {skillLvl} - ferite {Math.Abs(penalty)} = {total} vs TN {tn} -> {(success ? "OK" : "FALLITO")}");
 
+        // Un tentativo fallito costa comunque l'azione del turno: niente rimborso (il rimborso è solo per errori).
         if (!success)
         {
-            RefundAction(game, healer, lease.TurnStamp);
-            await Reply(false, $"Stabilizzazione di {target.Handle} fallita: {total} contro TN {tn}.");
+            string failMessage = $"{healer.Handle} tenta di stabilizzare {target.Handle} ma fallisce: {total} contro TN {tn}{(stab.IsFumble ? " (fallimento critico)" : "")}.";
+            await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = failMessage }), includeOrigin: false);
+            await Reply(false, failMessage, target.Handle);
             return;
         }
 
-        target.Health.IsStabilized = true;
+        lock (_combatLock)
+        {
+            target.Health.IsStabilized = true;
+        }
         string message = $"{healer.Handle} stabilizza {target.Handle}: {total} contro TN {tn}. Non tira più il salvezza contro la morte.";
-        await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = message }));
+        await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = message }), includeOrigin: false);
         await Reply(true, message, target.Handle);
     }
 

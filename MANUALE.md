@@ -136,7 +136,7 @@ Gli NPC compaiono nell'elenco con il loro stato qualitativo (per esempio "Seria"
 | `/attack <bersaglio> [arma\|abilità]` | Attacca un personaggio dello stesso game. Senza specificare usa l'arma in pugno; puoi indicare un'arma per nome, Id o abilità. |
 | `/reload [munizioni] [arma]` | Ricarica l'arma in pugno (o quella indicata). Opzionalmente scegli il tipo di munizioni, anche con una parte del nome: `/reload ap`. |
 | `/throw <X> <Y> [Z] [arma]` | Lancia un'arma ad area (granata) verso un punto. |
-| `/heal <personaggio>` | Pronto soccorso: stabilizza un ferito (Pronto Soccorso/Tecnomedicina, TN = ferite subite). In combattimento è l'azione del turno. |
+| `/heal <personaggio>` | Pronto soccorso: stabilizza un ferito **in Mortale** (Pronto Soccorso/Tecnomedicina, TN = danno subito dal ferito). Devi essere a **2,5 m o meno**. Consuma l'azione del turno, anche se il tentativo fallisce. |
 | `/next` (alias `/endturn`) | Termina il tuo turno. |
 | `/combat status` | Mostra round, turno, movimento e azione rimasti, ordine di gioco. |
 
