@@ -729,15 +729,20 @@ public class RpgTcpServer(string ipAddress, int port)
         }
         else if (i == game.TurnIndex)
         {
-            // Se n'è andato chi era di turno: tocca a chi lo seguiva, con movimento e azione freschi
-            if (game.TurnIndex >= game.TurnOrder.Count)
+            // Se n'è andato chi era di turno: si passa a chi lo seguiva con le stesse regole di /next
+            // (salta K.O., recupero dallo stordimento, nuovo TurnStamp, movimento e azione freschi).
+            // MoveToNextTurn parte dalla posizione successiva a TurnIndex: chi seguiva ora sta in TurnIndex.
+            game.TurnIndex--;
+            var notes = new List<string>();
+            if (!MoveToNextTurn(game, notes))
             {
+                game.CombatActive = false;
                 game.TurnIndex = 0;
-                game.Round++;
+                return $"{handle} ha lasciato il combattimento: nessuno è in grado di agire, combattimento terminato.";
             }
-            game.TurnMoveUsed = 0;
-            game.TurnActionUsed = false;
-            return $"{handle} ha lasciato il combattimento durante il suo turno. {DescribeTurn(game)}";
+
+            string noteText = notes.Count > 0 ? string.Join(" ", notes.Select(x => x + ".")) + " " : string.Empty;
+            return $"{handle} ha lasciato il combattimento durante il suo turno. {noteText}{DescribeTurn(game)}";
         }
 
         return null;
@@ -2746,8 +2751,8 @@ public class RpgTcpServer(string ipAddress, int port)
 
     /// <summary>
     /// /as &lt;npc&gt; &lt;comando&gt;: il master esegue attack, skill, move o init con un suo NPC come attore.
-    /// Riusa le stesse routine dei giocatori; le uniche differenze sono che l'attore è l'NPC e che nulla
-    /// viene salvato su disco.
+    /// Riusa le stesse routine dei giocatori; l'unica differenza è che l'attore è l'NPC. Lo stato
+    /// dell'NPC si salva come quello di un personaggio giocante (stessa politica di persistenza).
     /// </summary>
     private async Task HandleAsAsync(ClientSession client, NetworkPacket packet)
     {
