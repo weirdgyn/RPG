@@ -63,11 +63,11 @@ Con `/help` si vede in ogni momento l'elenco dei comandi.
 
 ### Un personaggio, un utente
 
-Una scheda può essere collegata a un solo giocatore alla volta, oppure essere un NPC di un solo game. Non è possibile usare la stessa scheda in due modi insieme. Il collegamento (`/link`) resta valido anche se esci dal game.
+Una scheda può essere collegata a un solo giocatore alla volta, oppure essere un NPC di un solo game. Non è possibile usare la stessa scheda in due modi insieme. Il collegamento (`/link`) resta valido anche se esci dal game; si scioglie con `/unlink`, da usare solo fuori dal game.
 
 ### Il master
 
-Il ruolo di master si prende entrando in un game con `/join <game> master`: se il game non esiste viene creato, se esiste e non ha un master lo diventi. Un game ha un solo master. Il master **non può** collegarsi a un personaggio con `/link` (usa gli NPC) e non può assumere il ruolo di master se ha già una scheda collegata: in quel caso riconnettiti senza selezionare una scheda.
+Il ruolo di master si prende entrando in un game con `/join <game> master`: se il game non esiste viene creato, se esiste e non ha un master lo diventi. Un game ha un solo master. Il master **non può** collegarsi a un personaggio con `/link` (usa gli NPC) e non può assumere il ruolo di master se ha già una scheda collegata: se non sei in un game usa `/unlink`; se sei in un game esci prima con `/leave`, poi usa `/unlink`.
 
 ---
 
@@ -92,6 +92,7 @@ Il ruolo di master si prende entrando in un game con `/join <game> master`: se i
 |---|---|
 | `/create <archetipo> <handle>` | Crea un personaggio da un archetipo, con statistiche leggermente variate a caso. Archetipi: **Solo, Netrunner, Nomad, Rocker, Fixer, Corporate, Techie, TechMed, Cop, Media**. |
 | `/link <personaggio>` | Ti collega a una scheda esistente. Se sei già in un game, esci prima con `/leave`: cambiare scheda durante una partita non è supportato. |
+| `/unlink` | Scioglie il collegamento con il personaggio corrente. È inibito dentro un game: esci prima con `/leave`. |
 | `/status` | Mostra la scheda del personaggio collegato: statistiche, salute, armi e munizioni, armatura, cyberware. |
 | `/skills` | Elenco abilità con statistica associata e il tuo pool di tiro. |
 
@@ -337,6 +338,7 @@ Lo stato di stordimento è di sessione: non viene salvato nella scheda, non ha e
 | `/chat "msg" [utente]` | tutti | chat pubblica o privata |
 | `/create <archetipo> <handle>` | tutti | nuovo personaggio |
 | `/link <personaggio>` | giocatore | collega la scheda |
+| `/unlink` | giocatore | scollega la scheda (solo fuori dal game) |
 | `/status` | giocatore | scheda del personaggio |
 | `/skills` | tutti | abilità e statistiche |
 | `/join <game> [master\|player]` | tutti | entra in un game |

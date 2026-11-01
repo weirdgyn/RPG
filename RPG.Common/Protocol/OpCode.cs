@@ -29,6 +29,7 @@ public enum OpCode
     C2S_GetGames = 98,      // List games
     C2S_GetCharacters = 99, // List characters
     C2S_Join = 100,         // Richiesta di entrare in una stanza di gioco
+    C2S_Unlink = 102,       // Scollega la sessione dal personaggio corrente (solo fuori da un game)
     // Server -> Client (S2C)
     S2C_Pong = 101,
     S2C_LoginResponse = 110,
@@ -52,5 +53,6 @@ public enum OpCode
     S2C_GamesResponse = 230,
     S2C_CharactersResponse = 240,
     S2C_WhoAmIResponse = 250,
-    S2C_GameStatusResponse = 251
+    S2C_GameStatusResponse = 251,
+    S2C_UnlinkResponse = 252 // Risposta alla richiesta di scollegare il personaggio
 }

@@ -354,6 +354,14 @@ public class LinkResponsePayload
     public Player.RoleType Role { get; set; } = Player.RoleType.none;
 }
 
+public class UnlinkResponsePayload
+{
+    public bool Success { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public string CharacterHandle { get; set; } = string.Empty;
+    public Player.RoleType Role { get; set; } = Player.RoleType.none;
+}
+
 public class CreateCharacterRequestPayload
 {
     public string Archetype { get; set; } = string.Empty;

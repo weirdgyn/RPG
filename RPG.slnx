@@ -1,4 +1,8 @@
 <Solution>
+  <Folder Name="/Elementi di soluzione/">
+    <File Path="MANUALE.md" />
+    <File Path="TODO.txt" />
+  </Folder>
   <Project Path="RPG.Client/RPG.Client.csproj" />
   <Project Path="RPG.Common/RPG.Common.csproj" />
   <Project Path="RPG.Server/RPG.Server.csproj" />

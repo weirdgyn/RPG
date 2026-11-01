@@ -214,6 +214,9 @@ public class RpgTcpServer(string ipAddress, int port)
             case OpCode.C2S_Link:
                 await HandleLinkAsync(client, packet);
                 break;
+            case OpCode.C2S_Unlink:
+                await HandleUnlinkAsync(client);
+                break;
             case OpCode.C2S_Join:
                 await HandleJoinAsync(client, packet);
                 break;
@@ -2203,6 +2206,77 @@ public class RpgTcpServer(string ipAddress, int port)
                 Message = "Richiesta di link non valida."
             }));
         }
+    }
+
+    /// <summary>
+    /// /unlink: scioglie il legame tra la sessione e la scheda. È inibito dentro un game perché la scheda
+    /// può essere nell'ordine di turno o in un check aperto: prima si esce con /leave.
+    /// </summary>
+    private async Task HandleUnlinkAsync(ClientSession client)
+    {
+        UnlinkResponsePayload? failure = null;
+        string handle = string.Empty;
+
+        lock (_linkLock)
+        {
+            bool inGame;
+            lock (_gamesLock)
+            {
+                inGame = _games.Any(g => g.Players.Contains(client.Player));
+            }
+
+            if (inGame)
+            {
+                failure = new UnlinkResponsePayload
+                {
+                    Success = false,
+                    Message = "Sei già in un game: usa /leave prima di scollegare il personaggio."
+                };
+            }
+            else
+            {
+                string? linkedHandle = string.IsNullOrWhiteSpace(client.LinkedCharacterHandle)
+                    ? null
+                    : client.LinkedCharacterHandle;
+                Character? character = client.Player.Character;
+
+                if (character == null && linkedHandle == null)
+                {
+                    failure = new UnlinkResponsePayload
+                    {
+                        Success = false,
+                        Message = "Nessun personaggio collegato da scollegare."
+                    };
+                }
+                else
+                {
+                    handle = linkedHandle ?? character?.Handle ?? string.Empty;
+
+                    // Salva prima di liberare la scheda: un /link o /npc add successivo non deve
+                    // caricare dal disco uno stato precedente alle ultime azioni.
+                    if (character != null) CharacterRepository.TrySaveCharacter(character);
+
+                    client.Player.Character = null;
+                    client.LinkedCharacterHandle = null;
+                    client.Player.Role = Player.RoleType.none;
+                }
+            }
+        }
+
+        if (failure != null)
+        {
+            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_UnlinkResponse, failure));
+            return;
+        }
+
+        Console.WriteLine($"[UNLINK] {client.Player.Username} ha scollegato la scheda '{handle}'.");
+        await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_UnlinkResponse, new UnlinkResponsePayload
+        {
+            Success = true,
+            Message = handle.Length > 0 ? $"Personaggio '{handle}' scollegato." : "Personaggio scollegato.",
+            CharacterHandle = handle,
+            Role = Player.RoleType.none
+        }));
     }
 
     private async Task HandleCreateCharacterAsync(ClientSession client, NetworkPacket packet)

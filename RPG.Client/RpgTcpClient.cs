@@ -494,6 +494,27 @@ namespace RPG.Client
                     }
                     break;
 
+                case OpCode.S2C_UnlinkResponse:
+                    var unlinkResp = packet.DeserializePayload<UnlinkResponsePayload>();
+                    if (unlinkResp != null)
+                    {
+                        if (unlinkResp.Success)
+                        {
+                            PrintServerOutput(() => AnsiConsole.MarkupLine($"[bold green][[UNLINK]][/] [white]{Markup.Escape(unlinkResp.Message)}[/]"));
+                            if (_player != null)
+                            {
+                                _player.Character = null;
+                                _player.Handle = string.Empty;
+                                _player.Role = unlinkResp.Role;
+                            }
+                        }
+                        else
+                        {
+                            PrintServerOutput(() => AnsiConsole.MarkupLine($"[bold red][[UNLINK FALLITO]][/] [white]{Markup.Escape(unlinkResp.Message)}[/]"));
+                        }
+                    }
+                    break;
+
                 case OpCode.S2C_CreateCharacterResponse:
                     var createResp = packet.DeserializePayload<CreateCharacterResponsePayload>();
                     if (createResp != null)
@@ -922,6 +943,7 @@ namespace RPG.Client
                 table.AddRow("[bold white]/skills[/]", "[grey]-[/]", "Elenco abilità, statistiche associate e pool di tiro");
                 table.AddRow("[bold white]/create[/]", "[cyan]<archetipo> <handle>[/]", "Crea un nuovo personaggio da un archetipo (con stat casuali)");
                 table.AddRow("[bold white]/link[/]", "[cyan]<character>[/]", "Collega la sessione ad un personaggio esistente");
+                table.AddRow("[bold white]/unlink[/]", "[grey]-[/]", "Scollega il personaggio corrente (solo fuori da un game)");
                 table.AddRow("[bold white]/list[/]", "[grey][[game]][/]", "Elenca i giocatori online (o filtrati per stanza di gioco)");
                 table.AddRow("[bold white]/games[/]", "[grey]-[/]", "Elenca le sessioni di gioco attive");
                 table.AddRow("[bold white]/characters[/]", "[grey]-[/]", "Elenca i personaggi salvati sul server");
@@ -1579,6 +1601,12 @@ namespace RPG.Client
                     });
 
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(joinPacket));
+                    continue;
+                }
+
+                if (trimmedInput.Equals("/unlink", StringComparison.OrdinalIgnoreCase))
+                {
+                    await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_Unlink, new { })));
                     continue;
                 }
 
