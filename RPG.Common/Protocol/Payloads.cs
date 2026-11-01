@@ -389,7 +389,6 @@ public class CreateCharacterResponsePayload
 public class InitRequest
 {
     public string PlayerName { get; set; } = string.Empty;
-    public string Modifiers { get; set; } = string.Empty;
 }
 
 /// <summary>Notifica S2C inviata dal master ai giocatori per avviare il tiro di iniziativa.</summary>

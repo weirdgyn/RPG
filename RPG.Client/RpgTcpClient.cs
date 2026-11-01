@@ -912,10 +912,7 @@ namespace RPG.Client
 
                 case "init":
                     innerOp = OpCode.C2S_Init;
-                    innerJson = JsonSerializer.Serialize(new InitRequest
-                    {
-                        Modifiers = args.Length >= 1 ? args[0] : string.Empty
-                    });
+                    innerJson = JsonSerializer.Serialize(new InitRequest());
                     break;
 
                 default:
@@ -967,7 +964,7 @@ namespace RPG.Client
                 table.AddRow("[bold white]/roll[/]", "[cyan]<espressione> [[motivo]][/]", "Tiro di dadi personalizzato (es. /roll 2d6+3 Danno)");
                 table.AddRow("[bold white]/move[/]", "[cyan]<X> <Y> [[Z]][/]", "Muove il personaggio nello spazio 3D");
                 table.AddRow("[bold white]/chat[/]", "[cyan]\"msg\" [[user]][/]", "Messaggio broadcast o privato");
-                table.AddRow("[bold white]/init[/]", "[cyan][[modificatore]][/]", "Tiro di iniziativa (il master: avvia il tiro per tutti, come /check init)");
+                table.AddRow("[bold white]/init[/]", "[grey]-[/]", "Tiro di iniziativa (il master: avvia il tiro per tutti, come /check init)");
                 table.AddRow("[bold white]/check[/]", "[cyan]skill <abilità> <TN> [[pg]] | init [[pg]] | status | close | cancel[/]", "Master: prova collettiva con spoglio finale (abilità o iniziativa)");
                 table.AddRow("[bold white]/ping[/]", "[grey]-[/]", "Verifica latenza di rete con il server (RTT)");
                 table.AddRow("[bold white]/help[/]", "[grey]-[/]", "Mostra questo menu dei comandi");
@@ -1275,7 +1272,7 @@ namespace RPG.Client
 
                     if (asPacket == null)
                     {
-                        AnsiConsole.MarkupLine("[bold red][[!]]: Uso:[/] [yellow]/as <npc> attack <bersaglio> [[arma|skill]][/] | [yellow]/as <npc> skill <abilità> [[TN]][/] | [yellow]/as <npc> move <X> <Y> [[Z]][/] | [yellow]/as <npc> init [[mod]][/] | [yellow]/as <npc> reload [[munizioni]] [[arma]][/] | [yellow]/as <npc> throw <X> <Y> [[Z]] [[arma]][/]");
+                        AnsiConsole.MarkupLine("[bold red][[!]]: Uso:[/] [yellow]/as <npc> attack <bersaglio> [[arma|skill]][/] | [yellow]/as <npc> skill <abilità> [[TN]][/] | [yellow]/as <npc> move <X> <Y> [[Z]][/] | [yellow]/as <npc> init[/] | [yellow]/as <npc> reload [[munizioni]] [[arma]][/] | [yellow]/as <npc> throw <X> <Y> [[Z]] [[arma]][/]");
                         continue;
                     }
 
@@ -1328,19 +1325,11 @@ namespace RPG.Client
                     continue;
                 }
 
-                if (trimmedInput.StartsWith("/init", StringComparison.OrdinalIgnoreCase))
+                if (trimmedInput.Equals("/init", StringComparison.OrdinalIgnoreCase))
                 {
-                    string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                    string modifier = (parts.Length == 2 && !string.IsNullOrWhiteSpace(parts[1])) ? parts[1] : string.Empty;
-
                     await _writer.WriteLineAsync(
                         JsonSerializer.Serialize(
-                            NetworkPacket.Create(OpCode.C2S_Init, new InitRequest
-                            {
-                                PlayerName = _player.Username,
-                                Modifiers = modifier
-                            }
-                    )));
+                            NetworkPacket.Create(OpCode.C2S_Init, new InitRequest { PlayerName = _player.Username })));
                     continue;
                 }
 

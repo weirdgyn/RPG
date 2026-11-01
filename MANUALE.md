@@ -116,9 +116,7 @@ Gli NPC compaiono nell'elenco con il loro stato qualitativo (per esempio "Seria"
 |---|---|
 | `/skill <abilità> [TN]` | Prova di abilità. Il TN predefinito è 15. L'abilità deve esistere (vedi `/skills`). |
 | `/roll <espressione> [motivo]` | Tiro di dadi libero, visibile a tutto il game. Esempi: `/roll 2d6+3 Danno`, `/roll 3d6!` (con `!` i dadi esplodono). |
-| `/init [modificatore]` | Tiro di iniziativa: REF + CombatSense (solo per i Solo) + bonus cyberware + modificatore + d10. |
-
-> Il modificatore di `/init` è libero: in un check ufficiale concordalo prima con il master.
+| `/init` | Tiro di iniziativa: REF + CombatSense (solo per i Solo) + bonus cyberware + d10. |
 
 **Quando il master ha aperto un check** (vedi 4.3) il tuo `/skill` o `/init` corrispondente viene registrato per lo spoglio: ricevi solo la conferma *"tiro registrato"* e i risultati escono tutti insieme quando hanno tirato tutti. Vale il **primo** tiro. Il TN non ti viene rivelato.
 
@@ -173,7 +171,7 @@ Comandi consentiti con `/as`:
 /as <npc> attack <bersaglio> [arma|abilità]
 /as <npc> skill <abilità> [TN]
 /as <npc> move <X> <Y> [Z]
-/as <npc> init [modificatore]
+/as <npc> init
 /as <npc> reload [munizioni] [arma]
 /as <npc> throw <X> <Y> [Z] [arma]
 ```
@@ -196,7 +194,7 @@ Il master apre una prova per più personaggi insieme e il server ne fa lo spogli
 
 Come funziona:
 
-- **Iscritti**: se non indichi personaggi, entrano tutti quelli del game (giocatori e NPC). I personaggi **K.O.** vengono esclusi. I nomi si separano con spazi o virgole.
+- **Iscritti**: se non indichi personaggi, entrano tutti quelli del game (giocatori e NPC). I personaggi **morti** vengono esclusi. I nomi si separano con spazi o virgole.
 - **NPC**: tira il server all'apertura, non serve fare nulla.
 - **Giocatori**: ricevono un avviso (senza il TN) e tirano con `/skill <abilità>` oppure `/init`. Vale il primo tiro; per loro compare solo la conferma.
 - **Spoglio** (a tutto il game, quando la lista è piena o con `/check close`):
@@ -223,7 +221,7 @@ Regole dei turni:
 - Ogni turno si ha **movimento fino a MA metri in totale** (più `/move` si sommano) e **una sola azione**: `/attack`, `/throw` o `/reload`.
 - Restano sempre liberi: `/skill`, `/init`, `/roll`, la chat, le risposte ai `/check`, `/status`, `/game`.
 - Un'azione rifiutata dalle regole (fuori portata, caricatore vuoto) **non** consuma l'azione.
-- Il round aumenta a ogni giro completo. I personaggi K.O. o usciti dal game vengono saltati. Chi è stordito tenta di riprendersi a inizio turno; se fallisce, il turno passa al successivo. Se esce chi era di turno, il turno passa al successivo e il game riceve l'annuncio.
+- Il round aumenta a ogni giro completo. I personaggi morti o usciti dal game vengono saltati. Chi è stordito tenta di riprendersi a inizio turno; se fallisce, il turno passa al successivo. Se esce chi era di turno, il turno passa al successivo e il game riceve l'annuncio.
 - Fuori dal combattimento non ci sono limiti di turno.
 
 ---
@@ -316,14 +314,14 @@ Tutti i personaggi hanno una scheda ferite di **40 caselle**; ogni danno ne togl
 | 25–28 | Mortale 3 | −6 |
 | 29–32 | Mortale 4 | −6 |
 | 33–36 | Mortale 5 | −6 |
-| 37–39 | Mortale 6 | −6 |
-| 40 (salute 0) | K.O. / morto | — |
+| 37–40 | Mortale 6 | −6 |
+| 41+ | Morto | — |
 
 Il BODY non cambia le caselle: agisce sul BTM. La penalità si applica ai tiri di attacco, di abilità e di lancio, e alla difesa in mischia; il tiro di iniziativa non la applica.
 
-**Stordimento (solo in combattimento).** Dopo un colpo che infligge almeno 1 danno, il bersaglio tira un d10: se il risultato è **inferiore** a `BODY − modificatore di stato`, resiste; altrimenti è stordito. Il modificatore è 0 per le ferite Leggere, 1 per le Serie, 2 per le Critiche, 3 per Mortale 0, 4 per Mortale 1, e così via. Un personaggio stordito non può agire né muoversi; all'inizio del suo turno ritenta il tiro con la stessa soglia e, se fallisce, viene saltato. Se nessuno può agire ma c'è almeno uno stordito, il turno resta a uno di loro, che può solo passare con `/next`; se sono tutti K.O., il combattimento termina.
+**Stordimento (solo in combattimento).** Dopo un colpo che infligge almeno 1 danno, il bersaglio tira un d10: se il risultato è **inferiore** a `BODY − modificatore di stato`, resiste; altrimenti è stordito. Il modificatore è 0 per le ferite Leggere, 1 per le Serie, 2 per le Critiche, 3 per Mortale 0, 4 per Mortale 1, e così via. Un personaggio stordito non può agire né muoversi; all'inizio del suo turno ritenta il tiro con la stessa soglia e, se fallisce, viene saltato. Se nessuno può agire ma c'è almeno uno stordito, il turno resta a uno di loro, che può solo passare con `/next`; se sono tutti morti, il combattimento termina.
 
-Lo stato di stordimento è di sessione: non viene salvato nella scheda, non ha effetto fuori dal combattimento e viene azzerato all'avvio e alla fine esplicita del combattimento. A 0 punti il personaggio è K.O. / morto: non può attaccare né lanciare; il blocco completo delle altre azioni è ancora in rifinitura (vedi [Cosa non c'è ancora](#cosa-non-cè-ancora)).
+Il danno si accumula fino a riempire le 40 caselle: a **40 danni** il personaggio è all'ultima casella (**Mortale 6**, −6 ai tiri); con **41 danni o più** è **morto** e non può più agire (attacco, lancio, ricarica, movimento e prove sono tutti bloccati). Lo stato di **stordimento**, invece, è di sessione: non viene salvato nella scheda, non ha effetto fuori dal combattimento e viene azzerato all'avvio e alla fine esplicita del combattimento.
 
 ---
 
@@ -349,7 +347,7 @@ Lo stato di stordimento è di sessione: non viene salvato nella scheda, non ha e
 | `/game` (`/gamestatus`) | tutti | stato del game |
 | `/skill <abilità> [TN]` | giocatore | prova di abilità |
 | `/roll <espr> [motivo]` | tutti | tiro di dadi libero |
-| `/init [mod]` | giocatore | iniziativa (master: come `/check init`) |
+| `/init` | giocatore | iniziativa (master: come `/check init`) |
 | `/move <X> <Y> [Z]` | giocatore | muoviti (max MA) |
 | `/attack <bersaglio> [arma]` | giocatore | attacca |
 | `/reload [munizioni] [arma]` | giocatore | ricarica |
@@ -379,8 +377,7 @@ Lo stato di stordimento è di sessione: non viene salvato nella scheda, non ha e
 
 Regole previste ma non ancora implementate:
 
-- tiro di **salvezza contro la morte** (oggi a 0 salute si è semplicemente K.O. / morti);
-- blocco completo delle azioni per i personaggi **K.O.** (attacco e lancio sono già bloccati; movimento, ricarica e prove libere non ancora);
+- tiro di **salvezza contro la morte** (oggi un personaggio con 41+ danni è semplicemente morto e fuori gioco);
 - **mischia come tiro contrapposto**;
 - guarigione e recupero delle ferite, anche per gli NPC;
 - timeout delle connessioni inattive.

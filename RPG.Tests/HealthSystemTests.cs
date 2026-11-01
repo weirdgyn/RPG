@@ -63,13 +63,25 @@ public class HealthSystemTests
     }
 
     [Fact]
-    public void ZeroBoxesLeft_IsOutOfPlay()
+    public void LastBox_IsMortale6_NotDeadYet()
     {
-        // Comportamento attuale: a 0 caselle il personaggio è K.O. / Morto (cambierà con la morte canonica).
-        var h = new HealthSystem { CurrentHealth = 0 };
+        // 40 danni = ultima casella (Mortale 6): si è ancora in gioco, con -6.
+        var h = WithDamage(40);
 
+        Assert.False(h.IsDead);
+        Assert.Equal(-6, h.GetWoundPenalty());
+        Assert.Equal("Mortale 6 (-6 ai tiri)", h.GetWoundStatusDescription());
+    }
+
+    [Fact]
+    public void DamageOverTrack_IsDeath()
+    {
+        // 41 danni = una casella oltre la pista: morto, fuori gioco.
+        var h = WithDamage(41);
+
+        Assert.True(h.IsDead);
         Assert.Equal(-99, h.GetWoundPenalty());
-        Assert.Equal("K.O. / Morto", h.GetWoundStatusDescription());
+        Assert.Equal("Morto", h.GetWoundStatusDescription());
     }
 
     [Fact]

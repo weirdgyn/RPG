@@ -369,7 +369,7 @@ public class RpgTcpServer(string ipAddress, int port)
     // (null se non applicabile). Da chiamare dopo aver tolto i punti ferita.
     private static string? RollStunSave(Character target)
     {
-        if (target.Health.CurrentHealth <= 0 || target.Health.IsStunned) return null;
+        if (target.Health.IsDead || target.Health.IsStunned) return null;
 
         int mod = target.Health.GetStunSaveModifier();
         int threshold = Math.Max(0, target.Stats.BODY - mod);
@@ -469,6 +469,7 @@ public class RpgTcpServer(string ipAddress, int port)
         attackReq.WeaponOrSkill = InputLimits.Clean(attackReq.WeaponOrSkill, InputLimits.MaxNameFieldLength);
 
         if (!await EnsureCharacterLinkedAsync(client)) return;
+        if (!await EnsureAliveAsync(client, client.Player.Character!)) return;
 
         await ResolveAttackAsync(client, client.Player.Character!, attackReq);
     }
@@ -660,7 +661,7 @@ public class RpgTcpServer(string ipAddress, int port)
         }
     }
 
-    // Da chiamare sotto _gamesLock. Passa al prossimo personaggio valido dell'ordine (ancora nel game e non K.O.),
+    // Da chiamare sotto _gamesLock. Passa al prossimo personaggio valido dell'ordine (ancora nel game e non morto),
     // incrementando il round al giro completo, e azzera movimento e azione. False se non c'è più nessuno.
     private bool MoveToNextTurn(Game game, List<string> notes)
     {
@@ -672,7 +673,7 @@ public class RpgTcpServer(string ipAddress, int port)
             int raw = game.TurnIndex + step;
             int idx = raw % n;
             var combatant = FindCombatantInGame(game, game.TurnOrder[idx].Handle);
-            if (combatant == null || IsKnockedOut(combatant.Character)) continue;
+            if (combatant == null || combatant.Character.Health.IsDead) continue;
 
             // Chi è stordito tenta di riprendersi all'inizio del suo turno; se non ci riesce il turno salta
             if (combatant.Character.Health.IsStunned)
@@ -693,7 +694,7 @@ public class RpgTcpServer(string ipAddress, int port)
             return true;
         }
 
-        // Tutti gli altri sono storditi o K.O.: il turno va comunque al primo stordito (che può solo passare con /next)
+        // Tutti gli altri sono storditi o morti: il turno va comunque al primo stordito (che può solo passare con /next)
         if (fallbackRaw >= 0)
         {
             notes.Add("Nessuno in grado di agire: il turno passa a un personaggio stordito (può solo passare con /next).");
@@ -730,7 +731,7 @@ public class RpgTcpServer(string ipAddress, int port)
         else if (i == game.TurnIndex)
         {
             // Se n'è andato chi era di turno: si passa a chi lo seguiva con le stesse regole di /next
-            // (salta K.O., recupero dallo stordimento, nuovo TurnStamp, movimento e azione freschi).
+            // (salta i morti, recupero dallo stordimento, nuovo TurnStamp, movimento e azione freschi).
             // MoveToNextTurn parte dalla posizione successiva a TurnIndex: chi seguiva ora sta in TurnIndex.
             game.TurnIndex--;
             var notes = new List<string>();
@@ -915,7 +916,7 @@ public class RpgTcpServer(string ipAddress, int port)
         {
             payload.HasCharacter = true;
             payload.CharacterHandle = c.Handle;
-            payload.Health = c.Health.CurrentHealth;
+            payload.Health = c.Health.RemainingBoxes;
             payload.MaxHealth = c.Health.MaxHealth;
             payload.WoundStatus = c.Health.GetWoundStatusDescription();
             payload.MA = c.Stats.MA;
@@ -962,7 +963,7 @@ public class RpgTcpServer(string ipAddress, int port)
                     };
                     if (ch != null)
                     {
-                        member.Health = ch.Health.CurrentHealth;
+                        member.Health = ch.Health.RemainingBoxes;
                         member.MaxHealth = ch.Health.MaxHealth;
                         member.WoundStatus = ch.Health.GetWoundStatusDescription();
                         member.IsStunned = ch.Health.IsStunned;
@@ -979,7 +980,7 @@ public class RpgTcpServer(string ipAddress, int port)
                         Handle = npc.Handle,
                         Role = "npc",
                         IsNpc = true,
-                        Health = viewerIsMaster ? npc.Health.CurrentHealth : -1,
+                        Health = viewerIsMaster ? npc.Health.RemainingBoxes : -1,
                         MaxHealth = viewerIsMaster ? npc.Health.MaxHealth : -1,
                         WoundStatus = npc.Health.GetWoundStatusDescription(),
                         IsStunned = npc.Health.IsStunned,
@@ -1092,6 +1093,7 @@ public class RpgTcpServer(string ipAddress, int port)
         throwReq.WeaponKey = InputLimits.Clean(throwReq.WeaponKey, InputLimits.MaxNameFieldLength);
 
         if (!await EnsureCharacterLinkedAsync(client)) return;
+        if (!await EnsureAliveAsync(client, client.Player.Character!)) return;
 
         await ResolveThrowAsync(client, client.Player.Character!, throwReq);
     }
@@ -1201,7 +1203,6 @@ public class RpgTcpServer(string ipAddress, int port)
             if (radius <= 0) return Error($"{weapon.Name} non ha un raggio d'esplosione valido.");
 
             int penalty = thrower.Health.GetWoundPenalty();
-            if (penalty <= -99) return Error("Sei K.O., non puoi lanciare!");
 
             if (!Skills.TryGetStatForSkill(weapon.ScatterSkillName, out string statName))
             {
@@ -1302,7 +1303,7 @@ public class RpgTcpServer(string ipAddress, int port)
                 int penetrating = resolution.Penetrating;
                 int btmRed = resolution.BtmReduction;
                 int afterBtm = resolution.Dealt;
-                int healthBefore = target.Health.CurrentHealth;
+                int healthBefore = target.Health.RemainingBoxes;
                 target.Health.TakeDamage(afterBtm);
                 if (!changed.Contains(target)) changed.Add(target);
 
@@ -1319,7 +1320,7 @@ public class RpgTcpServer(string ipAddress, int port)
                     victimSteps.Add($"BTM (BODY {target.Stats.BODY}): {armor.DamageDealt} - {btmRed} = {afterBtm}{(armor.DamageDealt - btmRed < 1 ? " (minimo 1)" : "")}");
                 }
                 victimSteps.Add($"Danno inflitto: {afterBtm}");
-                victimSteps.Add($"Salute: {healthBefore} -> {target.Health.CurrentHealth}/{target.Health.MaxHealth} ({target.Health.GetWoundStatusDescription()})");
+                victimSteps.Add($"Salute: {healthBefore} -> {target.Health.RemainingBoxes}/{target.Health.MaxHealth} ({target.Health.GetWoundStatusDescription()})");
                 if (combatActive && afterBtm > 0)
                 {
                     var stunLine = RollStunSave(target);
@@ -1334,7 +1335,7 @@ public class RpgTcpServer(string ipAddress, int port)
                     ArmorSP = armor.SpFaced,
                     DamageDealt = afterBtm,
                     BtmReduction = armor.DamageDealt - afterBtm,
-                    RemainingHealth = target.Health.CurrentHealth,
+                    RemainingHealth = target.Health.RemainingBoxes,
                     MaxHealth = target.Health.MaxHealth,
                     WoundStatus = target.Health.GetWoundStatusDescription(),
                     Steps = victimSteps
@@ -1378,6 +1379,7 @@ public class RpgTcpServer(string ipAddress, int port)
     {
         var reloadReq = packet.DeserializePayload<ReloadRequestPayload>();
         if (!await EnsureCharacterLinkedAsync(client)) return;
+        if (!await EnsureAliveAsync(client, client.Player.Character!)) return;
 
         await ResolveReloadAsync(client, client.Player.Character!, reloadReq);
     }
@@ -1544,11 +1546,6 @@ public class RpgTcpServer(string ipAddress, int port)
             int attackerSkillLvl = attacker.Skills.TryGetValue(skillName, out int lvl) ? lvl : 0;
             int attackerPenalty = attacker.Health.GetWoundPenalty();
 
-            if (attackerPenalty <= -99)
-            {
-                return new AttackOutcome("Sei K.O., non puoi attaccare!", null, null);
-            }
-
             double distance = CombatRules.CalculateDistance(attacker.Position, target.Position);
             int targetNumber = 15;
             string attackTypeDesc = string.Empty;
@@ -1689,7 +1686,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
                 target.Health.TakeDamage(damageDealt);
                 steps.Add($"Danno inflitto: {damageDealt}");
-                steps.Add($"Salute di {target.Handle}: {healthBefore} -> {target.Health.CurrentHealth}/{target.Health.MaxHealth} ({target.Health.GetWoundStatusDescription()})");
+                steps.Add($"Salute di {target.Handle}: {healthBefore} -> {target.Health.RemainingBoxes}/{target.Health.MaxHealth} ({target.Health.GetWoundStatusDescription()})");
 
                 if (combatActive && damageDealt > 0)
                 {
@@ -1717,7 +1714,7 @@ public class RpgTcpServer(string ipAddress, int port)
                 ArmorAbsorbed = armorResult?.Absorbed ?? 0,
                 ArmorAblated = armorResult?.Ablated ?? false,
                 BtmReduction = armorResult != null ? armorResult.DamageDealt - damageDealt : 0,
-                TargetRemainingHealth = target.Health.CurrentHealth,
+                TargetRemainingHealth = target.Health.RemainingBoxes,
                 TargetMaxHealth = target.Health.MaxHealth,
                 TargetWoundStatus = target.Health.GetWoundStatusDescription(),
                 WeaponName = weaponToUse.Name,
@@ -1984,6 +1981,7 @@ public class RpgTcpServer(string ipAddress, int port)
         if (skillReq == null || string.IsNullOrWhiteSpace(skillReq.SkillName)) return;
 
         if (!await EnsureCharacterLinkedAsync(client)) return;
+        if (!await EnsureAliveAsync(client, client.Player.Character!)) return;
 
         await ResolveSkillCheckAsync(client, client.Player.Character!, skillReq);
     }
@@ -2085,6 +2083,7 @@ public class RpgTcpServer(string ipAddress, int port)
         if (moveReq?.Position == null) return;
 
         if (!await EnsureCharacterLinkedAsync(client)) return;
+        if (!await EnsureAliveAsync(client, client.Player.Character!)) return;
 
         await ResolveMoveAsync(client, client.Player.Character!, moveReq);
     }
@@ -2584,7 +2583,7 @@ public class RpgTcpServer(string ipAddress, int port)
                         {
                             Handle = n.Handle,
                             Role = n.Role,
-                            CurrentHealth = n.Health.CurrentHealth,
+                            CurrentHealth = n.Health.RemainingBoxes,
                             MaxHealth = n.Health.MaxHealth,
                             WoundStatus = n.Health.GetWoundStatusDescription(),
                             Position = n.Position
@@ -2793,6 +2792,8 @@ public class RpgTcpServer(string ipAddress, int port)
             return;
         }
 
+        if (!await EnsureAliveAsync(client, npc)) return;
+
         if (!NpcAllowedCommands.Contains(req.InnerOpCode))
         {
             await Fail("Con /as si possono usare solo: attack, skill, move, init, reload, throw.");
@@ -2835,11 +2836,8 @@ public class RpgTcpServer(string ipAddress, int port)
                     }
 
                 case OpCode.C2S_Init:
-                    {
-                        var initReq = JsonSerializer.Deserialize<InitRequest>(req.InnerPayload);
-                        await ResolveInitiativeAsync(client, npc, initReq?.Modifiers);
-                        break;
-                    }
+                    await ResolveInitiativeAsync(client, npc);
+                    break;
 
                 case OpCode.C2S_Reload:
                     {
@@ -3107,8 +3105,6 @@ public class RpgTcpServer(string ipAddress, int port)
 
     private async Task HandleInitAsync(ClientSession client, NetworkPacket packet)
     {
-        var initReq = packet.DeserializePayload<InitRequest>();
-
         if (client.Player != null && client.Player.Role == Player.RoleType.master)
         {
             // /init del master = /check init per tutti i personaggi del game
@@ -3142,7 +3138,7 @@ public class RpgTcpServer(string ipAddress, int port)
                 return;
             }
 
-            await ResolveInitiativeAsync(client, client.Player.Character, initReq?.Modifiers);
+            await ResolveInitiativeAsync(client, client.Player.Character);
         }
         else
         {
@@ -3212,8 +3208,6 @@ public class RpgTcpServer(string ipAddress, int port)
 
         return null;
     }
-
-    private static bool IsKnockedOut(Character c) => c.Health.CurrentHealth <= 0 || c.Health.GetWoundPenalty() <= -99;
 
     private static async Task ReplyCheckRegistrationAsync(ClientSession reporter, Character actor, CheckRegistration reg, string what)
     {
@@ -3403,13 +3397,13 @@ public class RpgTcpServer(string ipAddress, int port)
                 {
                     foreach (var c in candidates)
                     {
-                        if (IsKnockedOut(c.Character)) excluded.Add(c.Character.Handle);
+                        if (c.Character.Health.IsDead) excluded.Add(c.Character.Handle);
                         else if (!combatants.Any(x => ReferenceEquals(x.Character, c.Character))) combatants.Add(c);
                     }
 
                     if (combatants.Count == 0)
                     {
-                        error = "Nessun personaggio disponibile per il check (nessuno in gioco, o tutti K.O.).";
+                        error = "Nessun personaggio disponibile per il check (nessuno in gioco, o tutti morti).";
                     }
                     else
                     {
@@ -3447,7 +3441,7 @@ public class RpgTcpServer(string ipAddress, int port)
             }
             else
             {
-                total = RollInitiative(c.Character, null).Total;
+                total = RollInitiative(c.Character).Total;
             }
 
             lock (_gamesLock)
@@ -3483,7 +3477,7 @@ public class RpgTcpServer(string ipAddress, int port)
         var waitingFor = combatants.Where(x => x.Session != null).Select(x => x.Character.Handle).ToList();
         string masterMsg = $"Check di {what} aperto{(isSkill ? $" (TN {targetNumber})" : "")}. In attesa di: {(waitingFor.Count > 0 ? string.Join(", ", waitingFor) : "-")}."
             + (npcRolled.Count > 0 ? $" NPC già tirati dal server: {string.Join(", ", npcRolled)}." : "")
-            + (excluded.Count > 0 ? $" Esclusi (K.O.): {string.Join(", ", excluded)}." : "");
+            + (excluded.Count > 0 ? $" Esclusi (morti): {string.Join(", ", excluded)}." : "");
         await Fail(masterMsg);
 
         if (completed != null) await FinalizeCheckAsync(game, completed, forced: false);
@@ -3555,10 +3549,10 @@ public class RpgTcpServer(string ipAddress, int port)
         }
     }
 
-    private sealed record InitiativeRollResult(int Ref, int CombatSense, int Cyber, int Modifier, int Dice, int Total);
+    private sealed record InitiativeRollResult(int Ref, int CombatSense, int Cyber, int Dice, int Total);
 
-    // Iniziativa: REF + CombatSense (solo i Solo) + cyberware INIT + modificatore + d10
-    private static InitiativeRollResult RollInitiative(Character actor, string? modifiers)
+    // Iniziativa: REF + CombatSense (solo i Solo) + cyberware INIT + d10
+    private static InitiativeRollResult RollInitiative(Character actor)
     {
         int refStat = actor.Stats.REF;
 
@@ -3570,14 +3564,8 @@ public class RpgTcpServer(string ipAddress, int port)
 
         int cyberInit = SumCyberBonus(actor, "INIT");
 
-        int requestedMod = 0;
-        if (!string.IsNullOrWhiteSpace(modifiers) && !int.TryParse(modifiers.Trim(), out requestedMod))
-        {
-            requestedMod = 0;
-        }
-
         int dice = (int)GameDice.Roll("1d10").Total;
-        return new InitiativeRollResult(refStat, combatSense, cyberInit, requestedMod, dice, refStat + combatSense + cyberInit + requestedMod + dice);
+        return new InitiativeRollResult(refStat, combatSense, cyberInit, dice, refStat + combatSense + cyberInit + dice);
     }
 
     /// <summary>
@@ -3585,7 +3573,7 @@ public class RpgTcpServer(string ipAddress, int port)
     /// dato il comando: il giocatore stesso, o il master che tira per un NPC). Con un check di iniziativa aperto il tiro va
     /// allo spoglio (vale il primo); senza, un nuovo tiro sostituisce il precedente.
     /// </summary>
-    private async Task ResolveInitiativeAsync(ClientSession reporter, Character actor, string? modifiers)
+    private async Task ResolveInitiativeAsync(ClientSession reporter, Character actor)
     {
         Game? game;
         lock (_gamesLock)
@@ -3602,7 +3590,7 @@ public class RpgTcpServer(string ipAddress, int port)
             return;
         }
 
-        var init = RollInitiative(actor, modifiers);
+        var init = RollInitiative(actor);
         int total = init.Total;
 
         CheckRegistration reg;
@@ -3624,7 +3612,7 @@ public class RpgTcpServer(string ipAddress, int port)
             }
         }
 
-        Console.WriteLine($"[INIT] {reporter.Player.Username} ({actor.Handle}) tira iniziativa: REF {init.Ref} + CombatSense {init.CombatSense} + Cyberware {init.Cyber} + Mod {init.Modifier} + d10 {init.Dice} = {total}{(reg == CheckRegistration.NotInCheck ? "" : $" ({reg})")}");
+        Console.WriteLine($"[INIT] {reporter.Player.Username} ({actor.Handle}) tira iniziativa: REF {init.Ref} + CombatSense {init.CombatSense} + Cyberware {init.Cyber} + d10 {init.Dice} = {total}{(reg == CheckRegistration.NotInCheck ? "" : $" ({reg})")}");
 
         if (reg != CheckRegistration.NotInCheck)
         {
@@ -3698,6 +3686,18 @@ public class RpgTcpServer(string ipAddress, int port)
         await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
         {
             Message = "Nessun personaggio associato: usa /link <Character> prima di usare questo comando."
+        }));
+        return false;
+    }
+
+    // Un personaggio morto non agisce: nessuna azione (attacco, lancio, ricarica, movimento, prova).
+    private static async Task<bool> EnsureAliveAsync(ClientSession reporter, Character actor)
+    {
+        if (!actor.Health.IsDead) return true;
+
+        await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
+        {
+            Message = $"{actor.Handle} è morto: non può agire."
         }));
         return false;
     }

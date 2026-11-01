@@ -1,5 +1,6 @@
 using RPG.Common;
 using RPG.Common.Models;
+using Xunit;
 
 namespace RPG.Tests;
 
@@ -66,15 +67,18 @@ public class DamageResolutionTests
     }
 
     [Fact]
-    public void TakeDamage_SubtractsAndNeverGoesBelowZero()
+    public void TakeDamage_AccumulatesPastTheTrack()
     {
         var h = new HealthSystem();
 
         h.TakeDamage(8);
         Assert.Equal(32, h.CurrentHealth);
+        Assert.False(h.IsDead);
 
+        // Il danno oltre la pista serve a distinguere "ultima casella" (40) da "morto" (41+).
         h.TakeDamage(100);
-        Assert.Equal(0, h.CurrentHealth);
+        Assert.Equal(-68, h.CurrentHealth);
+        Assert.True(h.IsDead);
     }
 
     [Fact]
