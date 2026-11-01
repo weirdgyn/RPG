@@ -61,6 +61,10 @@ public class Game
     public double TurnMoveUsed { get; set; }
     public bool TurnActionUsed { get; set; }
 
+    // Azioni libere compiute da PG e NPC fuori dal combattimento (/skill, /roll, /attack, /move).
+    // Serve a stimare il tempo speso dal gruppo fuori dai round; si azzera a ogni /combat start.
+    public int FreeActionsCounter { get; set; }
+
     public string? CurrentTurnHandle =>
         CombatActive && TurnIndex >= 0 && TurnIndex < TurnOrder.Count ? TurnOrder[TurnIndex].Handle : null;
 }

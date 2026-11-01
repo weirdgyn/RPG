@@ -501,6 +501,7 @@ public class RpgTcpServer(string ipAddress, int port)
         }
 
         SpendAction(game);
+        CountFreeAction(game);
 
         // Il colpo sparato consuma munizioni: la scheda dell'attaccante va salvata anche se ha mancato
         if (outcome.AttackerChanged)
@@ -564,6 +565,21 @@ public class RpgTcpServer(string ipAddress, int port)
         lock (_gamesLock)
         {
             if (game.CombatActive) game.TurnActionUsed = true;
+        }
+    }
+
+    // In un round di combattimento un personaggio può fare movimento + azione: 2 comandi contati.
+    // Serve solo alla stima mostrata nel game status, non è un limite di gioco.
+    private const int MaxActionsPerRound = 2;
+
+    // Registra un'azione libera (fuori dal combattimento) nel game: alimenta FreeActionsCounter, che
+    // misura quanto il gruppo ha agito fuori dai round. Da chiamare solo per azioni eseguite
+    // (/skill, /roll, /attack risolto, /move riuscito).
+    private void CountFreeAction(Game game)
+    {
+        lock (_gamesLock)
+        {
+            if (!game.CombatActive) game.FreeActionsCounter++;
         }
     }
 
@@ -746,6 +762,7 @@ public class RpgTcpServer(string ipAddress, int port)
                             }
                             else
                             {
+                                game.FreeActionsCounter = 0;
                                 announce = $"COMBATTIMENTO INIZIATO! Ordine: {string.Join(" > ", game.TurnOrder.Select(t => t.Handle))}. {(startNotes.Count > 0 ? string.Join(" ", startNotes.Select(x => x + ".")) + " " : "")}{DescribeTurn(game)}";
                             }
                         }
@@ -896,6 +913,14 @@ public class RpgTcpServer(string ipAddress, int port)
                     if (cur != null) payload.MoveLeft = Math.Max(0, cur.Character.Stats.MA - game.TurnMoveUsed);
                 }
                 payload.TurnOrder = [.. game.TurnOrder.Select(t => t.Handle)];
+
+                // Azioni libere fuori dal combattimento e stima delle "round di gruppo" equivalenti
+                payload.FreeActionsCounter = game.FreeActionsCounter;
+                payload.MaxActionsPerRound = MaxActionsPerRound;
+                payload.CharacterCount = game.Players.Count(p => p.Character != null) + game.NPCs.Count;
+                payload.FreeActionRounds = payload.CharacterCount > 0
+                    ? (double)game.FreeActionsCounter / MaxActionsPerRound / payload.CharacterCount
+                    : 0;
 
                 var check = game.ActiveCheck;
                 if (check != null)
@@ -1647,6 +1672,13 @@ public class RpgTcpServer(string ipAddress, int port)
 
         Console.WriteLine($"[ROLL] {client.Player.Username} tira {loggedExpr} ({reason}): {total}");
 
+        Game? rollGame;
+        lock (_gamesLock)
+        {
+            rollGame = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
+        }
+        if (rollGame != null) CountFreeAction(rollGame);
+
         var resp = new RollResponsePayload
         {
             RollerHandle = client.Player.Username,
@@ -1900,6 +1932,8 @@ public class RpgTcpServer(string ipAddress, int port)
 
         if (checkGame != null)
         {
+            CountFreeAction(checkGame);
+
             CheckRegistration reg;
             Game.Check? completed;
             lock (_gamesLock)
@@ -2003,6 +2037,7 @@ public class RpgTcpServer(string ipAddress, int port)
                 if (game.CombatActive) game.TurnMoveUsed += moveDistance;
             }
             CharacterRepository.TrySaveCharacter(actor);
+            CountFreeAction(game);
 
             message = $"Posizione aggiornata a ({requested.X}, {requested.Y}, {requested.Z})";
             Console.WriteLine($"[MOVE] {actor.Handle} si è spostato a ({requested.X}, {requested.Y}, {requested.Z})");

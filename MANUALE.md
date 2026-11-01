@@ -104,9 +104,11 @@ Un archetipo definisce abilità, armi, munizioni, armatura e cyberware iniziali.
 |---|---|
 | `/join <game> [player]` | Entra in un game esistente. Se sei già in un game, esci prima con `/leave`. |
 | `/leave` | Esce dal game corrente. Il personaggio resta collegato. |
-| `/game` (alias `/gamestatus`) | Stato del game: master, partecipanti con salute, posizione e stordimento, NPC, combattimento, check aperto. |
+| `/game` (alias `/gamestatus`) | Stato del game: master, partecipanti con salute, posizione e stordimento, NPC, combattimento, check aperto, azioni libere. |
 
 Gli NPC compaiono nell'elenco con il loro stato qualitativo (per esempio "Seria"), ma senza punti ferita numerici.
+
+`/game` mostra anche il **contatore delle azioni libere**: quante azioni tra `/skill`, `/roll`, `/attack` e `/move` sono state compiute da PG e NPC **fuori dal combattimento** dall'ultimo avvio del combattimento (si azzera a ogni `/combat start`). Accanto c'è la **stima delle round di gruppo**: `azioni libere / (2 × numero di personaggi)`, cioè quanti round di combattimento sarebbero serviti al gruppo per compiere le stesse azioni (2 = un movimento e un'azione per personaggio a round). Contano le azioni eseguite: un movimento bloccato o un attacco rifiutato dalle regole non incrementano il contatore.
 
 ### 3.4 Prove e tiri
 
@@ -209,7 +211,7 @@ Come funziona:
 | Comando | Cosa fa |
 |---|---|
 | `/check init` | 1. Calcola l'ordine di iniziativa. |
-| `/combat start` | 2. Avvia il combattimento dal primo dell'ordine (round 1). |
+| `/combat start` | 2. Avvia il combattimento dal primo dell'ordine (round 1) e azzera il contatore delle azioni libere. |
 | `/next` | Passa al turno successivo (il master può farlo sempre). |
 | `/combat status` | Round, turno e budget rimasto. |
 | `/combat end` | Termina il combattimento: movimenti e azioni tornano liberi. |

@@ -118,6 +118,12 @@ public class GameStatusResponsePayload
     public double MoveLeft { get; set; }
     public bool ActionUsed { get; set; }
     public List<string> TurnOrder { get; set; } = [];
+    // Azioni libere (fuori dal combattimento) compiute da PG e NPC dall'ultimo /combat start.
+    // FreeActionRounds è la stima: FreeActionsCounter / MaxActionsPerRound / CharacterCount.
+    public int FreeActionsCounter { get; set; }
+    public int MaxActionsPerRound { get; set; }
+    public int CharacterCount { get; set; }
+    public double FreeActionRounds { get; set; }
     // Check aperto: descrizione, chi ha tirato e chi manca (il TN lo vede solo il master)
     public string CheckDescription { get; set; } = string.Empty;
     public List<string> CheckRolled { get; set; } = [];

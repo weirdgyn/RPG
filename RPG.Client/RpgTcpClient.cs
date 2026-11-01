@@ -669,6 +669,11 @@ namespace RPG.Client
                                 grid.AddRow(new Markup($"[bold magenta]Check aperto:[/] {Markup.Escape(gs.CheckDescription)} - hanno tirato [[{Markup.Escape(string.Join(", ", gs.CheckRolled))}]], in attesa di [[{Markup.Escape(string.Join(", ", gs.CheckWaiting))}]]"));
                             }
 
+                            string freeEstimate = gs.CharacterCount > 0 && gs.MaxActionsPerRound > 0
+                                ? $" [grey](~{gs.FreeActionRounds:0.0} round di gruppo: {gs.FreeActionsCounter} / ({gs.MaxActionsPerRound} az./round x {gs.CharacterCount} personaggi))[/]"
+                                : string.Empty;
+                            grid.AddRow(new Markup($"[bold yellow]Azioni libere[/] [grey](fuori dal combattimento):[/] [bold]{gs.FreeActionsCounter}[/]{freeEstimate}"));
+
                             AnsiConsole.Write(new Panel(grid) { Header = new PanelHeader($"[bold green] GAME: {Markup.Escape(gs.Name)} [/]"), BorderStyle = new Style(Color.Green) });
                         });
                     }
