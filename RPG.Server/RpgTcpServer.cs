@@ -341,6 +341,26 @@ public class RpgTcpServer(string ipAddress, int port)
 
     private sealed record AttackOutcome(string? Error, AttackResponsePayload? Result, string? LogLine, bool AttackerChanged = false);
 
+    // "d10 6 + REF 7 - ferite 2 = 11": ogni addendo con il suo nome, così il calcolo si legge senza ricostruirlo.
+    // Extra è un testo opzionale accanto al valore (es. " (10+4)" per un dado esploso).
+    private static string FormatSum(IReadOnlyList<(string Label, int Value, string? Extra)> parts)
+    {
+        var chunks = new List<string>();
+        int total = 0;
+        for (int i = 0; i < parts.Count; i++)
+        {
+            var (label, value, extra) = parts[i];
+            total += value;
+            if (i == 0) chunks.Add($"{label} {value}{extra}");
+            else if (value >= 0) chunks.Add($"+ {label} {value}{extra}");
+            else chunks.Add($"- {label} {-value}{extra}");
+        }
+        return $"{string.Join(" ", chunks)} = {total}";
+    }
+
+    private static string DiceExtra(GameDice.D10Roll roll) =>
+        roll.Exploded ? $" ({string.Join("+", roll.Rolls)}, esploso)" : string.Empty;
+
     // Somma dei bonus cyberware con un dato ApplyTo ("HIT", "DAMAGE", ...)
     private static int SumCyberBonus(Character actor, string applyTo) =>
         actor.Cyberware
@@ -1007,19 +1027,36 @@ public class RpgTcpServer(string ipAddress, int port)
             bool onTarget = !roll.IsFumble && total >= throwTn;
             weapon.CurrentAmmo--;
 
+            var throwSteps = new List<string>();
+            var throwParts = new List<(string, int, string?)>
+            {
+                ("d10", roll.Total, DiceExtra(roll)),
+                (statName, statVal, null),
+                (weapon.ScatterSkillName, skillLvl, null)
+            };
+            if (penalty != 0) throwParts.Add(("ferite", penalty, null));
+            throwSteps.Add($"Tiro di lancio: {FormatSum(throwParts)}");
+            throwSteps.Add($"Difficoltà: TN {throwTn} (distanza {distance:F1} m, gittata di lancio {throwRange:F0} m)");
+            throwSteps.Add(roll.IsFumble
+                ? "Esito: FALLIMENTO CRITICO (1 naturale sul d10)"
+                : onTarget ? $"Esito: A SEGNO ({total} contro TN {throwTn})" : $"Esito: FUORI BERSAGLIO ({total} contro TN {throwTn})");
+
             // Se il lancio fallisce la granata devia: d10 metri in direzione casuale (doppio con un fallimento critico)
             var landed = new Position3D { X = aimed.X, Y = aimed.Y, Z = aimed.Z };
             double deviation = 0;
             if (!onTarget)
             {
-                deviation = (double)GameDice.Roll("1d10").Total * (roll.IsFumble ? 2 : 1);
+                int deviationRoll = (int)GameDice.Roll("1d10").Total;
+                deviation = deviationRoll * (roll.IsFumble ? 2 : 1);
                 double angle = Random.Shared.NextDouble() * 2 * Math.PI;
                 landed.X += (int)Math.Round(deviation * Math.Cos(angle));
                 landed.Y += (int)Math.Round(deviation * Math.Sin(angle));
+                throwSteps.Add($"Deviazione: d10 {deviationRoll}{(roll.IsFumble ? " x2 (fallimento critico)" : "")} = {deviation:F0} m in direzione casuale");
             }
+            throwSteps.Add($"Esplosione in ({landed.X}, {landed.Y}, {landed.Z}), raggio {radius:0.#} m");
 
             // Un solo tiro di danno per fascia: tutti quelli nella stessa fascia subiscono lo stesso danno
-            var bandRolls = new Dictionary<string, int>();
+            var bandRolls = new Dictionary<string, (int Raw, string Text)>();
             var victims = new List<AreaVictim>();
             var changed = new List<Character> { thrower };
 
@@ -1030,30 +1067,61 @@ public class RpgTcpServer(string ipAddress, int port)
 
                 string? dice;
                 string bandKey;
+                string bandLabel;
                 if (weapon.AreaDamageBands is { Count: > 0 })
                 {
                     var band = weapon.AreaDamageBands.FirstOrDefault(b => d >= b.FromMeters && d < b.ToMeters);
                     if (band == null) continue;
                     dice = band.DamageDice;
                     bandKey = $"{band.FromMeters}-{band.ToMeters}";
+                    bandLabel = $"fascia {band.FromMeters:0.#}-{band.ToMeters:0.#} m";
                 }
                 else
                 {
                     dice = weapon.DamageDice;
                     bandKey = "all";
+                    bandLabel = "tutto il raggio";
                 }
 
-                if (!bandRolls.TryGetValue(bandKey, out int rawDamage))
+                var victimSteps = new List<string> { $"Distanza dal centro: {d:F1} m ({bandLabel})" };
+
+                if (!bandRolls.TryGetValue(bandKey, out var bandRoll))
                 {
-                    rawDamage = Math.Max(0, (int)GameDice.Roll(dice).Total);
-                    bandRolls[bandKey] = rawDamage;
+                    var dmgRoll = GameDice.Roll(dice);
+                    bandRoll = (Math.Max(0, (int)dmgRoll.Total), $"Dadi di danno: {dice} -> {dmgRoll.Details} (totale {(int)dmgRoll.Total})");
+                    bandRolls[bandKey] = bandRoll;
+                    victimSteps.Add(bandRoll.Text);
                 }
+                else
+                {
+                    victimSteps.Add($"Dadi di danno: {dice} -> stessi dadi della {bandLabel} (totale {bandRoll.Raw})");
+                }
+                int rawDamage = bandRoll.Raw;
 
                 // L'esplosione colpisce il corpo: protegge l'armatura del torso, nessun moltiplicatore di locazione
-                var armor = CombatRules.ApplyArmor(target.Armor.GetPiece(ArmorLocation.Torso), rawDamage, 1);
-                int afterBtm = CombatRules.ApplyBodyTypeModifier(armor.DamageDealt, CombatRules.GetBodyTypeReduction(target.Stats.BODY));
+                var torso = target.Armor.GetPiece(ArmorLocation.Torso);
+                var armor = CombatRules.ApplyArmor(torso, rawDamage, 1);
+                int penetrating = rawDamage - armor.Absorbed;
+                int btmRed = CombatRules.GetBodyTypeReduction(target.Stats.BODY);
+                int afterBtm = CombatRules.ApplyBodyTypeModifier(armor.DamageDealt, btmRed);
+                int healthBefore = target.Health.CurrentHealth;
                 target.Health.CurrentHealth = Math.Max(0, target.Health.CurrentHealth - afterBtm);
                 if (!changed.Contains(target)) changed.Add(target);
+
+                if (armor.SpFaced > 0)
+                {
+                    victimSteps.Add($"Armatura (torso, SP {armor.SpFaced}): {rawDamage} - {armor.SpFaced} = {penetrating}{(armor.Ablated ? " (SP dell'armatura -1)" : " (l'armatura regge)")}");
+                }
+                else
+                {
+                    victimSteps.Add($"Armatura: nessuna protezione sul torso ({rawDamage} danni passano)");
+                }
+                if (armor.DamageDealt > 0)
+                {
+                    victimSteps.Add($"BTM (BODY {target.Stats.BODY}): {armor.DamageDealt} - {btmRed} = {afterBtm}{(armor.DamageDealt - btmRed < 1 ? " (minimo 1)" : "")}");
+                }
+                victimSteps.Add($"Danno inflitto: {afterBtm}");
+                victimSteps.Add($"Salute: {healthBefore} -> {target.Health.CurrentHealth}/{target.Health.MaxHealth} ({target.Health.GetWoundStatusDescription()})");
 
                 victims.Add(new AreaVictim
                 {
@@ -1065,17 +1133,18 @@ public class RpgTcpServer(string ipAddress, int port)
                     BtmReduction = armor.DamageDealt - afterBtm,
                     RemainingHealth = target.Health.CurrentHealth,
                     MaxHealth = target.Health.MaxHealth,
-                    WoundStatus = target.Health.GetWoundStatusDescription()
+                    WoundStatus = target.Health.GetWoundStatusDescription(),
+                    Steps = victimSteps
                 });
             }
 
             string aimText = $"({aimed.X}, {aimed.Y}, {aimed.Z})";
             string landText = $"({landed.X}, {landed.Y}, {landed.Z})";
             string message = onTarget
-                ? $"{thrower.Handle} lancia {weapon.Name} su {aimText}: centro perfetto! Esplode nel punto indicato."
+                ? $"{thrower.Handle} lancia {weapon.Name} su {aimText}: esplode nel punto indicato."
                 : roll.IsFumble
-                    ? $"FALLIMENTO CRITICO! {thrower.Handle} lancia {weapon.Name} su {aimText} e la granata devia di {deviation:F0}m: esplode in {landText}."
-                    : $"{thrower.Handle} lancia {weapon.Name} su {aimText}, ma devia di {deviation:F0}m: esplode in {landText}.";
+                    ? $"FALLIMENTO CRITICO! La granata di {thrower.Handle} devia di {deviation:F0}m: esplode in {landText}."
+                    : $"La granata di {thrower.Handle} devia di {deviation:F0}m: esplode in {landText}.";
 
             var result = new AreaResultPayload
             {
@@ -1089,14 +1158,14 @@ public class RpgTcpServer(string ipAddress, int port)
                 Aimed = aimed,
                 Landed = landed,
                 BlastRadius = radius,
+                Steps = throwSteps,
                 PiecesLeft = weapon.CurrentAmmo,
                 Victims = victims,
                 Message = message
             };
 
-            string log = $"[COMBAT] {thrower.Handle} lancia '{weapon.Name}' su {aimText} ({distance:F1}m). Tiro: {total} (d10 {roll.Total}) vs TN {throwTn} -> "
-                + (onTarget ? "a segno" : $"devia di {deviation:F0}m in {landText}")
-                + $". Colpiti: {(victims.Count > 0 ? string.Join(", ", victims.Select(v => $"{v.Handle} -{v.DamageDealt}")) : "nessuno")}. Pezzi rimasti: {weapon.CurrentAmmo}.";
+            string log = $"[COMBAT] {thrower.Handle} lancia '{weapon.Name}' su {aimText}. {string.Join(" | ", throwSteps)}"
+                + $" | Colpiti: {(victims.Count > 0 ? string.Join(", ", victims.Select(v => $"{v.Handle} -{v.DamageDealt}")) : "nessuno")} | Pezzi rimasti: {weapon.CurrentAmmo}";
 
             return new ThrowOutcome(null, result, log, changed);
         }
@@ -1272,6 +1341,7 @@ public class RpgTcpServer(string ipAddress, int port)
             double distance = CombatRules.CalculateDistance(attacker.Position, target.Position);
             int targetNumber = 15;
             string attackTypeDesc = string.Empty;
+            string tnText = "TN 15";
 
             Ammo? loadedAmmo = null;
             bool ammoSpent = false;
@@ -1291,6 +1361,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
                 targetNumber = rangedTn.Value;
                 attackTypeDesc = $"A Distanza con {weaponToUse.Name} ({distance:F1}m, gittata {weaponToUse.OptimalRangeMeters}m) -> TN: {targetNumber}";
+                tnText = $"TN {targetNumber} (distanza {distance:F1} m, gittata {weaponToUse.OptimalRangeMeters} m)";
 
                 if (weaponToUse.UsesAmmo)
                 {
@@ -1312,6 +1383,9 @@ public class RpgTcpServer(string ipAddress, int port)
 
                 targetNumber = 10 + targetRef + targetDodge + targetPenalty;
                 attackTypeDesc = $"In Mischia con {weaponToUse.Name} -> Difesa Bersaglio (REF {targetRef} + Schivare {targetDodge}): TN {targetNumber}";
+                var tnParts = new List<(string, int, string?)> { ("base", 10, null), ("REF", targetRef, null), ("Schivare", targetDodge, null) };
+                if (targetPenalty != 0) tnParts.Add(("ferite", targetPenalty, null));
+                tnText = $"difesa di {target.Handle}: {FormatSum(tnParts)} (distanza {distance:F1} m)";
             }
 
             var attackRoll = GameDice.RollExplodingD10Detailed();
@@ -1320,51 +1394,94 @@ public class RpgTcpServer(string ipAddress, int port)
             int cyberHit = SumCyberBonus(attacker, "HIT");
             int attackTotal = attackerStat + attackerSkillLvl + attackerPenalty + weaponModifier + cyberHit + diceVal;
 
+            var steps = new List<string>();
+            var hitParts = new List<(string, int, string?)>
+            {
+                ("d10", diceVal, DiceExtra(attackRoll)),
+                (statName, attackerStat, null),
+                (skillName, attackerSkillLvl, null)
+            };
+            if (weaponModifier != 0) hitParts.Add(("arma", weaponModifier, null));
+            if (cyberHit != 0) hitParts.Add(("cyber", cyberHit, null));
+            if (attackerPenalty != 0) hitParts.Add(("ferite", attackerPenalty, null));
+            steps.Add($"Tiro per colpire: {FormatSum(hitParts)}");
+            steps.Add($"Difficoltà: {tnText}");
+
             // Un 1 naturale sul primo dado è un fallimento critico: manca comunque (il colpo sparato è perso)
             bool isFumble = attackRoll.IsFumble;
             bool isHit = !isFumble && attackTotal >= targetNumber;
+            steps.Add(isFumble
+                ? "Esito: FALLIMENTO CRITICO (1 naturale sul d10)"
+                : isHit ? $"Esito: COLPITO ({attackTotal} contro TN {targetNumber})" : $"Esito: MANCATO ({attackTotal} contro TN {targetNumber})");
+
             int damageDealt = 0;
             string hitLocationName = string.Empty;
             int hitMultiplier = 1;
             CombatRules.ArmorResult? armorResult = null;
             int btmReduction = 0;
+            int healthBefore = target.Health.CurrentHealth;
 
             if (isHit)
             {
                 var damageRoll = GameDice.Roll(weaponToUse.DamageDice);
-                int rawDamage = Math.Max(0, (int)damageRoll.Total + (loadedAmmo?.DamageModifier ?? 0) + SumCyberBonus(attacker, "DAMAGE"));
+                int diceDamage = (int)damageRoll.Total;
+                int ammoDamage = loadedAmmo?.DamageModifier ?? 0;
+                int cyberDamage = SumCyberBonus(attacker, "DAMAGE");
+                int rawDamage = Math.Max(0, diceDamage + ammoDamage + cyberDamage);
 
-                if (weaponToUse.Type != Weapon.WeaponType.Area)
+                // Locazione d'impatto e armatura di quella zona
+                int locRoll = (int)GameDice.Roll("1d10").Total;
+                var loc = CombatRules.ResolveHitLocation(locRoll);
+                hitLocationName = loc.Name;
+                hitMultiplier = loc.DamageMultiplier;
+                steps.Add($"Locazione: d10 {locRoll} -> {loc.Name}{(loc.DamageMultiplier > 1 ? $" (danno x{loc.DamageMultiplier} dopo l'armatura)" : "")}");
+
+                steps.Add($"Dadi di danno: {weaponToUse.DamageDice} -> {damageRoll.Details} (totale {diceDamage})");
+                if (ammoDamage != 0 || cyberDamage != 0)
                 {
-                    // Locazione d'impatto (a distanza e in mischia) e armatura di quella zona
-                    var loc = CombatRules.ResolveHitLocation((int)GameDice.Roll("1d10").Total);
-                    hitLocationName = loc.Name;
-                    hitMultiplier = loc.DamageMultiplier;
+                    var dmgParts = new List<(string, int, string?)> { ("dadi", diceDamage, null) };
+                    if (ammoDamage != 0) dmgParts.Add(("munizioni", ammoDamage, null));
+                    if (cyberDamage != 0) dmgParts.Add(("cyber", cyberDamage, null));
+                    steps.Add($"Bonus al danno: {FormatSum(dmgParts)}");
+                }
 
-                    armorResult = CombatRules.ApplyArmor(target.Armor.GetPiece(loc.ArmorLocation), rawDamage, loc.DamageMultiplier,
-                        armorPiercing: loadedAmmo?.HalvesArmorSP == true);
-                    btmReduction = CombatRules.GetBodyTypeReduction(target.Stats.BODY);
-                    damageDealt = CombatRules.ApplyBodyTypeModifier(armorResult.DamageDealt, btmReduction);
+                var armorPiece = target.Armor.GetPiece(loc.ArmorLocation);
+                int spBefore = armorPiece?.CurrentStopPower ?? 0;
+                bool armorPiercing = loadedAmmo?.HalvesArmorSP == true;
+
+                armorResult = CombatRules.ApplyArmor(armorPiece, rawDamage, loc.DamageMultiplier, armorPiercing: armorPiercing);
+                int penetrating = rawDamage - armorResult.Absorbed;
+
+                if (armorResult.SpFaced > 0)
+                {
+                    string spText = armorPiercing ? $"SP {spBefore} dimezzato dalle munizioni perforanti = {armorResult.SpFaced}" : $"SP {armorResult.SpFaced}";
+                    steps.Add($"Armatura ({armorPiece?.Name}, {spText}): {rawDamage} - {armorResult.SpFaced} = {penetrating}{(armorResult.Ablated ? " (SP dell'armatura -1)" : " (l'armatura regge)")}");
                 }
                 else
                 {
-                    damageDealt = rawDamage;
+                    steps.Add($"Armatura: nessuna protezione su {loc.Name} ({rawDamage} danni passano)");
+                }
+
+                if (loc.DamageMultiplier > 1 && penetrating > 0)
+                {
+                    steps.Add($"Moltiplicatore {loc.Name} x{loc.DamageMultiplier}: {penetrating} -> {armorResult.DamageDealt}");
+                }
+
+                btmReduction = CombatRules.GetBodyTypeReduction(target.Stats.BODY);
+                damageDealt = CombatRules.ApplyBodyTypeModifier(armorResult.DamageDealt, btmReduction);
+                if (armorResult.DamageDealt > 0)
+                {
+                    steps.Add($"BTM (BODY {target.Stats.BODY}): {armorResult.DamageDealt} - {btmReduction} = {damageDealt}{(armorResult.DamageDealt - btmReduction < 1 ? " (minimo 1)" : "")}");
                 }
 
                 target.Health.CurrentHealth = Math.Max(0, target.Health.CurrentHealth - damageDealt);
+                steps.Add($"Danno inflitto: {damageDealt}");
+                steps.Add($"Salute di {target.Handle}: {healthBefore} -> {target.Health.CurrentHealth}/{target.Health.MaxHealth} ({target.Health.GetWoundStatusDescription()})");
             }
 
-            string armorNote = armorResult is { SpFaced: > 0 }
-                ? $" Armatura SP {armorResult.SpFaced}: assorbiti {armorResult.Absorbed}{(armorResult.Ablated ? ", SP -1" : "")}."
-                : string.Empty;
-
-            string hitDesc = isHit
-                ? hitLocationName.Length > 0
-                    ? $"COLPITO ({damageDealt} dmg, Impatto: {hitLocationName}{(hitMultiplier > 1 ? $" x{hitMultiplier}" : "")}){armorNote}"
-                    : $"COLPITO ({damageDealt} dmg)"
-                : isFumble ? "FALLIMENTO CRITICO" : "MANCATO";
-
-            string log = $"[COMBAT] {attacker.Handle} attacca {target.Handle} con '{weaponToUse.Name}'. {attackTypeDesc}. Tiro: {attackTotal} (d10 {diceVal}, arma {weaponModifier:+0;-0;+0}, cyber {cyberHit:+0;-0;+0}) vs TN {targetNumber}. {hitDesc}{(weaponToUse.UsesAmmo ? $" Colpi: {weaponToUse.CurrentAmmo}/{weaponToUse.MagazineCapacity}." : "")}";
+            string log = $"[COMBAT] {attacker.Handle} attacca {target.Handle} con '{weaponToUse.Name}'. {attackTypeDesc}. "
+                + string.Join(" | ", steps)
+                + (weaponToUse.UsesAmmo ? $" | Colpi: {weaponToUse.CurrentAmmo}/{weaponToUse.MagazineCapacity}" : "");
 
             var respPayload = new AttackResponsePayload
             {
@@ -1385,17 +1502,17 @@ public class RpgTcpServer(string ipAddress, int port)
                 TargetMaxHealth = target.Health.MaxHealth,
                 TargetWoundStatus = target.Health.GetWoundStatusDescription(),
                 WeaponName = weaponToUse.Name,
+                Steps = steps,
                 AmmoLeft = weaponToUse.UsesAmmo ? weaponToUse.CurrentAmmo : 0,
                 AmmoCapacity = weaponToUse.UsesAmmo ? weaponToUse.MagazineCapacity : 0,
                 AmmoName = weaponToUse.UsesAmmo ? (loadedAmmo?.Name ?? "Munizioni standard") : string.Empty,
-                // Locazione e armatura sono righe a parte nel pannello: qui solo l'esito
                 Message = isHit
                     ? (damageDealt > 0
-                        ? $"COLPO A SEGNO! {attacker.Handle} usa '{weaponToUse.Name}' e infligge {damageDealt} danni ({weaponToUse.DamageDice})!"
-                        : $"COLPO A SEGNO, MA L'ARMATURA REGGE! {attacker.Handle} colpisce con '{weaponToUse.Name}' ({weaponToUse.DamageDice}) senza infliggere danni.")
+                        ? $"COLPO A SEGNO: {damageDealt} danni a {target.Handle}."
+                        : $"COLPO A SEGNO, MA NESSUN DANNO: l'armatura regge.")
                     : isFumble
-                        ? $"FALLIMENTO CRITICO! {attacker.Handle} sbaglia clamorosamente con '{weaponToUse.Name}'."
-                        : $"MANCATO! {attacker.Handle} fallisce l'attacco con '{weaponToUse.Name}'."
+                        ? $"FALLIMENTO CRITICO di {attacker.Handle}."
+                        : $"MANCATO da {attacker.Handle}."
             };
 
             return new AttackOutcome(null, respPayload, log, ammoSpent);

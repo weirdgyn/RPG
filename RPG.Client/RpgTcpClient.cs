@@ -161,35 +161,21 @@ namespace RPG.Client
                             var grid = new Grid();
                             grid.AddColumn();
 
-                            grid.AddRow(new Markup($"[bold yellow]{Markup.Escape(attackResp.AttackerHandle)}[/] [red]attacca[/] [bold yellow]{Markup.Escape(attackResp.TargetHandle)}[/]"));
-                            grid.AddRow(new Markup($"   Tiro: [cyan]{attackResp.AttackTotal}[/] vs Difesa TN: [cyan]{attackResp.DefenseTN}[/]"));
-                            grid.AddRow(new Markup($"   Esito: [white]{Markup.Escape(attackResp.Message)}[/]"));
+                            grid.AddRow(new Markup($"[bold yellow]{Markup.Escape(attackResp.AttackerHandle)}[/] [red]attacca[/] [bold yellow]{Markup.Escape(attackResp.TargetHandle)}[/]" +
+                                (attackResp.WeaponName.Length > 0 ? $" con [cyan]{Markup.Escape(attackResp.WeaponName)}[/]" : "")));
 
-                            if (attackResp.IsHit)
+                            foreach (var step in attackResp.Steps)
                             {
-                                if (!string.IsNullOrEmpty(attackResp.HitLocation))
-                                {
-                                    string mult = attackResp.DamageMultiplier > 1 ? $"[bold red](danno x{attackResp.DamageMultiplier})[/]" : "";
-                                    grid.AddRow(new Markup($"    Impatto: [bold yellow]{Markup.Escape(attackResp.HitLocation)}[/]{mult}"));
-                                }
-                                if (attackResp.ArmorSP > 0)
-                                {
-                                    string ablated = attackResp.ArmorAblated ? " [grey](SP -1)[/]" : "";
-                                    grid.AddRow(new Markup($"    Armatura: [bold cyan]SP {attackResp.ArmorSP}[/] assorbe [cyan]{attackResp.ArmorAbsorbed}[/]{ablated}"));
-                                }
-                                if (attackResp.BtmReduction > 0)
-                                {
-                                    grid.AddRow(new Markup($"    Corporatura (BTM): [bold cyan]-{attackResp.BtmReduction}[/]"));
-                                }
-                                grid.AddRow(new Markup($"   Danno: [bold red]{attackResp.DamageDealt}[/]"));
-                                string maxHp = attackResp.TargetMaxHealth > 0 ? $"/{attackResp.TargetMaxHealth}" : "";
-                                grid.AddRow(new Markup($"   Stato {Markup.Escape(attackResp.TargetHandle)}: [bold yellow]{attackResp.TargetRemainingHealth}{maxHp} HP[/] [grey]({Markup.Escape(attackResp.TargetWoundStatus)})[/]"));
+                                grid.AddRow(new Markup("  " + FormatCombatStep(step)));
                             }
+
+                            string resultColor = attackResp.IsHit ? (attackResp.DamageDealt > 0 ? "bold red" : "bold cyan") : "bold grey";
+                            grid.AddRow(new Markup($"[{resultColor}]{Markup.Escape(attackResp.Message)}[/]"));
 
                             if (attackResp.AmmoCapacity > 0)
                             {
                                 string ammoColor = attackResp.AmmoLeft == 0 ? "bold red" : "cyan";
-                                grid.AddRow(new Markup($"   Colpi: [{ammoColor}]{attackResp.AmmoLeft}/{attackResp.AmmoCapacity}[/] [grey]({Markup.Escape(attackResp.AmmoName)})[/]"));
+                                grid.AddRow(new Markup($"  Colpi: [{ammoColor}]{attackResp.AmmoLeft}/{attackResp.AmmoCapacity}[/] [grey]({Markup.Escape(attackResp.AmmoName)})[/]"));
                             }
 
                             var panel = new Panel(grid)
@@ -546,34 +532,27 @@ namespace RPG.Client
                             var grid = new Grid();
                             grid.AddColumn();
                             grid.AddRow(new Markup($"[bold yellow]{Markup.Escape(areaResp.ThrowerHandle)}[/] [red]lancia[/] [bold yellow]{Markup.Escape(areaResp.WeaponName)}[/]"));
-                            grid.AddRow(new Markup($"   Lancio: [cyan]{areaResp.ThrowTotal}[/] vs TN: [cyan]{areaResp.ThrowTN}[/]"));
-                            grid.AddRow(new Markup($"   Esito: [white]{Markup.Escape(areaResp.Message)}[/]"));
-                            grid.AddRow(new Markup($"   Esplosione in [bold]({areaResp.Landed.X}, {areaResp.Landed.Y}, {areaResp.Landed.Z})[/], raggio [cyan]{areaResp.BlastRadius:0.#}m[/] - pezzi rimasti: [cyan]{areaResp.PiecesLeft}[/]"));
+
+                            foreach (var step in areaResp.Steps)
+                            {
+                                grid.AddRow(new Markup("  " + FormatCombatStep(step)));
+                            }
+                            grid.AddRow(new Markup($"[bold yellow]{Markup.Escape(areaResp.Message)}[/] [grey](pezzi rimasti: {areaResp.PiecesLeft})[/]"));
 
                             if (areaResp.Victims.Count == 0)
                             {
-                                grid.AddRow(new Markup("   [grey]Nessuno nel raggio dell'esplosione.[/]"));
+                                grid.AddRow(new Markup("  [grey]Nessuno nel raggio dell'esplosione.[/]"));
                             }
                             else
                             {
-                                var table = new Table().Border(TableBorder.Rounded).BorderColor(Color.Red1);
-                                table.AddColumn(new TableColumn("[bold cyan]Personaggio[/]"));
-                                table.AddColumn(new TableColumn("[bold white]Distanza[/]").Centered());
-                                table.AddColumn(new TableColumn("[bold red]Danno[/]").Centered());
-                                table.AddColumn(new TableColumn("[bold white]Stato[/]"));
                                 foreach (var v in areaResp.Victims)
                                 {
-                                    string armor = v.ArmorSP > 0 || v.BtmReduction > 0
-                                        ? $" [grey](tirati {v.RawDamage}{(v.ArmorSP > 0 ? $", SP {v.ArmorSP}" : "")}{(v.BtmReduction > 0 ? $", BTM -{v.BtmReduction}" : "")})[/]"
-                                        : "";
-                                    string maxHp = v.MaxHealth > 0 ? $"/{v.MaxHealth}" : "";
-                                    table.AddRow(
-                                        Markup.Escape(v.Handle),
-                                        $"{v.Distance:0.#}m",
-                                        $"{v.DamageDealt}{armor}",
-                                        $"[bold yellow]{v.RemainingHealth}{maxHp} HP[/] [grey]({Markup.Escape(v.WoundStatus)})[/]");
+                                    grid.AddRow(new Markup($"[bold cyan]> {Markup.Escape(v.Handle)}[/]"));
+                                    foreach (var step in v.Steps)
+                                    {
+                                        grid.AddRow(new Markup("    " + FormatCombatStep(step)));
+                                    }
                                 }
-                                grid.AddRow(table);
                             }
 
                             AnsiConsole.Write(new Panel(grid)
@@ -777,6 +756,17 @@ namespace RPG.Client
                     PrintServerOutput(() => AnsiConsole.MarkupLine($"[grey][[PACKET]][/] Ricevuto OpCode: [yellow]{packet.OpCode}[/]"));
                     break;
             }
+        }
+
+        /// <summary>
+        /// Una riga del calcolo di combattimento ("Etichetta: dettaglio"): l'etichetta in evidenza, il resto
+        /// con il testo del server sempre escapato.
+        /// </summary>
+        private static string FormatCombatStep(string step)
+        {
+            int colon = step.IndexOf(':');
+            if (colon <= 0 || colon > 40) return Markup.Escape(step);
+            return $"[bold cyan]{Markup.Escape(step[..(colon + 1)])}[/]{Markup.Escape(step[(colon + 1)..])}";
         }
 
         /// <summary>

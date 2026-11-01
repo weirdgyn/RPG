@@ -71,7 +71,7 @@ public static class GameDice
     /// Come <see cref="RollExplodingD10"/> ma conserva il primo dado: un 1 naturale è un fallimento critico
     /// (fumble) e non si ritira. <paramref name="DiceCount"/> è il numero di dadi tirati (&gt;1 = esplosione).
     /// </summary>
-    public readonly record struct D10Roll(int Total, int FirstDie, int DiceCount)
+    public readonly record struct D10Roll(int Total, int FirstDie, int DiceCount, int[] Rolls)
     {
         public bool IsFumble => FirstDie == 1;
         public bool Exploded => DiceCount > 1;
@@ -85,15 +85,17 @@ public static class GameDice
         int first = 0;
         int dice = 0;
         int roll;
+        var rolls = new List<int>();
         do
         {
             roll = (int)Roller.Roll("1d10").Value;
+            rolls.Add(roll);
             if (dice == 0) first = roll;
             total += roll;
             dice++;
             chain--;
         } while (roll == 10 && chain > 0);
 
-        return new D10Roll(total, first, dice);
+        return new D10Roll(total, first, dice, [.. rolls]);
     }
 }

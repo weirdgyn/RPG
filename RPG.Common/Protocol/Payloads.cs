@@ -148,6 +148,8 @@ public class AreaVictim
     public int RemainingHealth { get; set; }
     public int MaxHealth { get; set; }
     public string WoundStatus { get; set; } = string.Empty;
+    // Svolgimento passo per passo del danno subito da questo personaggio
+    public List<string> Steps { get; set; } = [];
 }
 
 public class AreaResultPayload
@@ -163,6 +165,8 @@ public class AreaResultPayload
     public Position3D Aimed { get; set; } = new();
     public Position3D Landed { get; set; } = new();
     public double BlastRadius { get; set; }
+    // Svolgimento del lancio (tiro, difficoltà, esito)
+    public List<string> Steps { get; set; } = [];
     public int PiecesLeft { get; set; }
     public List<AreaVictim> Victims { get; set; } = [];
     public string Message { get; set; } = string.Empty;
@@ -200,6 +204,8 @@ public class AttackResponsePayload
     public int TargetMaxHealth { get; set; }
     public string TargetWoundStatus { get; set; } = string.Empty;
     public string WeaponName { get; set; } = string.Empty;
+    // Svolgimento passo per passo del tiro (dadi naturali, bonus, armatura, BTM, salute): una riga per passaggio
+    public List<string> Steps { get; set; } = [];
     // Munizioni dell'attaccante dopo il colpo (AmmoCapacity = 0: arma senza caricatore)
     public int AmmoLeft { get; set; }
     public int AmmoCapacity { get; set; }
