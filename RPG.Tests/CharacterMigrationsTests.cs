@@ -1,5 +1,6 @@
 using RPG.Common.Models;
 using RPG.Server;
+using Xunit;
 
 namespace RPG.Tests;
 

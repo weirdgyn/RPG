@@ -1,6 +1,7 @@
 using RPG.Common;
 using RPG.Common.Models;
 using RPG.Common.World;
+using Xunit;
 
 namespace RPG.Tests;
 

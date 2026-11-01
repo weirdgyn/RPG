@@ -1,5 +1,6 @@
 using System.Text.Json;
 using RPG.Common.Models;
+using Xunit;
 
 namespace RPG.Tests;
 
