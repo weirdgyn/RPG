@@ -84,6 +84,46 @@ public class HealthSystemTests
         Assert.Equal("Morto", h.GetWoundStatusDescription());
     }
 
+    [Theory]
+    [InlineData(12, false)]
+    [InlineData(13, true)]
+    [InlineData(40, true)]
+    [InlineData(41, false)]   // morto: non tira più
+    public void NeedsDeathSave_OnlyInMortalRange(int damage, bool expected)
+    {
+        Assert.Equal(expected, WithDamage(damage).NeedsDeathSave);
+    }
+
+    [Fact]
+    public void Stabilized_StopsDeathSaves_AndNewDamageReopens()
+    {
+        var h = WithDamage(20);
+        Assert.True(h.NeedsDeathSave);
+
+        h.IsStabilized = true;
+        Assert.False(h.NeedsDeathSave);
+
+        h.TakeDamage(3);
+        Assert.False(h.IsStabilized);
+        Assert.True(h.NeedsDeathSave);
+    }
+
+    [Fact]
+    public void Kill_MakesDead_AndFullHealRevives()
+    {
+        var h = WithDamage(20);
+
+        h.Kill();
+        Assert.True(h.IsDead);
+        Assert.False(h.NeedsDeathSave);
+
+        h.FullHeal();
+        Assert.False(h.IsDead);
+        Assert.Equal(40, h.CurrentHealth);
+        Assert.False(h.IsStabilized);
+        Assert.False(h.IsStunned);
+    }
+
     [Fact]
     public void StunnedFlag_IsSessionOnly_NotSerialized()
     {

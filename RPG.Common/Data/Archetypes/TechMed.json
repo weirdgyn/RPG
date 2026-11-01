@@ -13,6 +13,8 @@
   },
   "Skills": {
     "MedicalTech": 5,
+    "Tecnomedicina": 5,
+    "Pronto Soccorso": 4,
     "Medicina": 5,
     "Diagnosi": 4,
     "Cybertech": 3,

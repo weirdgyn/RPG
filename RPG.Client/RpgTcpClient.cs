@@ -515,6 +515,15 @@ namespace RPG.Client
                     }
                     break;
 
+                case OpCode.S2C_HealResponse:
+                    var healResp = packet.DeserializePayload<HealResponsePayload>();
+                    if (healResp != null)
+                    {
+                        string tag = healResp.Success ? "[bold green][[HEAL]][/]" : "[bold red][[HEAL FALLITO]][/]";
+                        PrintServerOutput(() => AnsiConsole.MarkupLine($"{tag} [white]{Markup.Escape(healResp.Message)}[/]"));
+                    }
+                    break;
+
                 case OpCode.S2C_CreateCharacterResponse:
                     var createResp = packet.DeserializePayload<CreateCharacterResponsePayload>();
                     if (createResp != null)
@@ -946,6 +955,7 @@ namespace RPG.Client
                 table.AddRow("[bold white]/create[/]", "[cyan]<archetipo> <handle>[/]", "Crea un nuovo personaggio da un archetipo (con stat casuali)");
                 table.AddRow("[bold white]/link[/]", "[cyan]<character>[/]", "Collega la sessione ad un personaggio esistente");
                 table.AddRow("[bold white]/unlink[/]", "[grey]-[/]", "Scollega il personaggio corrente (solo fuori da un game)");
+                table.AddRow("[bold white]/heal[/]", "[cyan]<personaggio>[/]", "Master: cura completa. Giocatore: stabilizza (Pronto Soccorso/Tecnomedicina)");
                 table.AddRow("[bold white]/list[/]", "[grey][[game]][/]", "Elenca i giocatori online (o filtrati per stanza di gioco)");
                 table.AddRow("[bold white]/games[/]", "[grey]-[/]", "Elenca le sessioni di gioco attive");
                 table.AddRow("[bold white]/characters[/]", "[grey]-[/]", "Elenca i personaggi salvati sul server");
@@ -1605,6 +1615,21 @@ namespace RPG.Client
                 if (trimmedInput.Equals("/unlink", StringComparison.OrdinalIgnoreCase))
                 {
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_Unlink, new { })));
+                    continue;
+                }
+
+                if (trimmedInput.Equals("/heal", StringComparison.OrdinalIgnoreCase)
+                    || trimmedInput.StartsWith("/heal ", StringComparison.OrdinalIgnoreCase))
+                {
+                    string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length < 2)
+                    {
+                        AnsiConsole.MarkupLine("[bold red][[!]]: Uso:[/] [yellow]/heal <personaggio>[/]");
+                        continue;
+                    }
+
+                    await _writer.WriteLineAsync(JsonSerializer.Serialize(
+                        NetworkPacket.Create(OpCode.C2S_Heal, new HealRequestPayload { TargetHandle = parts[1] })));
                     continue;
                 }
 

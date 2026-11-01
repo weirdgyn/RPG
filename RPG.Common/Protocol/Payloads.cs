@@ -372,6 +372,18 @@ public class UnlinkResponsePayload
     public Player.RoleType Role { get; set; } = Player.RoleType.none;
 }
 
+public class HealRequestPayload
+{
+    public string TargetHandle { get; set; } = string.Empty;
+}
+
+public class HealResponsePayload
+{
+    public bool Success { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public string TargetHandle { get; set; } = string.Empty;
+}
+
 public class CreateCharacterRequestPayload
 {
     public string Archetype { get; set; } = string.Empty;

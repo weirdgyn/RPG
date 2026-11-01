@@ -24,6 +24,8 @@ public static class Skills
         { "Scassinare", "TECH" },
         { "JuryRig", "TECH" },
         { "MedicalTech", "TECH" },
+        { "Tecnomedicina", "TECH" },
+        { "Pronto Soccorso", "TECH" },
         { "Netrunning", "INT" },
         { "Interfaccia", "INT" },
         { "Programmazione", "INT" },

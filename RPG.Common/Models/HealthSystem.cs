@@ -12,6 +12,9 @@ public class HealthSystem
     /// <summary>Numero di caselle della scheda ferite (uguale per tutti: il BODY agisce sul BTM, non sulle caselle).</summary>
     public const int TrackBoxes = 40;
 
+    /// <summary>Da questo danno in poi si è in Mortale: serve il tiro salvezza contro la morte a inizio turno.</summary>
+    public const int MortalThreshold = 13;
+
     public int MaxHealth { get; set; } = TrackBoxes;
 
     // Può scendere sotto zero: il danno che supera la pista (41+ su 40) significa morte (vedi IsDead).
@@ -28,10 +31,38 @@ public class HealthSystem
     [JsonIgnore]
     public int RemainingBoxes => Math.Max(0, CurrentHealth);
 
+    /// <summary>In Mortale (13+ danni) ma ancora vivo: a inizio turno va tirato il salvezza contro la morte.</summary>
+    [JsonIgnore]
+    public bool IsInMortalRange => !IsDead && DamageTaken >= MortalThreshold;
+
+    /// <summary>
+    /// Stabilizzato (pronto soccorso): non tira più il salvezza contro la morte. Stato di sessione, non
+    /// salvato nella scheda: un nuovo danno lo annulla.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsStabilized { get; set; }
+
+    /// <summary>Serve il tiro salvezza contro la morte: in Mortale e non stabilizzato.</summary>
+    [JsonIgnore]
+    public bool NeedsDeathSave => IsInMortalRange && !IsStabilized;
+
     /// <summary>Toglie <paramref name="amount"/> caselle alla salute. Unico punto in cui il danno viene applicato.</summary>
     public void TakeDamage(int amount)
     {
-        CurrentHealth -= Math.Max(0, amount);
+        int dealt = Math.Max(0, amount);
+        if (dealt > 0) IsStabilized = false;   // un nuovo danno riapre la ferita
+        CurrentHealth -= dealt;
+    }
+
+    /// <summary>Uccide: porta il danno una casella oltre la pista (41+ su 40).</summary>
+    public void Kill() => CurrentHealth = Math.Min(CurrentHealth, -1);
+
+    /// <summary>Cura completa (uso del master): salute piena e azzera morte, stordimento e stabilizzazione.</summary>
+    public void FullHeal()
+    {
+        CurrentHealth = MaxHealth;
+        IsStabilized = false;
+        IsStunned = false;
     }
 
     // In Cyberpunk le ferite applicano penalità ai tiri di dado (qui piatte su tutte le azioni)

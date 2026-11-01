@@ -94,6 +94,12 @@ public static class CombatRules
     public static int GetMeleeTargetNumber(int targetRef, int dodgeSkill, int targetWoundPenalty)
         => 10 + targetRef + dodgeSkill + targetWoundPenalty;
 
+    /// <summary>
+    /// Tiro salvezza contro la morte (CP2020): con un d10 ≤ BODY si sopravvive, altrimenti si muore.
+    /// Il dado arriva già tirato, così la regola è deterministica e testabile.
+    /// </summary>
+    public static bool DeathSaveSurvives(int die, int body) => die <= body;
+
     /// <summary>Esito del tiro per colpire: totale, fallimento critico, colpito.</summary>
     public sealed record ToHitResult(int Total, bool IsFumble, bool IsHit);
 

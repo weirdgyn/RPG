@@ -137,7 +137,10 @@ public class RpgTcpServer(string ipAddress, int port)
         {
             _connectedClients.TryRemove(client.Id, out _);
             await client.CloseAsync();
-            var masterNotices = RemovePlayerFromGames(client.Player, out var completedChecks, out var turnNotices);
+            var masterNotices = RemovePlayerFromGames(client.Player, out var completedChecks, out var turnNotices, out var deadCharacters);
+
+            // Il salvezza morte può essere scattato al passaggio di turno: le schede dei morti vanno salvate.
+            foreach (var dead in deadCharacters) CharacterRepository.TrySaveCharacter(dead);
 
             string userName = !string.IsNullOrEmpty(client.Player.Username) ? client.Player.Username : client.IdShort;
             Console.WriteLine($"[SERVER] Client disconnesso: {userName}");
@@ -236,6 +239,9 @@ public class RpgTcpServer(string ipAddress, int port)
                 break;
             case OpCode.C2S_Unlink:
                 await HandleUnlinkAsync(client);
+                break;
+            case OpCode.C2S_Heal:
+                await HandleHealAsync(client, packet);
                 break;
             case OpCode.C2S_Join:
                 await HandleJoinAsync(client, packet);
@@ -392,6 +398,18 @@ public class RpgTcpServer(string ipAddress, int port)
 
         return $"{c.Handle} tenta di riprendersi: d10 {roll} contro meno di {threshold} (BODY {c.Stats.BODY} - stato {mod}): "
             + (recovered ? "si riprende" : "è ancora stordito");
+    }
+
+    // Tiro salvezza contro la morte (a inizio turno, chi è in Mortale): 1d10 ≤ BODY per sopravvivere.
+    // In caso di fallimento segna il personaggio come morto. Restituisce la riga di calcolo.
+    private static string RollDeathSave(Character c)
+    {
+        int body = c.Stats.BODY;
+        int die = (int)GameDice.Roll("1d10").Total;
+        bool survives = CombatRules.DeathSaveSurvives(die, body);
+        if (!survives) c.Health.Kill();
+
+        return $"Salvezza contro la morte di {c.Handle}: d10 {die} ≤ BODY {body}? " + (survives ? "sopravvive" : "MUORE");
     }
 
     // "d10 6 + REF 7 - ferite 2 = 11": ogni addendo con il suo nome, così il calcolo si legge senza ricostruirlo.
@@ -663,7 +681,8 @@ public class RpgTcpServer(string ipAddress, int port)
 
     // Da chiamare sotto _gamesLock. Passa al prossimo personaggio valido dell'ordine (ancora nel game e non morto),
     // incrementando il round al giro completo, e azzera movimento e azione. False se non c'è più nessuno.
-    private bool MoveToNextTurn(Game game, List<string> notes)
+    // I personaggi morti durante la scansione vengono aggiunti a newlyDead (da salvare su disco fuori dal lock).
+    private bool MoveToNextTurn(Game game, List<string> notes, List<Character> newlyDead)
     {
         int n = game.TurnOrder.Count;
         int fallbackRaw = -1;
@@ -674,6 +693,17 @@ public class RpgTcpServer(string ipAddress, int port)
             int idx = raw % n;
             var combatant = FindCombatantInGame(game, game.TurnOrder[idx].Handle);
             if (combatant == null || combatant.Character.Health.IsDead) continue;
+
+            // Salvezza contro la morte: a inizio turno, chi è in Mortale e non stabilizzato tira 1d10 ≤ BODY.
+            if (combatant.Character.Health.NeedsDeathSave)
+            {
+                notes.Add(RollDeathSave(combatant.Character));
+                if (combatant.Character.Health.IsDead)
+                {
+                    newlyDead.Add(combatant.Character);
+                    continue;   // morto: salta il turno
+                }
+            }
 
             // Chi è stordito tenta di riprendersi all'inizio del suo turno; se non ci riesce il turno salta
             if (combatant.Character.Health.IsStunned)
@@ -711,7 +741,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
     // Da chiamare sotto _gamesLock. Toglie un personaggio dall'ordine di gioco tenendo coerente il turno corrente.
     // Restituisce l'annuncio da inviare al game se il turno corrente è cambiato (o il combattimento è finito), altrimenti null.
-    private string? RemoveFromTurnOrder(Game game, string handle)
+    private string? RemoveFromTurnOrder(Game game, string handle, List<Character> newlyDead)
     {
         int i = game.TurnOrder.FindIndex(t => t.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase));
         if (i < 0) return null;
@@ -735,7 +765,7 @@ public class RpgTcpServer(string ipAddress, int port)
             // MoveToNextTurn parte dalla posizione successiva a TurnIndex: chi seguiva ora sta in TurnIndex.
             game.TurnIndex--;
             var notes = new List<string>();
-            if (!MoveToNextTurn(game, notes))
+            if (!MoveToNextTurn(game, notes, newlyDead))
             {
                 game.CombatActive = false;
                 game.TurnIndex = 0;
@@ -816,6 +846,7 @@ public class RpgTcpServer(string ipAddress, int port)
                 {
                     string? error = null;
                     string announce = string.Empty;
+                    var newlyDead = new List<Character>();
                     lock (_gamesLock)
                     {
                         if (game.CombatActive)
@@ -840,7 +871,7 @@ public class RpgTcpServer(string ipAddress, int port)
                                 m.Health.IsStunned = false;
                             }
                             var startNotes = new List<string>();
-                            if (!MoveToNextTurn(game, startNotes))
+                            if (!MoveToNextTurn(game, startNotes, newlyDead))
                             {
                                 game.CombatActive = false;
                                 error = "Nessun personaggio in grado di agire nell'ordine di iniziativa.";
@@ -852,6 +883,8 @@ public class RpgTcpServer(string ipAddress, int port)
                             }
                         }
                     }
+
+                    foreach (var dead in newlyDead) CharacterRepository.TrySaveCharacter(dead);
 
                     if (error != null) await Reply(error);
                     else
@@ -1042,6 +1075,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
         string? error = null;
         string announce = string.Empty;
+        var newlyDead = new List<Character>();
         lock (_gamesLock)
         {
             if (!game.CombatActive)
@@ -1063,7 +1097,7 @@ public class RpgTcpServer(string ipAddress, int port)
                 {
                     string ended = current ?? "nessuno";
                     var turnNotes = new List<string>();
-                    if (MoveToNextTurn(game, turnNotes))
+                    if (MoveToNextTurn(game, turnNotes, newlyDead))
                     {
                         announce = $"Fine turno di {ended}. {(turnNotes.Count > 0 ? string.Join(" ", turnNotes.Select(x => x + ".")) + " " : "")}{DescribeTurn(game)}";
                     }
@@ -1075,6 +1109,8 @@ public class RpgTcpServer(string ipAddress, int port)
                 }
             }
         }
+
+        foreach (var dead in newlyDead) CharacterRepository.TrySaveCharacter(dead);
 
         if (error != null)
         {
@@ -2394,6 +2430,117 @@ public class RpgTcpServer(string ipAddress, int port)
         }));
     }
 
+    // Abilità mediche valide per la stabilizzazione: vale il punteggio migliore fra Pronto Soccorso e
+    // Tecnomedicina ("MedicalTech" è l'alias inglese storico della stessa abilità).
+    private static readonly string[] HealSkills = ["Pronto Soccorso", "Tecnomedicina", "MedicalTech"];
+
+    private static int HealSkillLevel(Character c) =>
+        HealSkills.Max(s => c.Skills.TryGetValue(s, out int lvl) ? lvl : 0);
+
+    /// <summary>
+    /// /heal &lt;personaggio&gt;. Un giocatore tenta la <b>stabilizzazione</b> (Pronto Soccorso/Tecnomedicina,
+    /// TN = ferite subite dal bersaglio): ferma i tiri salvezza contro la morte. Il <b>master</b> invece cura
+    /// completamente e azzera morte e stordimento. La guarigione off-combat (0.5/1 casella al giorno) è fuori
+    /// da questo comando.
+    /// </summary>
+    private async Task HandleHealAsync(ClientSession client, NetworkPacket packet)
+    {
+        var req = packet.DeserializePayload<HealRequestPayload>();
+        string targetHandle = InputLimits.Clean(req?.TargetHandle, InputLimits.MaxNameFieldLength);
+
+        async Task Reply(bool success, string message, string target = "") =>
+            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_HealResponse, new HealResponsePayload
+            {
+                Success = success,
+                Message = message,
+                TargetHandle = target
+            }));
+
+        if (targetHandle.Length == 0)
+        {
+            await Reply(false, "Uso: /heal <personaggio>");
+            return;
+        }
+
+        Game? game;
+        lock (_gamesLock)
+        {
+            game = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
+        }
+
+        if (game == null)
+        {
+            await Reply(false, "Devi essere in un game per curare: usa /join <game>.");
+            return;
+        }
+
+        bool isMaster = client.Player.Role == Player.RoleType.master;
+
+        Character? target;
+        lock (_gamesLock)
+        {
+            target = FindCombatantInGame(game, targetHandle)?.Character;
+        }
+
+        if (target == null)
+        {
+            await Reply(false, $"Personaggio '{targetHandle}' non trovato in questo game.");
+            return;
+        }
+
+        // Master: cura completa, azzera morte e stordimento.
+        if (isMaster)
+        {
+            target.Health.FullHeal();
+            CharacterRepository.TrySaveCharacter(target);
+            string text = $"Il master cura completamente {target.Handle}: salute {target.Health.RemainingBoxes}/{target.Health.MaxHealth}.";
+            Console.WriteLine($"[HEAL] {client.Player.Username} (master) cura {target.Handle}.");
+            await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = text }));
+            await Reply(true, text, target.Handle);
+            return;
+        }
+
+        if (target.Health.IsDead)
+        {
+            await Reply(false, $"{target.Handle} è morto: solo il master può rianimarlo.");
+            return;
+        }
+
+        // Giocatore: stabilizzazione con la migliore fra Pronto Soccorso e Tecnomedicina (azione del turno).
+        if (!await EnsureCharacterLinkedAsync(client)) return;
+        Character healer = client.Player.Character!;
+        if (!await EnsureAliveAsync(client, healer)) return;
+
+        var lease = BeginAction(game, healer, needsAction: true);
+        if (lease.Error != null)
+        {
+            await Reply(false, lease.Error);
+            return;
+        }
+
+        int skillLvl = HealSkillLevel(healer);
+        int tech = healer.Stats.GetStatValue("TECH");
+        int penalty = healer.Health.GetWoundPenalty();
+        var roll = GameDice.RollExplodingD10Detailed();
+        int total = tech + skillLvl + penalty + roll.Total;
+        int tn = target.Health.DamageTaken;
+        bool success = !roll.IsFumble && total >= tn;
+
+        Console.WriteLine($"[HEAL] {healer.Handle} tenta di stabilizzare {target.Handle}: d10 {roll.Total}{(roll.Exploded ? " (esploso)" : "")} + TECH {tech} + cura {skillLvl} - ferite {Math.Abs(penalty)} = {total} vs TN {tn} -> {(success ? "OK" : "FALLITO")}");
+
+        if (!success)
+        {
+            RefundAction(game, healer, lease.TurnStamp);
+            await Reply(false, $"Stabilizzazione di {target.Handle} fallita: {total} contro TN {tn}.");
+            return;
+        }
+
+        target.Health.IsStabilized = true;
+        string message = $"{healer.Handle} stabilizza {target.Handle}: {total} contro TN {tn}. Non tira più il salvezza contro la morte.";
+        await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = message }));
+        await Reply(true, message, target.Handle);
+    }
+
     private async Task HandleCreateCharacterAsync(ClientSession client, NetworkPacket packet)
     {
         var createReq = packet.DeserializePayload<CreateCharacterRequestPayload>();
@@ -2605,17 +2752,20 @@ public class RpgTcpServer(string ipAddress, int port)
                     bool removed;
                     string? turnNotice = null;
                     Game.Check? completedCheck = null;
+                    var newlyDead = new List<Character>();
                     lock (_gamesLock)
                     {
                         removed = game.NPCs.RemoveAll(n => n.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase)) > 0;
                         if (removed)
                         {
                             game.InitRolls.RemoveAll(r => r.PlayerName.Equals(handle, StringComparison.OrdinalIgnoreCase));
-                            turnNotice = RemoveFromTurnOrder(game, handle);
+                            turnNotice = RemoveFromTurnOrder(game, handle, newlyDead);
                             // Senza questo, il check resterebbe in attesa di un NPC che non è più nel game.
                             completedCheck = PruneCheckEntry(game, handle);
                         }
                     }
+
+                    foreach (var dead in newlyDead) CharacterRepository.TrySaveCharacter(dead);
 
                     if (turnNotice != null)
                     {
@@ -2872,6 +3022,7 @@ public class RpgTcpServer(string ipAddress, int port)
         Game? leftGame = null;
         Game.Check? completedCheck = null;
         string? leaveTurnNotice = null;
+        var newlyDead = new List<Character>();
 
         lock (_gamesLock)
         {
@@ -2888,7 +3039,7 @@ public class RpgTcpServer(string ipAddress, int port)
                 if (client.Player.Character != null)
                 {
                     game.InitRolls.RemoveAll(r => r.PlayerName.Equals(client.Player.Character.Handle, StringComparison.OrdinalIgnoreCase));
-                    leaveTurnNotice = RemoveFromTurnOrder(game, client.Player.Character.Handle);
+                    leaveTurnNotice = RemoveFromTurnOrder(game, client.Player.Character.Handle, newlyDead);
                     completedCheck = PruneCheckEntry(game, client.Player.Character.Handle);
                 }
 
@@ -2904,6 +3055,8 @@ public class RpgTcpServer(string ipAddress, int port)
                 }
             }
         }
+
+        foreach (var dead in newlyDead) CharacterRepository.TrySaveCharacter(dead);
 
         if (gameName.Length == 0)
         {
@@ -3704,11 +3857,12 @@ public class RpgTcpServer(string ipAddress, int port)
 
     // Rimuove il giocatore da tutti i game. Restituisce, per ogni game rimasto aperto di cui era master,
     // il nome e i giocatori rimasti (da avvisare).
-    private List<(string GameName, List<Player> Remaining)> RemovePlayerFromGames(Player player, out List<(Game Game, Game.Check Check)> completedChecks, out List<(List<Player> Remaining, string Text)> turnNotices)
+    private List<(string GameName, List<Player> Remaining)> RemovePlayerFromGames(Player player, out List<(Game Game, Game.Check Check)> completedChecks, out List<(List<Player> Remaining, string Text)> turnNotices, out List<Character> deadCharacters)
     {
         var masterNotices = new List<(string, List<Player>)>();
         completedChecks = [];
         turnNotices = [];
+        deadCharacters = [];
 
         lock (_gamesLock)
         {
@@ -3719,7 +3873,7 @@ public class RpgTcpServer(string ipAddress, int port)
                 if (player.Character != null)
                 {
                     game.InitRolls.RemoveAll(r => r.PlayerName.Equals(player.Character.Handle, StringComparison.OrdinalIgnoreCase));
-                    var turnText = RemoveFromTurnOrder(game, player.Character.Handle);
+                    var turnText = RemoveFromTurnOrder(game, player.Character.Handle, deadCharacters);
                     if (turnText != null && game.Players.Count > 0) turnNotices.Add(([.. game.Players], turnText));
                     var done = PruneCheckEntry(game, player.Character.Handle);
                     if (done != null && game.Players.Count > 0) completedChecks.Add((game, done));

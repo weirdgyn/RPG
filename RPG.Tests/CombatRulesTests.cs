@@ -154,6 +154,17 @@ public class CombatRulesTests
         Assert.Equal(armor, loc.ArmorLocation);
     }
 
+    [Theory]
+    [InlineData(1, 6, true)]
+    [InlineData(6, 6, true)]
+    [InlineData(7, 6, false)]
+    [InlineData(10, 10, true)]
+    [InlineData(10, 9, false)]
+    public void DeathSave_SurvivesOnD10AtMostBody(int die, int body, bool expected)
+    {
+        Assert.Equal(expected, CombatRules.DeathSaveSurvives(die, body));
+    }
+
     [Fact]
     public void Distance_IsEuclidean3D()
     {

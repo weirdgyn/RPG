@@ -136,6 +136,7 @@ Gli NPC compaiono nell'elenco con il loro stato qualitativo (per esempio "Seria"
 | `/attack <bersaglio> [arma\|abilità]` | Attacca un personaggio dello stesso game. Senza specificare usa l'arma in pugno; puoi indicare un'arma per nome, Id o abilità. |
 | `/reload [munizioni] [arma]` | Ricarica l'arma in pugno (o quella indicata). Opzionalmente scegli il tipo di munizioni, anche con una parte del nome: `/reload ap`. |
 | `/throw <X> <Y> [Z] [arma]` | Lancia un'arma ad area (granata) verso un punto. |
+| `/heal <personaggio>` | Pronto soccorso: stabilizza un ferito (Pronto Soccorso/Tecnomedicina, TN = ferite subite). In combattimento è l'azione del turno. |
 | `/next` (alias `/endturn`) | Termina il tuo turno. |
 | `/combat status` | Mostra round, turno, movimento e azione rimasti, ordine di gioco. |
 
@@ -150,6 +151,7 @@ Le regole del combattimento sono nella sezione 5.
 1. `/join <game> master` crea il game (o ne prende la guida se è libero).
 2. I giocatori entrano con `/join <game>`.
 3. Con `/game` vedi in qualsiasi momento tutti i partecipanti, gli NPC (con i punti ferita numerici), il combattimento e i check aperti.
+4. Con `/heal <personaggio>` (giocatori o NPC) curi **completamente** il bersaglio e ne azzera morte e stordimento.
 
 Se il master esce o si disconnette, il ruolo torna libero e i giocatori vengono avvisati. Un game senza partecipanti viene chiuso.
 
@@ -319,6 +321,8 @@ Tutti i personaggi hanno una scheda ferite di **40 caselle**; ogni danno ne togl
 
 Il BODY non cambia le caselle: agisce sul BTM. La penalità si applica ai tiri di attacco, di abilità e di lancio, e alla difesa in mischia; il tiro di iniziativa non la applica.
 
+**Salvezza contro la morte.** Chi entra in **Mortale** (13+ danni) tira un **d10 ≤ BODY** all'inizio di ogni suo turno: se fallisce, **muore** (41+ danni, fuori gioco). Un **pronto soccorso** riuscito (`/heal`) **stabilizza** il ferito e sospende il tiro salvezza finché non subisce altri danni, che lo fanno ripartire.
+
 **Stordimento (solo in combattimento).** Dopo un colpo che infligge almeno 1 danno, il bersaglio tira un d10: se il risultato è **inferiore** a `BODY − modificatore di stato`, resiste; altrimenti è stordito. Il modificatore è 0 per le ferite Leggere, 1 per le Serie, 2 per le Critiche, 3 per Mortale 0, 4 per Mortale 1, e così via. Un personaggio stordito non può agire né muoversi; all'inizio del suo turno ritenta il tiro con la stessa soglia e, se fallisce, viene saltato. Se nessuno può agire ma c'è almeno uno stordito, il turno resta a uno di loro, che può solo passare con `/next`; se sono tutti morti, il combattimento termina.
 
 Il danno si accumula fino a riempire le 40 caselle: a **40 danni** il personaggio è all'ultima casella (**Mortale 6**, −6 ai tiri); con **41 danni o più** è **morto** e non può più agire (attacco, lancio, ricarica, movimento e prove sono tutti bloccati). Lo stato di **stordimento**, invece, è di sessione: non viene salvato nella scheda, non ha effetto fuori dal combattimento e viene azzerato all'avvio e alla fine esplicita del combattimento.
@@ -352,6 +356,7 @@ Il danno si accumula fino a riempire le 40 caselle: a **40 danni** il personaggi
 | `/attack <bersaglio> [arma]` | giocatore | attacca |
 | `/reload [munizioni] [arma]` | giocatore | ricarica |
 | `/throw <X> <Y> [Z] [arma]` | giocatore | lancia granata |
+| `/heal <personaggio>` | giocatore/master | stabilizza (giocatore) o cura completa (master) |
 | `/next` (`/endturn`) | turno/master | termina il turno |
 | `/combat start\|end\|status` | master (status: tutti) | combattimento a turni |
 | `/check skill\|init\|status\|close\|cancel` | master | prove collettive |
@@ -377,7 +382,6 @@ Il danno si accumula fino a riempire le 40 caselle: a **40 danni** il personaggi
 
 Regole previste ma non ancora implementate:
 
-- tiro di **salvezza contro la morte** (oggi un personaggio con 41+ danni è semplicemente morto e fuori gioco);
+- **recupero ferite fuori dal combattimento** (0.5 caselle/giorno con Pronto Soccorso o 1/giorno con Tecnomedicina): durante il game `/heal` stabilizza soltanto;
 - **mischia come tiro contrapposto**;
-- guarigione e recupero delle ferite, anche per gli NPC;
 - timeout delle connessioni inattive.
