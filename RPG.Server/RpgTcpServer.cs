@@ -2063,13 +2063,31 @@ public class RpgTcpServer(string ipAddress, int port)
                 return;
             }
 
+            // Cambiare scheda mentre si è in un game lascerebbe turno e check appesi al vecchio personaggio:
+            // per cambiare si esce prima con /leave.
+            bool alreadyInGame;
+            lock (_gamesLock)
+            {
+                alreadyInGame = _games.Any(g => g.Players.Contains(client.Player));
+            }
+
+            if (alreadyInGame)
+            {
+                await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_LinkResponse, new LinkResponsePayload
+                {
+                    Success = false,
+                    Message = "Sei già in un game: usa /leave prima di cambiare personaggio."
+                }));
+                return;
+            }
+
             // Una scheda è usata da un solo "attore" alla volta: o un giocatore (questa sessione) o un NPC di un
             // game (/npc add), mai entrambi. Il controllo "già in
             // uso", il caricamento e l'associazione avvengono nello stesso lock: senza, due /link
             // simultanei sullo stesso personaggio passerebbero entrambi il controllo e lavorerebbero su
             // due copie separate della scheda, sovrascrivendosi i salvataggi. Gli await restano fuori.
             // L'associazione si libera da sola alla disconnessione (la sessione esce da _connectedClients);
-            // un secondo /link della stessa sessione (sullo stesso o su un altro personaggio) è ammesso.
+            // un secondo /link della stessa sessione è ammesso solo fuori da un game (vedi controllo sopra).
             LinkResponsePayload? failure = null;
             Character? loadedCharacter = null;
 
@@ -2397,6 +2415,7 @@ public class RpgTcpServer(string ipAddress, int port)
                 {
                     bool removed;
                     string? turnNotice = null;
+                    Game.Check? completedCheck = null;
                     lock (_gamesLock)
                     {
                         removed = game.NPCs.RemoveAll(n => n.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase)) > 0;
@@ -2404,12 +2423,19 @@ public class RpgTcpServer(string ipAddress, int port)
                         {
                             game.InitRolls.RemoveAll(r => r.PlayerName.Equals(handle, StringComparison.OrdinalIgnoreCase));
                             turnNotice = RemoveFromTurnOrder(game, handle);
+                            // Senza questo, il check resterebbe in attesa di un NPC che non è più nel game.
+                            completedCheck = PruneCheckEntry(game, handle);
                         }
                     }
 
                     if (turnNotice != null)
                     {
                         await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = turnNotice }));
+                    }
+
+                    if (completedCheck != null)
+                    {
+                        await FinalizeCheckAsync(game, completedCheck, forced: false);
                     }
 
                     if (removed) Console.WriteLine($"[NPC] {client.Player.Username} ha rimosso l'NPC '{handle}' da '{game.Name}'.");
@@ -2789,9 +2815,15 @@ public class RpgTcpServer(string ipAddress, int port)
             // per cambiare game si esce prima con /leave.
             var currentGame = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
 
-            if (currentGame != null && !ReferenceEquals(currentGame, game))
+            if (currentGame != null)
             {
-                denialMessage = $"Sei già nel gioco '{currentGame.Name}': usa /leave prima di entrare in un altro.";
+                denialMessage = $"Sei già nel gioco '{currentGame.Name}': usa /leave prima di entrare in un altro o di cambiare ruolo.";
+            }
+            // Un master non interpreta personaggi (stessa regola di /link): con una scheda collegata deve riconnettersi.
+            else if (joinReq.Role == Player.RoleType.master
+                && (client.Player.Character != null || !string.IsNullOrEmpty(client.LinkedCharacterHandle)))
+            {
+                denialMessage = "Un master non può avere un personaggio collegato: riconnettiti senza scegliere una scheda per fare il master.";
             }
             else if (joinReq.Role == Player.RoleType.master)
             {
@@ -2855,7 +2887,8 @@ public class RpgTcpServer(string ipAddress, int port)
 
             if (success && game != null)
             {
-                game.Players.Add(client.Player);
+                // Difesa in profondità: una sessione non deve comparire due volte nello stesso game.
+                if (!game.Players.Contains(client.Player)) game.Players.Add(client.Player);
                 client.Player.Role = joinReq.Role;
             }
         }

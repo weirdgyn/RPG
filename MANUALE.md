@@ -67,7 +67,7 @@ Una scheda può essere collegata a un solo giocatore alla volta, oppure essere u
 
 ### Il master
 
-Il ruolo di master si prende entrando in un game con `/join <game> master`: se il game non esiste viene creato, se esiste e non ha un master lo diventi. Un game ha un solo master. Il master **non può** collegarsi a un personaggio con `/link` (usa gli NPC).
+Il ruolo di master si prende entrando in un game con `/join <game> master`: se il game non esiste viene creato, se esiste e non ha un master lo diventi. Un game ha un solo master. Il master **non può** collegarsi a un personaggio con `/link` (usa gli NPC) e non può assumere il ruolo di master se ha già una scheda collegata: in quel caso riconnettiti senza selezionare una scheda.
 
 ---
 
@@ -101,7 +101,7 @@ Un archetipo definisce abilità, armi, munizioni, armatura e cyberware iniziali.
 
 | Comando | Cosa fa |
 |---|---|
-| `/join <game> [player]` | Entra in un game esistente. |
+| `/join <game> [player]` | Entra in un game esistente. Se sei già in un game, esci prima con `/leave`. |
 | `/leave` | Esce dal game corrente. Il personaggio resta collegato. |
 | `/game` (alias `/gamestatus`) | Stato del game: master, partecipanti con salute, posizione e stordimento, NPC, combattimento, check aperto. |
 
@@ -160,7 +160,7 @@ Un NPC è una normale scheda personaggio che il master usa per un game. Si crea 
 | `/npc add <handle>` | Usa la scheda esistente come NPC del game. La scheda non deve essere collegata a un giocatore né essere NPC altrove. |
 | `/npc list` | Elenca gli NPC del game con salute e posizione. |
 | `/npc status <handle>` | Scheda dell'NPC. |
-| `/npc remove <handle>` | Toglie l'NPC dal game (la scheda torna libera). |
+| `/npc remove <handle>` | Toglie l'NPC dal game e dagli eventuali check aperti (la scheda torna libera). |
 | `/as <npc> <comando> ...` | Esegue un comando **per conto** di un NPC. |
 
 Comandi consentiti con `/as`:
@@ -199,7 +199,7 @@ Come funziona:
   - *abilità*: tabella con tiro e successo, fallimento o fallimento critico contro il TN;
   - *iniziativa*: lista ordinata. A parità vince il REF più alto, poi chi ha tirato prima. Questo ordine è quello usato dal combattimento a turni.
 - Un solo check alla volta. Chi esce dal game o si disconnette viene tolto dal check: se mancava solo lui, lo spoglio parte con gli altri.
-- Se devi rimuovere un NPC mentre un check è aperto, chiudi o annulla prima il check: la rimozione dell'NPC non aggiorna le iscrizioni.
+- Se rimuovi un NPC durante un check aperto, la sua iscrizione viene tolta: se era l'ultimo mancante, lo spoglio parte con gli altri.
 - Un `/skill` su un'abilità diversa da quella del check resta una prova libera.
 - Non si può aprire un nuovo `/check init` mentre un combattimento è in corso.
 
