@@ -1583,16 +1583,16 @@ public class RpgTcpServer(string ipAddress, int port)
             }
             else if (weaponToUse.Type == Weapon.WeaponType.Melee)
             {
-                if (distance > 2.5)
+                if (distance > CombatRules.MeleeMaxDistanceMeters)
                 {
-                    return new AttackOutcome($"Troppo lontano per la mischia con {weaponToUse.Name}! Distanza: {distance:F1}m > 2.5m.", null, null);
+                    return new AttackOutcome($"Troppo lontano per la mischia con {weaponToUse.Name}! Distanza: {distance:F1}m > {CombatRules.MeleeMaxDistanceMeters}m.", null, null);
                 }
 
                 int targetRef = target.Stats.REF;
                 int targetDodge = target.Skills.TryGetValue("Schivare", out int dLvl) ? dLvl : 0;
                 int targetPenalty = target.Health.GetWoundPenalty();
 
-                targetNumber = 10 + targetRef + targetDodge + targetPenalty;
+                targetNumber = CombatRules.GetMeleeTargetNumber(targetRef, targetDodge, targetPenalty);
                 attackTypeDesc = $"In Mischia con {weaponToUse.Name} -> Difesa Bersaglio (REF {targetRef} + Schivare {targetDodge}): TN {targetNumber}";
                 var tnParts = new List<(string, int, string?)> { ("base", 10, null), ("REF", targetRef, null), ("Schivare", targetDodge, null) };
                 if (targetPenalty != 0) tnParts.Add(("ferite", targetPenalty, null));
@@ -1603,7 +1603,8 @@ public class RpgTcpServer(string ipAddress, int port)
             int diceVal = attackRoll.Total;
             int weaponModifier = weaponToUse.GetAttackModifier();
             int cyberHit = SumCyberBonus(attacker, "HIT");
-            int attackTotal = attackerStat + attackerSkillLvl + attackerPenalty + weaponModifier + cyberHit + diceVal;
+            var toHit = CombatRules.ResolveToHit(attackRoll, attackerStat, attackerSkillLvl, attackerPenalty, weaponModifier, cyberHit, targetNumber);
+            int attackTotal = toHit.Total;
 
             var steps = new List<string>();
             var hitParts = new List<(string, int, string?)>
@@ -1619,8 +1620,8 @@ public class RpgTcpServer(string ipAddress, int port)
             steps.Add($"Difficoltà: {tnText}");
 
             // Un 1 naturale sul primo dado è un fallimento critico: manca comunque (il colpo sparato è perso)
-            bool isFumble = attackRoll.IsFumble;
-            bool isHit = !isFumble && attackTotal >= targetNumber;
+            bool isFumble = toHit.IsFumble;
+            bool isHit = toHit.IsHit;
             steps.Add(isFumble
                 ? "Esito: FALLIMENTO CRITICO (1 naturale sul d10)"
                 : isHit ? $"Esito: COLPITO ({attackTotal} contro TN {targetNumber})" : $"Esito: MANCATO ({attackTotal} contro TN {targetNumber})");

@@ -1,4 +1,5 @@
 ﻿using RPG.Common.Models;
+using RPG.Common.Utils;
 using RPG.Common.World;
 
 namespace RPG.Common;
@@ -85,6 +86,29 @@ public static class CombatRules
     /// </summary>
     public static int ApplyBodyTypeModifier(int damageAfterArmor, int reduction)
         => damageAfterArmor <= 0 ? 0 : Math.Max(1, damageAfterArmor - reduction);
+
+    /// <summary>Distanza massima, in metri, per un attacco in mischia.</summary>
+    public const double MeleeMaxDistanceMeters = 2.5;
+
+    /// <summary>TN per colpire in mischia: 10 + REF + Schivare del bersaglio + sua penalità da ferite (negativa).</summary>
+    public static int GetMeleeTargetNumber(int targetRef, int dodgeSkill, int targetWoundPenalty)
+        => 10 + targetRef + dodgeSkill + targetWoundPenalty;
+
+    /// <summary>Esito del tiro per colpire: totale, fallimento critico, colpito.</summary>
+    public sealed record ToHitResult(int Total, bool IsFumble, bool IsHit);
+
+    /// <summary>
+    /// Tiro per colpire: d10 (esplosivo) + stat + abilità + penalità ferite + modificatore arma + bonus cyber.
+    /// Un 1 naturale sul primo dado è un fallimento critico e manca sempre; altrimenti colpisce se il totale
+    /// raggiunge il TN. I dadi arrivano già tirati, così la regola è deterministica e testabile.
+    /// </summary>
+    public static ToHitResult ResolveToHit(GameDice.D10Roll roll, int stat, int skillLevel, int woundPenalty,
+        int weaponModifier, int cyberBonus, int targetNumber)
+    {
+        int total = roll.Total + stat + skillLevel + woundPenalty + weaponModifier + cyberBonus;
+        bool fumble = roll.IsFumble;
+        return new ToHitResult(total, fumble, !fumble && total >= targetNumber);
+    }
 
     /// <summary>Esito completo della catena armatura -> moltiplicatore -> BTM per un colpo a segno.</summary>
     /// <param name="Armor">Esito dell'armatura (SP affrontato, assorbito, danno dopo il moltiplicatore, ablazione).</param>
