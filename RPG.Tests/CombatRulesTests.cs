@@ -155,14 +155,32 @@ public class CombatRulesTests
     }
 
     [Theory]
-    [InlineData(1, 6, true)]
-    [InlineData(6, 6, true)]
-    [InlineData(7, 6, false)]
-    [InlineData(10, 10, true)]
-    [InlineData(10, 9, false)]
-    public void DeathSave_SurvivesOnD10AtMostBody(int die, int body, bool expected)
+    [InlineData(1, 6, 0, true)]     // soglia 6: si sopravvive con 1-5
+    [InlineData(5, 6, 0, true)]
+    [InlineData(6, 6, 0, false)]    // il valore uguale alla soglia non basta
+    [InlineData(1, 6, 1, true)]     // Mortale 1: soglia 5
+    [InlineData(4, 6, 1, true)]
+    [InlineData(5, 6, 1, false)]
+    [InlineData(1, 6, 6, false)]    // soglia 0: non ci si salva mai
+    [InlineData(1, 1, 0, false)]    // BODY 1: soglia 1, nemmeno l'1 basta
+    [InlineData(9, 10, 0, true)]
+    [InlineData(10, 10, 0, false)]  // un 10 naturale non salva neanche con BODY 10
+    [InlineData(1, 3, 6, false)]    // BODY sotto il livello: soglia 0, mai negativa
+    public void DeathSave_SurvivesOnD10BelowBodyMinusLevel(int die, int body, int level, bool expected)
     {
-        Assert.Equal(expected, CombatRules.DeathSaveSurvives(die, body));
+        Assert.Equal(expected, CombatRules.DeathSaveSurvives(die, body, level));
+    }
+
+    [Theory]
+    [InlineData(8, 0, 8)]
+    [InlineData(8, 3, 5)]
+    [InlineData(8, 6, 2)]
+    [InlineData(6, 6, 0)]
+    [InlineData(3, 6, 0)]
+    [InlineData(6, -1, 6)]   // livello non valido: nessuna penalità
+    public void DeathSaveThreshold_IsBodyMinusLevel_NeverNegative(int body, int level, int expected)
+    {
+        Assert.Equal(expected, CombatRules.GetDeathSaveThreshold(body, level));
     }
 
     [Fact]

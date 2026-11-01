@@ -321,7 +321,7 @@ Tutti i personaggi hanno una scheda ferite di **40 caselle**; ogni danno ne togl
 
 Il BODY non cambia le caselle: agisce sul BTM. La penalità si applica ai tiri di attacco, di abilità e di lancio, e alla difesa in mischia; il tiro di iniziativa non la applica.
 
-**Salvezza contro la morte.** Chi entra in **Mortale** (13+ danni) tira un **d10 ≤ BODY** all'inizio di ogni suo turno: se fallisce, **muore** (41+ danni, fuori gioco). Un **pronto soccorso** riuscito (`/heal`) **stabilizza** il ferito e sospende il tiro salvezza finché non subisce altri danni, che lo fanno ripartire.
+**Salvezza contro la morte.** Chi entra in **Mortale** (13+ danni) tira un **d10 inferiore a BODY − livello Mortale** (Mortale 0 = BODY, Mortale 1 = BODY − 1, … fino a Mortale 6; la soglia non scende sotto 0) all'inizio di ogni suo turno: se fallisce, **muore** (41+ danni, fuori gioco). Un **pronto soccorso** riuscito (`/heal`) **stabilizza** il ferito e sospende il tiro salvezza finché non subisce altri danni, che lo fanno ripartire.
 
 **Stordimento (solo in combattimento).** Dopo un colpo che infligge almeno 1 danno, il bersaglio tira un d10: se il risultato è **inferiore** a `BODY − modificatore di stato`, resiste; altrimenti è stordito. Il modificatore è 0 per le ferite Leggere, 1 per le Serie, 2 per le Critiche, 3 per Mortale 0, 4 per Mortale 1, e così via. Un personaggio stordito non può agire né muoversi; all'inizio del suo turno ritenta il tiro con la stessa soglia e, se fallisce, viene saltato. Se nessuno può agire ma c'è almeno uno stordito, il turno resta a uno di loro, che può solo passare con `/next`; se sono tutti morti, il combattimento termina.
 

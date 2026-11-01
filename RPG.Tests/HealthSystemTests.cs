@@ -94,6 +94,21 @@ public class HealthSystemTests
         Assert.Equal(expected, WithDamage(damage).NeedsDeathSave);
     }
 
+    [Theory]
+    [InlineData(0, -1)]
+    [InlineData(12, -1)]    // non ancora in Mortale
+    [InlineData(13, 0)]
+    [InlineData(16, 0)]
+    [InlineData(17, 1)]
+    [InlineData(21, 2)]
+    [InlineData(37, 6)]
+    [InlineData(40, 6)]
+    [InlineData(41, -1)]    // morto: nessun livello
+    public void MortalLevel_ByDamageTaken(int damage, int expected)
+    {
+        Assert.Equal(expected, WithDamage(damage).MortalLevel);
+    }
+
     [Fact]
     public void Stabilized_StopsDeathSaves_AndNewDamageReopens()
     {

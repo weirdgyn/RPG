@@ -400,16 +400,19 @@ public class RpgTcpServer(string ipAddress, int port)
             + (recovered ? "si riprende" : "è ancora stordito");
     }
 
-    // Tiro salvezza contro la morte (a inizio turno, chi è in Mortale): 1d10 ≤ BODY per sopravvivere.
-    // In caso di fallimento segna il personaggio come morto. Restituisce la riga di calcolo.
+    // Tiro salvezza contro la morte (a inizio turno, chi è in Mortale): d10 inferiore a BODY meno il livello
+    // Mortale per sopravvivere. In caso di fallimento segna il personaggio come morto. Restituisce la riga di calcolo.
     private static string RollDeathSave(Character c)
     {
         int body = c.Stats.BODY;
+        int level = Math.Max(0, c.Health.MortalLevel);
+        int threshold = CombatRules.GetDeathSaveThreshold(body, level);
         int die = (int)GameDice.Roll("1d10").Total;
-        bool survives = CombatRules.DeathSaveSurvives(die, body);
+        bool survives = CombatRules.DeathSaveSurvives(die, body, level);
         if (!survives) c.Health.Kill();
 
-        return $"Salvezza contro la morte di {c.Handle}: d10 {die} ≤ BODY {body}? " + (survives ? "sopravvive" : "MUORE");
+        return $"Salvezza contro la morte di {c.Handle} (Mortale {level}): d10 {die} contro meno di {threshold} (BODY {body} - livello {level}): "
+            + (survives ? "sopravvive" : "MUORE");
     }
 
     // "d10 6 + REF 7 - ferite 2 = 11": ogni addendo con il suo nome, così il calcolo si legge senza ricostruirlo.

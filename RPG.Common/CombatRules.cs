@@ -94,11 +94,15 @@ public static class CombatRules
     public static int GetMeleeTargetNumber(int targetRef, int dodgeSkill, int targetWoundPenalty)
         => 10 + targetRef + dodgeSkill + targetWoundPenalty;
 
+    /// <summary>Soglia del tiro contro la morte: BODY meno il livello Mortale (0-6), mai sotto 0.</summary>
+    public static int GetDeathSaveThreshold(int body, int mortalLevel) => Math.Max(0, body - Math.Max(0, mortalLevel));
+
     /// <summary>
-    /// Tiro salvezza contro la morte (CP2020): con un d10 ≤ BODY si sopravvive, altrimenti si muore.
+    /// Tiro salvezza contro la morte: si sopravvive con un d10 <b>inferiore</b> a BODY meno il livello Mortale,
+    /// altrimenti si muore. Con soglia 0 (BODY pari o inferiore al livello) non ci si salva mai.
     /// Il dado arriva già tirato, così la regola è deterministica e testabile.
     /// </summary>
-    public static bool DeathSaveSurvives(int die, int body) => die <= body;
+    public static bool DeathSaveSurvives(int die, int body, int mortalLevel) => die < GetDeathSaveThreshold(body, mortalLevel);
 
     /// <summary>Esito del tiro per colpire: totale, fallimento critico, colpito.</summary>
     public sealed record ToHitResult(int Total, bool IsFumble, bool IsHit);

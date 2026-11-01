@@ -35,6 +35,10 @@ public class HealthSystem
     [JsonIgnore]
     public bool IsInMortalRange => !IsDead && DamageTaken >= MortalThreshold;
 
+    /// <summary>Livello Mortale (0-6) di chi è in Mortale e vivo (13-16 danni = 0 ... 37-40 = 6), altrimenti -1.</summary>
+    [JsonIgnore]
+    public int MortalLevel => IsInMortalRange ? Math.Min(6, (DamageTaken - MortalThreshold) / 4) : -1;
+
     /// <summary>
     /// Stabilizzato (pronto soccorso): non tira più il salvezza contro la morte. Stato di sessione, non
     /// salvato nella scheda: un nuovo danno lo annulla.
