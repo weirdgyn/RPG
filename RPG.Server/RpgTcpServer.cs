@@ -341,6 +341,36 @@ public class RpgTcpServer(string ipAddress, int port)
 
     private sealed record AttackOutcome(string? Error, AttackResponsePayload? Result, string? LogLine, bool AttackerChanged = false);
 
+    // Tiro di stordimento dopo un colpo che ha inflitto danno (solo in combattimento): d10 sotto la soglia
+    // BODY - modificatore di stato. Se fallisce il personaggio è stordito. Restituisce la riga di calcolo
+    // (null se non applicabile). Da chiamare dopo aver tolto i punti ferita.
+    private static string? RollStunSave(Character target)
+    {
+        if (target.Health.CurrentHealth <= 0 || target.Health.IsStunned) return null;
+
+        int mod = target.Health.GetStunSaveModifier();
+        int threshold = Math.Max(0, target.Stats.BODY - mod);
+        int roll = (int)GameDice.Roll("1d10").Total;
+        bool resisted = roll < threshold;
+        if (!resisted) target.Health.IsStunned = true;
+
+        return $"Tiro di stordimento: d10 {roll} contro meno di {threshold} (BODY {target.Stats.BODY} - stato {mod}): "
+            + (resisted ? "resiste" : "STORDITO (non può agire né muoversi finché non si riprende)");
+    }
+
+    // Tiro di recupero all'inizio del turno di un personaggio stordito: stessa soglia dello stordimento
+    private static string RollStunRecovery(Character c)
+    {
+        int mod = c.Health.GetStunSaveModifier();
+        int threshold = Math.Max(0, c.Stats.BODY - mod);
+        int roll = (int)GameDice.Roll("1d10").Total;
+        bool recovered = roll < threshold;
+        if (recovered) c.Health.IsStunned = false;
+
+        return $"{c.Handle} tenta di riprendersi: d10 {roll} contro meno di {threshold} (BODY {c.Stats.BODY} - stato {mod}): "
+            + (recovered ? "si riprende" : "è ancora stordito");
+    }
+
     // "d10 6 + REF 7 - ferite 2 = 11": ogni addendo con il suo nome, così il calcolo si legge senza ricostruirlo.
     // Extra è un testo opzionale accanto al valore (es. " (10+4)" per un dado esploso).
     private static string FormatSum(IReadOnlyList<(string Label, int Value, string? Extra)> parts)
@@ -451,7 +481,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
         if (!await CheckTurnAsync(reporter, game, attacker, needsAction: true)) return;
 
-        var outcome = ResolveAttackRules(attacker, target.Character, attackReq.WeaponOrSkill);
+        var outcome = ResolveAttackRules(attacker, target.Character, attackReq.WeaponOrSkill, game.CombatActive);
         if (outcome.Error != null)
         {
             await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = outcome.Error }));
@@ -500,6 +530,10 @@ public class RpgTcpServer(string ipAddress, int port)
                 {
                     error = $"Non è il turno di {actor.Handle}: tocca a {current ?? "nessuno"} (round {game.Round}).";
                 }
+                else if (actor.Health.IsStunned)
+                {
+                    error = $"{actor.Handle} è stordito: non può agire né muoversi (a inizio turno tenta di riprendersi, nel frattempo può solo passare con /next).";
+                }
                 else if (needsAction && game.TurnActionUsed)
                 {
                     error = $"{actor.Handle} ha già usato l'azione di questo turno: termina il turno con /next.";
@@ -523,9 +557,11 @@ public class RpgTcpServer(string ipAddress, int port)
 
     // Da chiamare sotto _gamesLock. Passa al prossimo personaggio valido dell'ordine (ancora nel game e non K.O.),
     // incrementando il round al giro completo, e azzera movimento e azione. False se non c'è più nessuno.
-    private bool MoveToNextTurn(Game game)
+    private bool MoveToNextTurn(Game game, List<string> notes)
     {
         int n = game.TurnOrder.Count;
+        int fallbackRaw = -1;
+
         for (int step = 1; step <= n; step++)
         {
             int raw = game.TurnIndex + step;
@@ -533,8 +569,30 @@ public class RpgTcpServer(string ipAddress, int port)
             var combatant = FindCombatantInGame(game, game.TurnOrder[idx].Handle);
             if (combatant == null || IsKnockedOut(combatant.Character)) continue;
 
+            // Chi è stordito tenta di riprendersi all'inizio del suo turno; se non ci riesce il turno salta
+            if (combatant.Character.Health.IsStunned)
+            {
+                notes.Add(RollStunRecovery(combatant.Character));
+                if (combatant.Character.Health.IsStunned)
+                {
+                    if (fallbackRaw < 0) fallbackRaw = raw;
+                    continue;
+                }
+            }
+
             game.Round += raw / n;
             game.TurnIndex = idx;
+            game.TurnMoveUsed = 0;
+            game.TurnActionUsed = false;
+            return true;
+        }
+
+        // Tutti gli altri sono storditi o K.O.: il turno va comunque al primo stordito (che può solo passare con /next)
+        if (fallbackRaw >= 0)
+        {
+            notes.Add("Nessuno in grado di agire: il turno passa a un personaggio stordito (può solo passare con /next).");
+            game.Round += fallbackRaw / n;
+            game.TurnIndex = fallbackRaw % n;
             game.TurnMoveUsed = 0;
             game.TurnActionUsed = false;
             return true;
@@ -664,14 +722,19 @@ public class RpgTcpServer(string ipAddress, int port)
                             game.CombatActive = true;
                             game.Round = 0;
                             game.TurnIndex = game.TurnOrder.Count - 1;
-                            if (!MoveToNextTurn(game))
+                            foreach (var m in game.Players.Select(pl => pl.Character).Concat(game.NPCs).OfType<Character>())
+                            {
+                                m.Health.IsStunned = false;
+                            }
+                            var startNotes = new List<string>();
+                            if (!MoveToNextTurn(game, startNotes))
                             {
                                 game.CombatActive = false;
                                 error = "Nessun personaggio in grado di agire nell'ordine di iniziativa.";
                             }
                             else
                             {
-                                announce = $"COMBATTIMENTO INIZIATO! Ordine: {string.Join(" > ", game.TurnOrder.Select(t => t.Handle))}. {DescribeTurn(game)}";
+                                announce = $"COMBATTIMENTO INIZIATO! Ordine: {string.Join(" > ", game.TurnOrder.Select(t => t.Handle))}. {(startNotes.Count > 0 ? string.Join(" ", startNotes.Select(x => x + ".")) + " " : "")}{DescribeTurn(game)}";
                             }
                         }
                     }
@@ -694,6 +757,10 @@ public class RpgTcpServer(string ipAddress, int port)
                         game.CombatActive = false;
                         game.TurnMoveUsed = 0;
                         game.TurnActionUsed = false;
+                        foreach (var m in game.Players.Select(pl => pl.Character).Concat(game.NPCs).OfType<Character>())
+                        {
+                            m.Health.IsStunned = false;
+                        }
                     }
 
                     if (!was) await Reply("Nessun combattimento in corso.");
@@ -785,6 +852,7 @@ public class RpgTcpServer(string ipAddress, int port)
                         member.Health = ch.Health.CurrentHealth;
                         member.MaxHealth = ch.Health.MaxHealth;
                         member.WoundStatus = ch.Health.GetWoundStatusDescription();
+                        member.IsStunned = ch.Health.IsStunned;
                         member.Position = ch.Position;
                     }
                     payload.Members.Add(member);
@@ -801,6 +869,7 @@ public class RpgTcpServer(string ipAddress, int port)
                         Health = viewerIsMaster ? npc.Health.CurrentHealth : -1,
                         MaxHealth = viewerIsMaster ? npc.Health.MaxHealth : -1,
                         WoundStatus = npc.Health.GetWoundStatusDescription(),
+                        IsStunned = npc.Health.IsStunned,
                         Position = npc.Position
                     });
                 }
@@ -871,9 +940,10 @@ public class RpgTcpServer(string ipAddress, int port)
                 else
                 {
                     string ended = current ?? "nessuno";
-                    if (MoveToNextTurn(game))
+                    var turnNotes = new List<string>();
+                    if (MoveToNextTurn(game, turnNotes))
                     {
-                        announce = $"Fine turno di {ended}. {DescribeTurn(game)}";
+                        announce = $"Fine turno di {ended}. {(turnNotes.Count > 0 ? string.Join(" ", turnNotes.Select(x => x + ".")) + " " : "")}{DescribeTurn(game)}";
                     }
                     else
                     {
@@ -950,7 +1020,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
         if (!await CheckTurnAsync(reporter, game, thrower, needsAction: true)) return;
 
-        var outcome = ResolveThrowRules(thrower, throwReq.Position, throwReq.WeaponKey, everyone);
+        var outcome = ResolveThrowRules(thrower, throwReq.Position, throwReq.WeaponKey, everyone, game.CombatActive);
         if (outcome.Error != null)
         {
             await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = outcome.Error }));
@@ -975,7 +1045,7 @@ public class RpgTcpServer(string ipAddress, int port)
     }
 
     // Regole del lancio/esplosione, sincrone e sotto _combatLock. Nessun I/O di rete qui dentro.
-    private ThrowOutcome ResolveThrowRules(Character thrower, Position3D aimed, string? weaponKey, List<Character> everyone)
+    private ThrowOutcome ResolveThrowRules(Character thrower, Position3D aimed, string? weaponKey, List<Character> everyone, bool combatActive)
     {
         static ThrowOutcome Error(string message) => new(message, null, null, []);
 
@@ -1122,6 +1192,11 @@ public class RpgTcpServer(string ipAddress, int port)
                 }
                 victimSteps.Add($"Danno inflitto: {afterBtm}");
                 victimSteps.Add($"Salute: {healthBefore} -> {target.Health.CurrentHealth}/{target.Health.MaxHealth} ({target.Health.GetWoundStatusDescription()})");
+                if (combatActive && afterBtm > 0)
+                {
+                    var stunLine = RollStunSave(target);
+                    if (stunLine != null) victimSteps.Add(stunLine);
+                }
 
                 victims.Add(new AreaVictim
                 {
@@ -1298,7 +1373,7 @@ public class RpgTcpServer(string ipAddress, int port)
     }
 
     // Regole dell'attacco, sincrone e sotto _combatLock. Nessun I/O di rete qui dentro.
-    private AttackOutcome ResolveAttackRules(Character attacker, Character target, string? weaponKey)
+    private AttackOutcome ResolveAttackRules(Character attacker, Character target, string? weaponKey, bool combatActive)
     {
         lock (_combatLock)
         {
@@ -1477,6 +1552,12 @@ public class RpgTcpServer(string ipAddress, int port)
                 target.Health.CurrentHealth = Math.Max(0, target.Health.CurrentHealth - damageDealt);
                 steps.Add($"Danno inflitto: {damageDealt}");
                 steps.Add($"Salute di {target.Handle}: {healthBefore} -> {target.Health.CurrentHealth}/{target.Health.MaxHealth} ({target.Health.GetWoundStatusDescription()})");
+
+                if (combatActive && damageDealt > 0)
+                {
+                    var stunLine = RollStunSave(target);
+                    if (stunLine != null) steps.Add(stunLine);
+                }
             }
 
             string log = $"[COMBAT] {attacker.Handle} attacca {target.Handle} con '{weaponToUse.Name}'. {attackTypeDesc}. "

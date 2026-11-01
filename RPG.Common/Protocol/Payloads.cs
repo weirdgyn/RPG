@@ -101,6 +101,7 @@ public class GameMemberInfo
     public int Health { get; set; } = -1;
     public int MaxHealth { get; set; } = -1;
     public string WoundStatus { get; set; } = string.Empty;
+    public bool IsStunned { get; set; }
     public Position3D Position { get; set; } = new();
 }
 

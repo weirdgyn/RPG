@@ -1,4 +1,6 @@
-﻿namespace RPG.Common.Models;
+﻿using System.Text.Json.Serialization;
+
+namespace RPG.Common.Models;
 
 /// <summary>
 /// Scheda delle ferite canonica di Cyberpunk 2020: 40 caselle uguali per tutti i personaggi.
@@ -25,6 +27,26 @@ public class HealthSystem
         if (d <= 8) return -2;               // Seria
         if (d <= 12) return -4;              // Critica
         return -6;                           // Mortale 0-5
+    }
+
+    /// <summary>
+    /// Stordito (solo in combattimento): non può agire né muoversi finché non supera il tiro di recupero.
+    /// Stato di sessione: non viene salvato nella scheda.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsStunned { get; set; }
+
+    /// <summary>
+    /// Modificatore di stato per i tiri di stordimento e di recupero (CP2020): Leggera 0, Seria 1, Critica 2,
+    /// Mortale 0 = 3, Mortale 1 = 4, e così via.
+    /// </summary>
+    public int GetStunSaveModifier()
+    {
+        int d = DamageTaken;
+        if (d <= 4) return 0;
+        if (d <= 8) return 1;
+        if (d <= 12) return 2;
+        return 3 + (d - 13) / 4;
     }
 
     public string GetWoundStatusDescription()

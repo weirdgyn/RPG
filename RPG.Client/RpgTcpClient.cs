@@ -624,7 +624,8 @@ namespace RPG.Client
                             foreach (var m in gs.Members)
                             {
                                 string label = m.Handle.Length > 0 ? m.Handle : "[grey]-[/]";
-                                string turn = m.Handle.Length > 0 && m.Handle.Equals(gs.CurrentTurn, StringComparison.OrdinalIgnoreCase) ? " [bold green]<< turno[/]" : "";
+                                string turn = (m.Handle.Length > 0 && m.Handle.Equals(gs.CurrentTurn, StringComparison.OrdinalIgnoreCase) ? " [bold green]<< turno[/]" : "")
+                                    + (m.IsStunned ? " [bold red]STORDITO[/]" : "");
                                 string owner = m.IsNpc ? "[magenta]NPC[/]" : $"{Markup.Escape(m.Username)} [grey]({Markup.Escape(m.Role)})[/]";
                                 string hp = m.Handle.Length == 0 ? "[grey]-[/]"
                                     : m.Health >= 0 ? $"{m.Health}/{m.MaxHealth} [grey]({Markup.Escape(m.WoundStatus)})[/]"
