@@ -108,7 +108,7 @@ Un archetipo definisce abilità, armi, munizioni, armatura e cyberware iniziali.
 
 Gli NPC compaiono nell'elenco con il loro stato qualitativo (per esempio "Seria"), ma senza punti ferita numerici.
 
-`/game` mostra anche il **contatore delle azioni libere**: quante azioni tra `/skill`, `/roll`, `/attack` e `/move` sono state compiute da PG e NPC **fuori dal combattimento** dall'ultimo avvio del combattimento (si azzera a ogni `/combat start`). Accanto c'è la **stima delle round di gruppo**: `azioni libere / (2 × numero di personaggi)`, cioè quanti round di combattimento sarebbero serviti al gruppo per compiere le stesse azioni (2 = un movimento e un'azione per personaggio a round). Contano le azioni eseguite: un movimento bloccato o un attacco rifiutato dalle regole non incrementano il contatore.
+`/game` mostra anche il **contatore delle azioni libere**: quante azioni tra `/skill`, `/roll`, `/attack` e `/move` sono state compiute da PG e NPC **fuori dal combattimento** dall'ultimo avvio del combattimento (si azzera a ogni `/combat start`). Accanto c'è la **stima delle round di gruppo**: `azioni libere / (2 × numero di personaggi)`, cioè quanti round di combattimento sarebbero serviti al gruppo per compiere le stesse azioni (2 = un movimento e un'azione per personaggio a round). Contano le azioni eseguite: un movimento bloccato o un attacco rifiutato dalle regole non incrementano il contatore. I `/roll` del master non contano (non sono l'azione di un PG).
 
 ### 3.4 Prove e tiri
 

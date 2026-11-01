@@ -7,8 +7,7 @@ Gestione inventario/oggetti:
 
 
 Comandi mancanti:
-
-/help [comando] -> produce un elenco dei comandi disponibili o una spiegazione del comando richiesto
+/help [comando] -> produce un elenco dei comandi disponibili o una spiegazione del comando richiesto (help.json?)
 
 /connect server -> connette il client al server, rifiutato se già connesso, se non connesso non è possibile fare alcuna azione
 

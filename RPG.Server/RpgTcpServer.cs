@@ -1672,12 +1672,13 @@ public class RpgTcpServer(string ipAddress, int port)
 
         Console.WriteLine($"[ROLL] {client.Player.Username} tira {loggedExpr} ({reason}): {total}");
 
+        // Il tiro del master non è l'azione di un PG: non alimenta il contatore delle azioni libere.
         Game? rollGame;
         lock (_gamesLock)
         {
             rollGame = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
         }
-        if (rollGame != null) CountFreeAction(rollGame);
+        if (rollGame != null && client.Player.Role != Player.RoleType.master) CountFreeAction(rollGame);
 
         var resp = new RollResponsePayload
         {
