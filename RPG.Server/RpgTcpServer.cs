@@ -388,6 +388,15 @@ public class RpgTcpServer(string ipAddress, int port)
         return $"{string.Join(" ", chunks)} = {total}";
     }
 
+    // "2d6 => 4 + 3 => 7" (testo della libreria) -> "4 + 3 = 7": i dadi tirati e la somma, senza ripetere l'espressione
+    private static string FormatDiceDetail(DiceRollResult roll)
+    {
+        var parts = roll.Details.Split("=>", StringSplitOptions.TrimEntries);
+        return parts.Length == 3 && parts[1].Length > 0
+            ? $"{parts[1]} = {(int)roll.Total}"
+            : $"{(int)roll.Total} ({roll.Details})";
+    }
+
     private static string DiceExtra(GameDice.D10Roll roll) =>
         roll.Exploded ? $" ({string.Join("+", roll.Rolls)}, esploso)" : string.Empty;
 
@@ -1158,13 +1167,13 @@ public class RpgTcpServer(string ipAddress, int port)
                 if (!bandRolls.TryGetValue(bandKey, out var bandRoll))
                 {
                     var dmgRoll = GameDice.Roll(dice);
-                    bandRoll = (Math.Max(0, (int)dmgRoll.Total), $"Dadi di danno: {dice} -> {dmgRoll.Details} (totale {(int)dmgRoll.Total})");
+                    bandRoll = (Math.Max(0, (int)dmgRoll.Total), $"Dadi di danno ({dice}): {FormatDiceDetail(dmgRoll)}");
                     bandRolls[bandKey] = bandRoll;
                     victimSteps.Add(bandRoll.Text);
                 }
                 else
                 {
-                    victimSteps.Add($"Dadi di danno: {dice} -> stessi dadi della {bandLabel} (totale {bandRoll.Raw})");
+                    victimSteps.Add($"Dadi di danno ({dice}): stessi dadi della {bandLabel} = {bandRoll.Raw}");
                 }
                 int rawDamage = bandRoll.Raw;
 
@@ -1511,7 +1520,7 @@ public class RpgTcpServer(string ipAddress, int port)
                 hitMultiplier = loc.DamageMultiplier;
                 steps.Add($"Locazione: d10 {locRoll} -> {loc.Name}{(loc.DamageMultiplier > 1 ? $" (danno x{loc.DamageMultiplier} dopo l'armatura)" : "")}");
 
-                steps.Add($"Dadi di danno: {weaponToUse.DamageDice} -> {damageRoll.Details} (totale {diceDamage})");
+                steps.Add($"Dadi di danno ({weaponToUse.DamageDice}): {FormatDiceDetail(damageRoll)}");
                 if (ammoDamage != 0 || cyberDamage != 0)
                 {
                     var dmgParts = new List<(string, int, string?)> { ("dadi", diceDamage, null) };
