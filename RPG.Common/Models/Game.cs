@@ -60,6 +60,9 @@ public class Game
     public int TurnIndex { get; set; }
     public double TurnMoveUsed { get; set; }
     public bool TurnActionUsed { get; set; }
+    // Cambia a ogni passaggio di turno: permette di capire se un'azione in corso appartiene ancora
+    // al turno in cui è stata autorizzata (usato dal rimborso dell'azione se la risoluzione fallisce).
+    public int TurnStamp { get; set; }
 
     // Azioni libere compiute da PG e NPC fuori dal combattimento (/skill, /roll, /attack, /move).
     // Serve a stimare il tempo speso dal gruppo fuori dai round; si azzera a ogni /combat start.

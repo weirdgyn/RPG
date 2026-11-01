@@ -129,6 +129,7 @@ Gli NPC compaiono nell'elenco con il loro stato qualitativo (per esempio "Seria"
 - Ogni spostamento può essere lungo al massimo **MA metri** (la tua statistica Movimento), in distanza 3D dalla posizione attuale.
 - La destinazione deve stare dentro la mappa e non può essere un ostacolo.
 - Durante un combattimento MA è il totale del turno: più `/move` si sommano (vedi 5.1).
+- Se ometti la `Z`, l'azione resta sulla **quota corrente** del personaggio (non va a 0): da `(0,0,2)` un `/move 2 1` porta a `(2,1,2)`. Vale anche per `/throw` e per `/as <npc> move` / `/as <npc> throw` (che usano la quota corrente dell'NPC).
 
 ### 3.6 Combattimento
 
@@ -177,7 +178,7 @@ Comandi consentiti con `/as`:
 /as <npc> throw <X> <Y> [Z] [arma]
 ```
 
-> Per `/as move` e `/as throw` indica sempre la Z dell'NPC: se la ometti, il client usa `0` invece della quota attuale.
+> Per `/as move` e `/as throw` la `Z` è la **quota corrente dell'NPC** se la ometti: indicala solo quando vuoi cambiare piano.
 
 Gli NPC seguono le stesse regole dei giocatori: gittata, MA, munizioni, turno di combattimento. Durante un combattimento il master deve prima passare il turno all'NPC con `/next`.
 

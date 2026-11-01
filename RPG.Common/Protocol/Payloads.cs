@@ -35,6 +35,8 @@ public class MoveRequestPayload
 {
     // Coordinate assolute o delta (qui usiamo coordinate di destinazione assolute per semplicità)
     public Position3D Position { get; set; } = new();
+    // true se il client ha indicato la Z; se false il server usa la Z corrente del personaggio
+    public bool ZProvided { get; set; }
 }
 
 public class MoveResultPayload
@@ -140,6 +142,8 @@ public class ThrowRequestPayload
 {
     // Punto di mira del lancio
     public Position3D Position { get; set; } = new();
+    // true se il client ha indicato la Z; se false il server usa la Z corrente del personaggio
+    public bool ZProvided { get; set; }
     // Opzionale: arma ad area da usare per Id o nome (default: la prima con pezzi disponibili)
     public string? WeaponKey { get; set; }
 }

@@ -491,16 +491,21 @@ public class RpgTcpServer(string ipAddress, int port)
             return;
         }
 
-        if (!await CheckTurnAsync(reporter, game, attacker, needsAction: true)) return;
+        var lease = BeginAction(game, attacker, needsAction: true);
+        if (lease.Error != null)
+        {
+            await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = lease.Error }));
+            return;
+        }
 
         var outcome = ResolveAttackRules(attacker, target.Character, attackReq.WeaponOrSkill, game.CombatActive);
         if (outcome.Error != null)
         {
+            RefundAction(game, attacker, lease.TurnStamp);
             await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = outcome.Error }));
             return;
         }
 
-        SpendAction(game);
         CountFreeAction(game);
 
         // Il colpo sparato consuma munizioni: la scheda dell'attaccante va salvata anche se ha mancato
@@ -529,42 +534,94 @@ public class RpgTcpServer(string ipAddress, int port)
     // Combattimento a turni
     // ---------------------------------------------------------------------------------------------
 
-    // Fuori dal combattimento nessun limite. In combattimento agisce solo chi è di turno e, per le azioni
-    // (attacco, lancio, ricarica), una sola per turno. Vale anche per gli NPC pilotati dal master con /as.
-    private async Task<bool> CheckTurnAsync(ClientSession reporter, Game game, Character actor, bool needsAction)
+    // Diritto d'azione concesso a un attore: se Error è null l'azione è autorizzata e, in combattimento,
+    // consumata subito. TurnStamp serve a un eventuale rimborso (vedi RefundAction).
+    private readonly record struct ActionLease(string? Error, int TurnStamp);
+
+    // Da chiamare sotto _gamesLock. Verifica che l'attore possa agire adesso e, se needsAction e siamo in
+    // combattimento, consuma l'azione nella stessa sezione critica: tra il controllo e il consumo non può
+    // infilarsi un /next. Restituisce null se l'azione è consentita.
+    private static string? CheckTurnLocked(Game game, Character actor, bool needsAction)
     {
-        string? error = null;
-        lock (_gamesLock)
+        if (!game.CombatActive) return null;
+
+        string? current = game.CurrentTurnHandle;
+        if (current == null || !current.Equals(actor.Handle, StringComparison.OrdinalIgnoreCase))
         {
-            if (game.CombatActive)
-            {
-                string? current = game.CurrentTurnHandle;
-                if (current == null || !current.Equals(actor.Handle, StringComparison.OrdinalIgnoreCase))
-                {
-                    error = $"Non è il turno di {actor.Handle}: tocca a {current ?? "nessuno"} (round {game.Round}).";
-                }
-                else if (actor.Health.IsStunned)
-                {
-                    error = $"{actor.Handle} è stordito: non può agire né muoversi (a inizio turno tenta di riprendersi, nel frattempo può solo passare con /next).";
-                }
-                else if (needsAction && game.TurnActionUsed)
-                {
-                    error = $"{actor.Handle} ha già usato l'azione di questo turno: termina il turno con /next.";
-                }
-            }
+            return $"Non è il turno di {actor.Handle}: tocca a {current ?? "nessuno"} (round {game.Round}).";
         }
 
-        if (error == null) return true;
+        if (actor.Health.IsStunned)
+        {
+            return $"{actor.Handle} è stordito: non può agire né muoversi (a inizio turno tenta di riprendersi, nel frattempo può solo passare con /next).";
+        }
 
-        await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = error }));
-        return false;
+        if (needsAction && game.TurnActionUsed)
+        {
+            return $"{actor.Handle} ha già usato l'azione di questo turno: termina il turno con /next.";
+        }
+
+        if (needsAction) game.TurnActionUsed = true;
+        return null;
     }
 
-    private void SpendAction(Game game)
+    // Valida e (in combattimento) consuma l'azione in modo atomico. Da usare prima di risolvere attacco,
+    // lancio o ricarica. Fuori dal combattimento non consuma nulla e non c'è limite di turno.
+    private ActionLease BeginAction(Game game, Character actor, bool needsAction)
     {
         lock (_gamesLock)
         {
-            if (game.CombatActive) game.TurnActionUsed = true;
+            return new ActionLease(CheckTurnLocked(game, actor, needsAction), game.TurnStamp);
+        }
+    }
+
+    // Restituisce l'azione consumata se la risoluzione è fallita. Non fa nulla se il turno è cambiato nel
+    // frattempo: in quel caso l'azione apparteneva a un turno ormai passato.
+    private void RefundAction(Game game, Character actor, int turnStamp)
+    {
+        lock (_gamesLock)
+        {
+            if (game.TurnStamp != turnStamp || !game.CombatActive) return;
+            string? current = game.CurrentTurnHandle;
+            if (current == null || !current.Equals(actor.Handle, StringComparison.OrdinalIgnoreCase)) return;
+            game.TurnActionUsed = false;
+        }
+    }
+
+    // Esito di un movimento atomico: se Error è null, Result è la posizione raggiunta (o il motivo del
+    // blocco); se Error è valorizzato, Result va ignorato.
+    private readonly record struct MoveOutcome(string? Error, GameMap.MovementResult Result);
+
+    // Movimento atomico: turno, budget di MA rimasto e aggiornamento della posizione (con TurnMoveUsed in
+    // combattimento, oppure il contatore delle azioni libere fuori) avvengono nella stessa sezione critica.
+    private MoveOutcome TryMove(Game game, GameMap map, Character actor, Position3D requested)
+    {
+        lock (_gamesLock)
+        {
+            string? error = CheckTurnLocked(game, actor, needsAction: false);
+            if (error != null) return new MoveOutcome(error, GameMap.MovementResult.Success);
+
+            double distance = CombatRules.CalculateDistance(actor.Position, requested);
+            int allowance = Math.Max(0, actor.Stats.MA);
+            double available = game.CombatActive ? Math.Max(0, allowance - game.TurnMoveUsed) : allowance;
+
+            if (distance > available + 1e-9)
+            {
+                return new MoveOutcome(game.CombatActive
+                    ? $"Troppo lontano: a {actor.Handle} restano {available:F1}m di movimento in questo turno (MA {allowance}), la destinazione dista {distance:F1}m."
+                    : $"Troppo lontano: {actor.Handle} può muoversi al massimo di {allowance}m per volta (MA {allowance}), la destinazione dista {distance:F1}m.",
+                    GameMap.MovementResult.Success);
+            }
+
+            var result = map.GetMovementResult(requested);
+            if (result == GameMap.MovementResult.Success)
+            {
+                actor.Position = requested;
+                if (game.CombatActive) game.TurnMoveUsed += distance;
+                else game.FreeActionsCounter++;
+            }
+
+            return new MoveOutcome(null, result);
         }
     }
 
@@ -574,7 +631,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
     // Registra un'azione libera (fuori dal combattimento) nel game: alimenta FreeActionsCounter, che
     // misura quanto il gruppo ha agito fuori dai round. Da chiamare solo per azioni eseguite
-    // (/skill, /roll, /attack risolto, /move riuscito).
+    // (/skill, /roll, /attack risolto; il /move è contato direttamente dentro TryMove).
     private void CountFreeAction(Game game)
     {
         lock (_gamesLock)
@@ -612,6 +669,7 @@ public class RpgTcpServer(string ipAddress, int port)
             game.TurnIndex = idx;
             game.TurnMoveUsed = 0;
             game.TurnActionUsed = false;
+            game.TurnStamp++;
             return true;
         }
 
@@ -623,6 +681,7 @@ public class RpgTcpServer(string ipAddress, int port)
             game.TurnIndex = fallbackRaw % n;
             game.TurnMoveUsed = 0;
             game.TurnActionUsed = false;
+            game.TurnStamp++;
             return true;
         }
 
@@ -1049,22 +1108,28 @@ public class RpgTcpServer(string ipAddress, int port)
             return;
         }
 
-        if (map.GetMovementResult(throwReq.Position) == GameMap.MovementResult.OutOfBounds)
+        var target = WithCurrentZ(throwReq.Position, throwReq.ZProvided, thrower);
+
+        if (map.GetMovementResult(target) == GameMap.MovementResult.OutOfBounds)
         {
             await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Il punto indicato è fuori dai confini della mappa." }));
             return;
         }
 
-        if (!await CheckTurnAsync(reporter, game, thrower, needsAction: true)) return;
-
-        var outcome = ResolveThrowRules(thrower, throwReq.Position, throwReq.WeaponKey, everyone, game.CombatActive);
-        if (outcome.Error != null)
+        var lease = BeginAction(game, thrower, needsAction: true);
+        if (lease.Error != null)
         {
-            await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = outcome.Error }));
+            await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = lease.Error }));
             return;
         }
 
-        SpendAction(game);
+        var outcome = ResolveThrowRules(thrower, target, throwReq.WeaponKey, everyone, game.CombatActive);
+        if (outcome.Error != null)
+        {
+            RefundAction(game, thrower, lease.TurnStamp);
+            await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = outcome.Error }));
+            return;
+        }
 
         Console.WriteLine(outcome.LogLine);
 
@@ -1303,7 +1368,16 @@ public class RpgTcpServer(string ipAddress, int port)
             game = _games.FirstOrDefault(g => g.Players.Contains(reporter.Player));
         }
 
-        if (game != null && !await CheckTurnAsync(reporter, game, actor, needsAction: true)) return;
+        ActionLease lease = default;
+        if (game != null)
+        {
+            lease = BeginAction(game, actor, needsAction: true);
+            if (lease.Error != null)
+            {
+                await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = lease.Error }));
+                return;
+            }
+        }
 
         string? error;
         string? message;
@@ -1314,11 +1388,10 @@ public class RpgTcpServer(string ipAddress, int port)
 
         if (error != null)
         {
+            if (game != null) RefundAction(game, actor, lease.TurnStamp);
             await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = error }));
             return;
         }
-
-        if (game != null) SpendAction(game);
 
         CharacterRepository.TrySaveCharacter(actor);
         Console.WriteLine($"[COMBAT] {message}");
@@ -1973,6 +2046,11 @@ public class RpgTcpServer(string ipAddress, int port)
 
         await BroadcastToGameAsync(reporter, NetworkPacket.Create(OpCode.S2C_SkillCheckResult, respPayload));
     }
+    // Punto di destinazione con la Z risolta: se il client non ha indicato la Z, si resta sul piano
+    // corrente dell'attore (movimento e lancio non cambiano quota da soli).
+    private static Position3D WithCurrentZ(Position3D requested, bool zProvided, Character actor) =>
+        zProvided ? requested : new Position3D { X = requested.X, Y = requested.Y, Z = actor.Position.Z };
+
     private async Task HandleMoveAsync(ClientSession client, NetworkPacket packet)
     {
         var moveReq = packet.DeserializePayload<MoveRequestPayload>();
@@ -1999,56 +2077,30 @@ public class RpgTcpServer(string ipAddress, int port)
             return;
         }
 
-        var requested = moveReq.Position;
+        var requested = WithCurrentZ(moveReq.Position, moveReq.ZProvided, actor);
 
-        // In combattimento si agisce solo nel proprio turno
-        if (!await CheckTurnAsync(reporter, game, actor, needsAction: false)) return;
-
-        // Ogni spostamento è limitato dal Movement Allowance (MA metri, distanza 3D dalla posizione attuale);
-        // in combattimento MA è il totale del turno, quindi si sottrae quanto già percorso.
-        double moveDistance = CombatRules.CalculateDistance(actor.Position, requested);
-        int allowance = Math.Max(0, actor.Stats.MA);
-        double available = allowance;
-        bool inCombat;
-        lock (_gamesLock)
+        // Turno, budget di movimento e aggiornamento della posizione in un'unica operazione atomica
+        var move = TryMove(game, map, actor, requested);
+        if (move.Error != null)
         {
-            inCombat = game.CombatActive;
-            if (inCombat) available = Math.Max(0, allowance - game.TurnMoveUsed);
-        }
-
-        if (moveDistance > available + 1e-9)
-        {
-            await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
-            {
-                Message = inCombat
-                    ? $"Troppo lontano: a {actor.Handle} restano {available:F1}m di movimento in questo turno (MA {allowance}), la destinazione dista {moveDistance:F1}m."
-                    : $"Troppo lontano: {actor.Handle} può muoversi al massimo di {allowance}m per volta (MA {allowance}), la destinazione dista {moveDistance:F1}m."
-            }));
+            await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = move.Error }));
             return;
         }
 
-        GameMap.MovementResult result = map.GetMovementResult(requested);
-
         string message;
-        if (result == GameMap.MovementResult.Success)
+        if (move.Result == GameMap.MovementResult.Success)
         {
-            actor.Position = requested;
-            lock (_gamesLock)
-            {
-                if (game.CombatActive) game.TurnMoveUsed += moveDistance;
-            }
             CharacterRepository.TrySaveCharacter(actor);
-            CountFreeAction(game);
 
             message = $"Posizione aggiornata a ({requested.X}, {requested.Y}, {requested.Z})";
             Console.WriteLine($"[MOVE] {actor.Handle} si è spostato a ({requested.X}, {requested.Y}, {requested.Z})");
         }
         else
         {
-            message = result == GameMap.MovementResult.OutOfBounds
+            message = move.Result == GameMap.MovementResult.OutOfBounds
                 ? $"Movimento bloccato: ({requested.X}, {requested.Y}, {requested.Z}) è fuori dai confini della mappa."
                 : $"Movimento bloccato: c'è un ostacolo in ({requested.X}, {requested.Y}, {requested.Z}).";
-            Console.WriteLine($"[MOVE] {actor.Handle} movimento negato ({result}) verso ({requested.X}, {requested.Y}, {requested.Z})");
+            Console.WriteLine($"[MOVE] {actor.Handle} movimento negato ({move.Result}) verso ({requested.X}, {requested.Y}, {requested.Z})");
         }
 
         var movePayload = new MoveResultPayload
@@ -2056,13 +2108,13 @@ public class RpgTcpServer(string ipAddress, int port)
             PlayerHandle = actor.Handle,
             RequestedPosition = requested,
             ActualPosition = actor.Position,
-            Result = result,
+            Result = move.Result,
             Message = message
         };
 
         await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_PlayerMoved, movePayload));
 
-        if (result == GameMap.MovementResult.Success)
+        if (move.Result == GameMap.MovementResult.Success)
         {
             // Solo gli altri partecipanti dello stesso game vedono lo spostamento
             await BroadcastToGameAsync(reporter, NetworkPacket.Create(OpCode.S2C_PlayerMoved, movePayload), includeOrigin: false);
@@ -2373,7 +2425,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
         newChar.Handle = safeHandle;
         CharacterTemplateFactory.RandomizeStats(newChar);
-        CharacterRepository.NormalizeSkills(newChar);
+        CharacterRepository.NormalizeForUse(newChar);
 
         // Controlli, conteggio e scrittura nello stesso lock: senza, due /create sullo stesso handle
         // passerebbero entrambi "esiste già" e il secondo sovrascriverebbe la scheda del primo.

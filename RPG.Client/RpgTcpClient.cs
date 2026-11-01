@@ -797,24 +797,22 @@ namespace RPG.Client
         }
 
         /// <summary>
-        /// Argomenti di /throw: X Y [Z] [arma]. Lo Z è opzionale (default: quello del personaggio): se il terzo
-        /// argomento non è un numero è già il nome dell'arma. Restituisce null se i parametri non sono validi.
+        /// Argomenti di /throw: X Y [Z] [arma]. Lo Z è opzionale: se il terzo argomento non è un numero è già
+        /// il nome dell'arma; se manca, il server usa la Z corrente del personaggio. Restituisce null se i
+        /// parametri non sono validi.
         /// </summary>
-        private static ThrowRequestPayload? BuildThrowRequest(string[] args, int defaultZ)
+        private static ThrowRequestPayload? BuildThrowRequest(string[] args)
         {
             if (args.Length < 2 || !int.TryParse(args[0], out int x) || !int.TryParse(args[1], out int y)) return null;
 
-            int z = defaultZ;
-            int weaponIndex = 2;
-            if (args.Length >= 3 && int.TryParse(args[2], out int parsedZ))
-            {
-                z = parsedZ;
-                weaponIndex = 3;
-            }
+            int z = 0;
+            bool zProvided = args.Length >= 3 && int.TryParse(args[2], out z);
+            int weaponIndex = zProvided ? 3 : 2;
 
             return new ThrowRequestPayload
             {
                 Position = new Position3D { X = x, Y = y, Z = z },
+                ZProvided = zProvided,
                 WeaponKey = args.Length > weaponIndex ? string.Join(' ', args.Skip(weaponIndex)) : null
             };
         }
@@ -884,11 +882,13 @@ namespace RPG.Client
                                  && int.TryParse(args[0], out int x)
                                  && int.TryParse(args[1], out int y):
                     int z = 0;
-                    if (args.Length >= 3 && !int.TryParse(args[2], out z)) return null;
+                    bool zProvided = args.Length >= 3;
+                    if (zProvided && !int.TryParse(args[2], out z)) return null;
                     innerOp = OpCode.C2S_Move;
                     innerJson = JsonSerializer.Serialize(new MoveRequestPayload
                     {
-                        Position = new Position3D { X = x, Y = y, Z = z }
+                        Position = new Position3D { X = x, Y = y, Z = z },
+                        ZProvided = zProvided
                     });
                     break;
 
@@ -903,7 +903,7 @@ namespace RPG.Client
 
                 case "throw":
                     {
-                        var throwPayload = BuildThrowRequest(args, 0);
+                        var throwPayload = BuildThrowRequest(args);
                         if (throwPayload == null) return null;
                         innerOp = OpCode.C2S_Throw;
                         innerJson = JsonSerializer.Serialize(throwPayload);
@@ -1353,7 +1353,7 @@ namespace RPG.Client
                         continue;
                     }
 
-                    var throwReq = BuildThrowRequest(trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries).Skip(1).ToArray(), _player.Character?.Position.Z ?? 0);
+                    var throwReq = BuildThrowRequest(trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries).Skip(1).ToArray());
                     if (throwReq == null)
                     {
                         AnsiConsole.MarkupLine("[bold red][[!]]: Sintassi non valida. Usa: /throw <X> <Y> [[Z]] [[arma]][/]");
@@ -1382,7 +1382,8 @@ namespace RPG.Client
                     {
                         var movePacket = NetworkPacket.Create(OpCode.C2S_Move, new MoveRequestPayload
                         {
-                            Position = new Position3D { X = x, Y = y, Z = z }
+                            Position = new Position3D { X = x, Y = y, Z = z },
+                            ZProvided = true
                         });
                         await _writer.WriteLineAsync(JsonSerializer.Serialize(movePacket));
                     }
@@ -1390,9 +1391,12 @@ namespace RPG.Client
                         int.TryParse(parts[1], out int x1) &&
                         int.TryParse(parts[2], out int y1))
                     {
+                        // Senza Z si resta sul piano corrente: la Z la decide il server, che conosce la
+                        // posizione reale del personaggio (quella del client può essere vecchia).
                         var movePacket = NetworkPacket.Create(OpCode.C2S_Move, new MoveRequestPayload
                         {
-                            Position = new Position3D { X = x1, Y = y1, Z = _player.Character?.Position.Z ?? 0 }
+                            Position = new Position3D { X = x1, Y = y1, Z = 0 },
+                            ZProvided = false
                         });
                         await _writer.WriteLineAsync(JsonSerializer.Serialize(movePacket));
                     }

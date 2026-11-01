@@ -45,6 +45,9 @@ public class Character
         public string Description { get; set; } = string.Empty;
     }
     public string Handle { get; set; } = "StreetPunk"; // Nome di strada del personaggio
+    // Versione dello schema della scheda salvata. 0 = scheda precedente al versioning.
+    // La aggiorna CharacterMigrations al caricamento e CharacterRepository al salvataggio.
+    public int SchemaVersion { get; set; }
     public RoleType Role { get; set; } = RoleType.Solo;        // Solo, Netrunner, Techie, Nomad, Rockerboy, Fixer...
     // Statistiche Interlock principali (range standard 1-10)
     public Stats Stats { get; set; } = new();

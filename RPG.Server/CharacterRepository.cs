@@ -6,7 +6,16 @@ using System.Text.Json;
 namespace RPG.Server;
 
 /// <summary>
-/// Persistenza dei personaggi su disco (Data/Characters).
+/// Persistenza delle schede personaggio su disco (Data/Characters), una scheda per file JSON.
+///
+/// Politica: <b>write-through</b>. Ogni modifica significativa viene scritta subito chiamando
+/// <see cref="TrySaveCharacter"/> al momento della modifica: non c'è write-behind né coda. Lo stato live
+/// del game (turno, check aperto, chi è in partita) NON è persistito e vive solo in memoria; gli NPC sono
+/// schede come le altre e seguono la stessa politica. Ogni scrittura è atomica per file (file temporaneo +
+/// sostituzione) sotto un lock globale, ma non è una transazione tra più schede.
+///
+/// Le schede sono versionate: al caricamento <see cref="CharacterMigrations"/> le porta all'ultima versione
+/// di schema, e <see cref="SaveCharacter"/> riscrive sempre la versione corrente.
 /// </summary>
 public static class CharacterRepository
 {
@@ -56,7 +65,8 @@ public static class CharacterRepository
             var character = JsonSerializer.Deserialize<Character>(json);
             if (character != null)
             {
-                NormalizeSkills(character);
+                CharacterMigrations.Migrate(character);
+                NormalizeForUse(character);
                 Console.WriteLine($"[CHAR] -> SUCCESSO: Scheda di '{safeHandle}' caricata con successo.");
                 return character;
             }
@@ -97,7 +107,7 @@ public static class CharacterRepository
         newChar.Handle = safeHandle;
         newChar.Health.MaxHealth = HealthSystem.TrackBoxes;
         newChar.Health.CurrentHealth = HealthSystem.TrackBoxes;
-        NormalizeSkills(newChar);
+        NormalizeForUse(newChar);
 
         SaveCharacter(newChar, directoryPath);
         return newChar;
@@ -115,6 +125,9 @@ public static class CharacterRepository
         }
 
         string safeHandle = CharacterHandleValidator.ValidateAndNormalize(character.Handle, nameof(character));
+
+        // Si scrive sempre lo schema corrente: le migrazioni sono già state applicate al caricamento.
+        character.SchemaVersion = CharacterMigrations.CurrentVersion;
 
         try
         {
@@ -224,24 +237,14 @@ public static class CharacterRepository
     }
 
     /// <summary>
-    /// Schede salvate con la vecchia salute (BODY*5): porto la scheda a 40 caselle mantenendo il danno
-    /// già subito in valore assoluto (non in percentuale), con minimo 0 punti rimasti.
+    /// Invarianti di runtime da ristabilire <b>dopo ogni deserializzazione</b> (non è una migrazione di
+    /// schema): la copia dell'arma in pugno deve puntare alla voce in <see cref="Character.Weapons"/> —
+    /// un'unica fonte di verità per munizioni e caricatore — e il dizionario abilità deve confrontare i
+    /// nomi senza distinguere maiuscole/minuscole.
     /// </summary>
-    public static void NormalizeHealth(Character character)
-    {
-        character.Health ??= new HealthSystem();
-        var h = character.Health;
-        if (h.MaxHealth == HealthSystem.TrackBoxes) return;
-
-        int damage = Math.Max(0, h.MaxHealth - h.CurrentHealth);
-        h.MaxHealth = HealthSystem.TrackBoxes;
-        h.CurrentHealth = Math.Max(0, HealthSystem.TrackBoxes - damage);
-    }
-
-    public static void NormalizeSkills(Character character)
+    public static void NormalizeForUse(Character character)
     {
         NormalizeEquipment(character);
-        NormalizeHealth(character);
 
         if (character.Skills == null || character.Skills.Count == 0)
         {
