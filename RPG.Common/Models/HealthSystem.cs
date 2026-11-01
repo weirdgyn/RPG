@@ -18,6 +18,12 @@ public class HealthSystem
     /// <summary>Danno accumulato (caselle perse).</summary>
     public int DamageTaken => Math.Max(0, MaxHealth - CurrentHealth);
 
+    /// <summary>Toglie <paramref name="amount"/> caselle alla salute (mai sotto 0). Unico punto in cui il danno viene applicato.</summary>
+    public void TakeDamage(int amount)
+    {
+        CurrentHealth = Math.Max(0, CurrentHealth - Math.Max(0, amount));
+    }
+
     // In Cyberpunk le ferite applicano penalità ai tiri di dado (qui piatte su tutte le azioni)
     public int GetWoundPenalty()
     {

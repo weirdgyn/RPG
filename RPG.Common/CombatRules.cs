@@ -86,6 +86,27 @@ public static class CombatRules
     public static int ApplyBodyTypeModifier(int damageAfterArmor, int reduction)
         => damageAfterArmor <= 0 ? 0 : Math.Max(1, damageAfterArmor - reduction);
 
+    /// <summary>Esito completo della catena armatura -> moltiplicatore -> BTM per un colpo a segno.</summary>
+    /// <param name="Armor">Esito dell'armatura (SP affrontato, assorbito, danno dopo il moltiplicatore, ablazione).</param>
+    /// <param name="Penetrating">Danno che ha superato l'armatura, prima del moltiplicatore di locazione.</param>
+    /// <param name="BtmReduction">Riduzione del BTM del bersaglio.</param>
+    /// <param name="Dealt">Danno finale da togliere alla salute.</param>
+    public sealed record DamageResolution(ArmorResult Armor, int Penetrating, int BtmReduction, int Dealt);
+
+    /// <summary>
+    /// Catena completa del danno CP2020 su un colpo a segno: armatura (con ablazione), moltiplicatore di
+    /// locazione e BTM. Non tocca la salute: la applica il chiamante con <see cref="HealthSystem.TakeDamage"/>.
+    /// Modifica <paramref name="piece"/> (ablazione): chiamare sotto il lock del combattimento.
+    /// </summary>
+    public static DamageResolution ResolveDamage(ArmorPiece? piece, int rawDamage, int locationMultiplier, bool armorPiercing, int targetBody)
+    {
+        var armor = ApplyArmor(piece, rawDamage, locationMultiplier, armorPiercing);
+        int penetrating = rawDamage - armor.Absorbed;
+        int btm = GetBodyTypeReduction(targetBody);
+        int dealt = ApplyBodyTypeModifier(armor.DamageDealt, btm);
+        return new DamageResolution(armor, penetrating, btm, dealt);
+    }
+
     /// <summary>
     /// Mappa il roll di locazione alla zona colpita:
     /// 1 = Testa (x2), 2-4 = Torso, 5 = Braccio Destro, 6 = Braccio Sinistro,

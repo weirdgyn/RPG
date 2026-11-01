@@ -1297,12 +1297,13 @@ public class RpgTcpServer(string ipAddress, int port)
 
                 // L'esplosione colpisce il corpo: protegge l'armatura del torso, nessun moltiplicatore di locazione
                 var torso = target.Armor.GetPiece(ArmorLocation.Torso);
-                var armor = CombatRules.ApplyArmor(torso, rawDamage, 1);
-                int penetrating = rawDamage - armor.Absorbed;
-                int btmRed = CombatRules.GetBodyTypeReduction(target.Stats.BODY);
-                int afterBtm = CombatRules.ApplyBodyTypeModifier(armor.DamageDealt, btmRed);
+                var resolution = CombatRules.ResolveDamage(torso, rawDamage, 1, armorPiercing: false, target.Stats.BODY);
+                var armor = resolution.Armor;
+                int penetrating = resolution.Penetrating;
+                int btmRed = resolution.BtmReduction;
+                int afterBtm = resolution.Dealt;
                 int healthBefore = target.Health.CurrentHealth;
-                target.Health.CurrentHealth = Math.Max(0, target.Health.CurrentHealth - afterBtm);
+                target.Health.TakeDamage(afterBtm);
                 if (!changed.Contains(target)) changed.Add(target);
 
                 if (armor.SpFaced > 0)
@@ -1659,8 +1660,9 @@ public class RpgTcpServer(string ipAddress, int port)
                 int spBefore = armorPiece?.CurrentStopPower ?? 0;
                 bool armorPiercing = loadedAmmo?.HalvesArmorSP == true;
 
-                armorResult = CombatRules.ApplyArmor(armorPiece, rawDamage, loc.DamageMultiplier, armorPiercing: armorPiercing);
-                int penetrating = rawDamage - armorResult.Absorbed;
+                var resolution = CombatRules.ResolveDamage(armorPiece, rawDamage, loc.DamageMultiplier, armorPiercing, target.Stats.BODY);
+                armorResult = resolution.Armor;
+                int penetrating = resolution.Penetrating;
 
                 if (armorResult.SpFaced > 0)
                 {
@@ -1677,14 +1679,14 @@ public class RpgTcpServer(string ipAddress, int port)
                     steps.Add($"Moltiplicatore {loc.Name} x{loc.DamageMultiplier}: {penetrating} -> {armorResult.DamageDealt}");
                 }
 
-                btmReduction = CombatRules.GetBodyTypeReduction(target.Stats.BODY);
-                damageDealt = CombatRules.ApplyBodyTypeModifier(armorResult.DamageDealt, btmReduction);
+                btmReduction = resolution.BtmReduction;
+                damageDealt = resolution.Dealt;
                 if (armorResult.DamageDealt > 0)
                 {
                     steps.Add($"BTM (BODY {target.Stats.BODY}): {armorResult.DamageDealt} - {btmReduction} = {damageDealt}{(armorResult.DamageDealt - btmReduction < 1 ? " (minimo 1)" : "")}");
                 }
 
-                target.Health.CurrentHealth = Math.Max(0, target.Health.CurrentHealth - damageDealt);
+                target.Health.TakeDamage(damageDealt);
                 steps.Add($"Danno inflitto: {damageDealt}");
                 steps.Add($"Salute di {target.Handle}: {healthBefore} -> {target.Health.CurrentHealth}/{target.Health.MaxHealth} ({target.Health.GetWoundStatusDescription()})");
 
