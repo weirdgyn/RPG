@@ -25,6 +25,8 @@ Altre opzioni: `-i` (mostra la sequenza intro), `-f <font>` (font del banner).
 
 All'avvio il client chiede lo **username**. Se lo lasci vuoto ne viene generato uno (`Punk_xxxx`). Lo username è unico: se è già in uso sul server il login viene rifiutato e puoi riprovare.
 
+> **Nota:** il login non richiede password e la connessione TCP non è cifrata. Usa il client solo con server di cui ti fidi e non usare nomi o dati sensibili.
+
 ### 1.3 Il percorso tipico
 
 ```
@@ -89,7 +91,7 @@ Il ruolo di master si prende entrando in un game con `/join <game> master`: se i
 | Comando | Cosa fa |
 |---|---|
 | `/create <archetipo> <handle>` | Crea un personaggio da un archetipo, con statistiche leggermente variate a caso. Archetipi: **Solo, Netrunner, Nomad, Rocker, Fixer, Corporate, Techie, TechMed, Cop, Media**. |
-| `/link <personaggio>` | Ti collega a una scheda esistente e libera quella precedente. |
+| `/link <personaggio>` | Ti collega a una scheda esistente. Se sei già in un game, esci prima con `/leave`: cambiare scheda durante una partita non è supportato. |
 | `/status` | Mostra la scheda del personaggio collegato: statistiche, salute, armi e munizioni, armatura, cyberware. |
 | `/skills` | Elenco abilità con statistica associata e il tuo pool di tiro. |
 
@@ -101,7 +103,7 @@ Un archetipo definisce abilità, armi, munizioni, armatura e cyberware iniziali.
 |---|---|
 | `/join <game> [player]` | Entra in un game esistente. |
 | `/leave` | Esce dal game corrente. Il personaggio resta collegato. |
-| `/game` (alias `/gamestatus`) | Stato del game: master, partecipanti con salute e posizione, NPC, combattimento, check aperto. |
+| `/game` (alias `/gamestatus`) | Stato del game: master, partecipanti con salute, posizione e stordimento, NPC, combattimento, check aperto. |
 
 Gli NPC compaiono nell'elenco con il loro stato qualitativo (per esempio "Seria"), ma senza punti ferita numerici.
 
@@ -112,6 +114,8 @@ Gli NPC compaiono nell'elenco con il loro stato qualitativo (per esempio "Seria"
 | `/skill <abilità> [TN]` | Prova di abilità. Il TN predefinito è 15. L'abilità deve esistere (vedi `/skills`). |
 | `/roll <espressione> [motivo]` | Tiro di dadi libero, visibile a tutto il game. Esempi: `/roll 2d6+3 Danno`, `/roll 3d6!` (con `!` i dadi esplodono). |
 | `/init [modificatore]` | Tiro di iniziativa: REF + CombatSense (solo per i Solo) + bonus cyberware + modificatore + d10. |
+
+> Il modificatore di `/init` è libero: in un check ufficiale concordalo prima con il master.
 
 **Quando il master ha aperto un check** (vedi 4.3) il tuo `/skill` o `/init` corrispondente viene registrato per lo spoglio: ricevi solo la conferma *"tiro registrato"* e i risultati escono tutti insieme quando hanno tirato tutti. Vale il **primo** tiro. Il TN non ti viene rivelato.
 
@@ -170,6 +174,8 @@ Comandi consentiti con `/as`:
 /as <npc> throw <X> <Y> [Z] [arma]
 ```
 
+> Per `/as move` e `/as throw` indica sempre la Z dell'NPC: se la ometti, il client usa `0` invece della quota attuale.
+
 Gli NPC seguono le stesse regole dei giocatori: gittata, MA, munizioni, turno di combattimento. Durante un combattimento il master deve prima passare il turno all'NPC con `/next`.
 
 ### 4.3 Prove collettive: `/check`
@@ -193,6 +199,7 @@ Come funziona:
   - *abilità*: tabella con tiro e successo, fallimento o fallimento critico contro il TN;
   - *iniziativa*: lista ordinata. A parità vince il REF più alto, poi chi ha tirato prima. Questo ordine è quello usato dal combattimento a turni.
 - Un solo check alla volta. Chi esce dal game o si disconnette viene tolto dal check: se mancava solo lui, lo spoglio parte con gli altri.
+- Se devi rimuovere un NPC mentre un check è aperto, chiudi o annulla prima il check: la rimozione dell'NPC non aggiorna le iscrizioni.
 - Un `/skill` su un'abilità diversa da quella del check resta una prova libera.
 - Non si può aprire un nuovo `/check init` mentre un combattimento è in corso.
 
@@ -210,9 +217,9 @@ Regole dei turni:
 
 - Agisce **solo chi è di turno** (anche gli NPC: il master usa `/as <npc> …` quando tocca a loro).
 - Ogni turno si ha **movimento fino a MA metri in totale** (più `/move` si sommano) e **una sola azione**: `/attack`, `/throw` o `/reload`.
-- Restano sempre liberi: `/skill`, `/roll`, la chat, le risposte ai `/check`, `/status`, `/game`.
+- Restano sempre liberi: `/skill`, `/init`, `/roll`, la chat, le risposte ai `/check`, `/status`, `/game`.
 - Un'azione rifiutata dalle regole (fuori portata, caricatore vuoto) **non** consuma l'azione.
-- Il round aumenta a ogni giro completo. I personaggi K.O. o usciti dal game vengono saltati. Se esce chi era di turno, il turno passa al successivo e il game riceve l'annuncio.
+- Il round aumenta a ogni giro completo. I personaggi K.O. o usciti dal game vengono saltati. Chi è stordito tenta di riprendersi a inizio turno; se fallisce, il turno passa al successivo. Se esce chi era di turno, il turno passa al successivo e il game riceve l'annuncio.
 - Fuori dal combattimento non ci sono limiti di turno.
 
 ---
@@ -277,12 +284,12 @@ Un colpo che penetra l'armatura fa **almeno 1** danno.
 
 - Il caricatore ha una capacità (per esempio 12 colpi); le munizioni di riserva sono nell'inventario, divise per calibro e tipo.
 - `/reload` ricarica fino a capienza. I colpi rimasti nel caricatore tornano nella loro pila prima di caricare il nuovo tipo, quindi cambiare munizioni non fa perdere colpi.
-- `/reload ap` carica munizioni **perforanti**: dimezzano l'SP dell'armatura. Altri tipi possono avere un modificatore al danno.
+- `/reload ap` carica munizioni **perforanti**: dimezzano l'SP dell'armatura (arrotondato per eccesso). Altri tipi possono avere un modificatore al danno.
 - La ricarica è un'azione del turno.
 
 ### 5.6 Armi ad area: `/throw`
 
-- `/throw <X> <Y> [Z] [arma]` lancia verso un punto della mappa. Se ometti la Z usa quella del tuo personaggio.
+- `/throw <X> <Y> [Z] [arma]` lancia verso un punto della mappa. Se ometti la Z usa quella del tuo personaggio; con `/as <npc> throw` indica invece sempre la Z dell'NPC.
 - **Tiro di lancio**: statistica + livello **Atletica** + penalità ferite + d10 esplosivo, contro lo stesso TN a fasce degli attacchi a distanza, scalato sulla **gittata di lancio** dell'arma. Oltre la gittata il lancio è rifiutato.
 - **Se fallisce**, la granata **devia** di 1d10 metri in direzione casuale (il doppio con un fallimento critico) ed esplode lì.
 - **Danno**: colpisce tutti i personaggi del game (giocatori e NPC, compreso chi lancia) entro il **raggio**. Per le granate a fasce il danno dipende dalla distanza dal centro: per esempio fino a 2 m 5d6, 2–5 m 3d6, 5–10 m 2d6. Si tira una volta per fascia e tutti nella stessa fascia subiscono lo stesso danno, ridotto da armatura del torso e BTM.
@@ -300,10 +307,19 @@ Tutti i personaggi hanno una scheda ferite di **40 caselle**; ogni danno ne togl
 | 5–8 | Seria | −2 |
 | 9–12 | Critica | −4 |
 | 13–16 | Mortale 0 | −6 |
-| 17–20 … | Mortale 1, 2, … (ogni 4 caselle) | −6 |
-| salute a 0 | K.O. / morto | non si può agire |
+| 17–20 | Mortale 1 | −6 |
+| 21–24 | Mortale 2 | −6 |
+| 25–28 | Mortale 3 | −6 |
+| 29–32 | Mortale 4 | −6 |
+| 33–36 | Mortale 5 | −6 |
+| 37–39 | Mortale 6 | −6 |
+| 40 (salute 0) | K.O. / morto | — |
 
 Il BODY non cambia le caselle: agisce sul BTM. La penalità si applica ai tiri di attacco, di abilità e di lancio, e alla difesa in mischia; il tiro di iniziativa non la applica.
+
+**Stordimento (solo in combattimento).** Dopo un colpo che infligge almeno 1 danno, il bersaglio tira un d10: se il risultato è **inferiore** a `BODY − modificatore di stato`, resiste; altrimenti è stordito. Il modificatore è 0 per le ferite Leggere, 1 per le Serie, 2 per le Critiche, 3 per Mortale 0, 4 per Mortale 1, e così via. Un personaggio stordito non può agire né muoversi; all'inizio del suo turno ritenta il tiro con la stessa soglia e, se fallisce, viene saltato. Se nessuno può agire ma c'è almeno uno stordito, il turno resta a uno di loro, che può solo passare con `/next`; se sono tutti K.O., il combattimento termina.
+
+Lo stato di stordimento è di sessione: non viene salvato nella scheda, non ha effetto fuori dal combattimento e viene azzerato all'avvio e alla fine esplicita del combattimento. A 0 punti il personaggio è K.O. / morto: non può attaccare né lanciare; il blocco completo delle altre azioni è ancora in rifinitura (vedi [Cosa non c'è ancora](#cosa-non-cè-ancora)).
 
 ---
 
@@ -358,7 +374,8 @@ Il BODY non cambia le caselle: agisce sul BTM. La penalità si applica ai tiri d
 
 Regole previste ma non ancora implementate:
 
-- tiro di **stordimento** a ogni ferita e tiro di **salvezza contro la morte** (oggi a 0 salute si è semplicemente K.O. / morti);
+- tiro di **salvezza contro la morte** (oggi a 0 salute si è semplicemente K.O. / morti);
+- blocco completo delle azioni per i personaggi **K.O.** (attacco e lancio sono già bloccati; movimento, ricarica e prove libere non ancora);
 - **mischia come tiro contrapposto**;
 - guarigione e recupero delle ferite, anche per gli NPC;
 - timeout delle connessioni inattive.
