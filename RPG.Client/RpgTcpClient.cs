@@ -964,7 +964,7 @@ namespace RPG.Client
                 table.AddRow("[bold white]/list[/]", "[grey][[game]][/]", "Elenca i giocatori online (o filtrati per stanza di gioco)");
                 table.AddRow("[bold white]/games[/]", "[grey]-[/]", "Elenca le sessioni di gioco attive");
                 table.AddRow("[bold white]/characters[/]", "[grey]-[/]", "Elenca i personaggi salvati sul server");
-                table.AddRow("[bold white]/join[/]", "[cyan]<game> [[master|player]][/]", "Entra in un gioco o ne crea uno (solo Master)");
+                table.AddRow("[bold white]/join[/]", "[cyan]<game> [[master|player]][/]", "Entra in un gioco (serve un personaggio collegato) o ne crea uno (solo Master)");
                 table.AddRow("[bold white]/leave[/]", "", "Esce dal gioco corrente");
                 table.AddRow("[bold white]/npc[/]", "[cyan]add <h> | list | remove <h> | status <h>[/]", "Master: usa una scheda esistente come NPC del game");
                 table.AddRow("[bold white]/as[/]", "[cyan]<npc> attack|skill|move|init|reload|throw ...[/]", "Master: esegue il comando per conto di un NPC");

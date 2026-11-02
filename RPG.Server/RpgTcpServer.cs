@@ -3255,11 +3255,12 @@ public class RpgTcpServer(string ipAddress, int port)
             {
                 denialMessage = $"Sei già nel gioco '{currentGame.Name}': usa /leave prima di entrare in un altro o di cambiare ruolo.";
             }
-            // Un master non interpreta personaggi (stessa regola di /link): con una scheda collegata deve riconnettersi.
-            else if (joinReq.Role == Player.RoleType.master
-                && (client.Player.Character != null || !string.IsNullOrEmpty(client.LinkedCharacterHandle)))
+            // Il master non interpreta personaggi (stessa regola di /link); un giocatore deve avere già il suo
+            // personaggio collegato, perché dentro un game /link e /unlink sono vietati (vedi JoinRules).
+            else if (JoinRules.GetRoleDenial(joinReq.Role,
+                         client.Player.Character != null || !string.IsNullOrEmpty(client.LinkedCharacterHandle)) is { } roleDenial)
             {
-                denialMessage = "Un master non può avere un personaggio collegato: riconnettiti senza scegliere una scheda per fare il master.";
+                denialMessage = roleDenial;
             }
             else if (joinReq.Role == Player.RoleType.master)
             {

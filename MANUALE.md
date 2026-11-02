@@ -102,7 +102,7 @@ Un archetipo definisce abilità, armi, munizioni, armatura e cyberware iniziali.
 
 | Comando | Cosa fa |
 |---|---|
-| `/join <game> [player]` | Entra in un game esistente. Se sei già in un game, esci prima con `/leave`. |
+| `/join <game> [player]` | Entra in un game esistente. **Devi aver già collegato un personaggio** (`/link`, oppure `/create` e poi `/link`): dentro un game `/link` e `/unlink` sono vietati. Se sei già in un game, esci prima con `/leave`. |
 | `/leave` | Esce dal game corrente. Il personaggio resta collegato. |
 | `/game` (alias `/gamestatus`) | Stato del game: master, partecipanti con salute, posizione e stordimento, NPC, combattimento, check aperto, azioni libere. |
 
@@ -149,7 +149,7 @@ Le regole del combattimento sono nella sezione 5.
 ### 4.1 Aprire e condurre un game
 
 1. `/join <game> master` crea il game (o ne prende la guida se è libero).
-2. I giocatori entrano con `/join <game>`.
+2. I giocatori entrano con `/join <game>`, dopo aver collegato il loro personaggio (senza personaggio il `/join` viene rifiutato; il master non ne ha uno).
 3. Con `/game` vedi in qualsiasi momento tutti i partecipanti, gli NPC (con i punti ferita numerici), il combattimento e i check aperti.
 4. Con `/heal <personaggio>` (giocatori o NPC) curi **completamente** il bersaglio e ne azzeri morte, stordimento e stabilizzazione. Con `/heal <personaggio> <caselle>` restituisci solo quel numero di caselle (da 1 a 1000): un morto riparte dal limite della pista (0 caselle, Mortale 6), e stordimento e stabilizzazione restano come sono. È gratuito, senza tiro e non conta come azione. Per far curare un NPC in gioco usa `/as <npc> heal <personaggio>` (stesse regole dei giocatori: tiro, 2,5 m, azione del turno).
 
