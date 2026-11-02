@@ -315,7 +315,7 @@ internal class Program
         {
             string fontDirectory = Path.Combine(
                 AppContext.BaseDirectory,
-                "Fonts");
+                "fonts");
 
             if (!Directory.Exists(fontDirectory))
             {
