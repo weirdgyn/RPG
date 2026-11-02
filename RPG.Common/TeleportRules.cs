@@ -19,7 +19,7 @@ public static class TeleportRules
 
         foreach (var arg in args)
         {
-            foreach (var part in (arg ?? string.Empty).Split([',', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            foreach (var part in (arg ?? string.Empty).Split((char[])[',', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
                 if (seen.Add(part)) result.Add(part);
             }
