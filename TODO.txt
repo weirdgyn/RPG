@@ -11,7 +11,7 @@ Gestione inventario/oggetti:
 Comandi mancanti:
 	/help [comando] -> produce un elenco dei comandi disponibili o una spiegazione del comando richiesto (help.json?)
 
-	/connect server -> connette il client al server, rifiutato se già connesso, se non connesso non è possibile fare alcuna azione
+	/connect [host] [porta] -> FATTO (rifiutato se già connesso; senza connessione solo /connect, /help, /exit; nessun login/link/join automatico)
 
 	/teleport X Y Z personaggio1, personaggio2, … -> FATTO (master; non è un'azione, niente limite MA, la destinazione deve essere nella mappa e senza ostacoli)
 

@@ -82,6 +82,7 @@ Il ruolo di master si prende entrando in un game con `/join <game> master`: se i
 | `/help` | Mostra l'elenco dei comandi. |
 | `/ping` | Misura la latenza con il server. |
 | `/exit` | Si disconnette ed esce. |
+| `/connect [host] [porta]` | Ritenta la connessione dopo che il server è caduto: senza parametri riusa l'ultimo server, altrimenti host e/o porta indicati. Rifiutato se sei già connesso. Non fa login, `/link` o `/join` automatici: dopo il collegamento si riparte dal login. Senza connessione sono accettati solo `/connect`, `/help` e `/exit`. |
 | `/whoami` | Mostra utente, ruolo, game, personaggio collegato (HP, posizione, MA, arma e colpi). |
 | `/list [game]` | Elenca i giocatori online, o quelli di un game. |
 | `/games` | Elenca i game attivi. |
@@ -342,6 +343,7 @@ Il danno si accumula fino a riempire le 40 caselle: a **40 danni** il personaggi
 | `/help` | tutti | elenco comandi |
 | `/ping` | tutti | latenza |
 | `/exit` | tutti | esci |
+| `/connect [host] [porta]` | tutti | riconnessione dopo una caduta |
 | `/whoami` | tutti | chi sono |
 | `/list [game]` | tutti | giocatori online |
 | `/games` | tutti | game attivi |

@@ -17,6 +17,12 @@ namespace RPG.Client
         private bool _isRunning;
         private Player? _player;
 
+        // Ultimo server usato (per /connect senza parametri) e richiesta di uscita dell'utente:
+        // la perdita della connessione non chiude più il client, che resta in attesa di /connect o /exit.
+        private string _lastHost = string.Empty;
+        private int _lastPort;
+        private bool _exitRequested;
+
         // Serializza l'accesso alla console: il listener di rete e il loop dei comandi
         // scrivono entrambi, e il prompt deve restare in fondo senza essere "seppellito"
         // dai messaggi asincroni del server.
@@ -69,6 +75,8 @@ namespace RPG.Client
         {
             try
             {
+                _lastHost = host;
+                _lastPort = port;
                 _tcpClient = new TcpClient();
                 await _tcpClient.ConnectAsync(host, port);
 
@@ -116,7 +124,7 @@ namespace RPG.Client
             if (_isRunning)
             {
                 _isRunning = false;
-                PrintServerOutput(() => AnsiConsole.MarkupLine("[bold red][[!]]: Connessione al server persa. Premi Invio per uscire.[/]"));
+                PrintServerOutput(() => AnsiConsole.MarkupLine("[bold red][[!]]: Connessione al server persa. Usa[/] [yellow]/connect [[host]] [[porta]][/] [bold red]per riconnetterti o[/] [yellow]/exit[/] [bold red]per uscire.[/]"));
             }
         }
 
@@ -986,6 +994,7 @@ namespace RPG.Client
                 table.AddRow("[bold white]/list[/]", "[grey][[game]][/]", "Elenca i giocatori online (o filtrati per stanza di gioco)");
                 table.AddRow("[bold white]/games[/]", "[grey]-[/]", "Elenca le sessioni di gioco attive");
                 table.AddRow("[bold white]/characters[/]", "[grey]-[/]", "Elenca i personaggi salvati sul server");
+                table.AddRow("[bold white]/connect[/]", "[cyan][[host]] [[porta]][/]", "Ritenta la connessione al server dopo una caduta (senza parametri usa l'ultimo server)");
                 table.AddRow("[bold white]/teleport[/]", "[cyan]<X> <Y> <Z> <pg> [[altri]][/]", "[yellow]Master:[/] sposta personaggi/NPC nel punto indicato (non è un'azione)");
                 table.AddRow("[bold white]/archetypes[/]", "[grey]-[/]", "Elenca gli archetipi disponibili per /create");
                 table.AddRow("[bold white]/join[/]", "[cyan]<game> [[master|player]][/]", "Entra in un gioco (serve un personaggio collegato) o ne crea uno (solo Master)");
@@ -1145,13 +1154,44 @@ namespace RPG.Client
         }
 
         /// <summary>
-        /// Loop principale di I/O: gestisce il login, i comandi dell'utente e l'ascolto dei messaggi del server.
+        /// /connect [host] [porta]: dopo una caduta della connessione ritenta il collegamento (senza parametri
+        /// riusa l'ultimo server). Non fa login, /link o /join automatici: sul nuovo collegamento si riparte dal
+        /// login con lo username che l'utente inserisce.
         /// </summary>
-        public async Task RunLoopAsync()
+        private async Task ReconnectAsync(string[] args)
         {
-            if (_reader == null || _writer == null) return;
+            if (_isRunning)
+            {
+                AnsiConsole.MarkupLine("[bold red][[!]]: Sei già connesso al server.[/]");
+                return;
+            }
 
+            if (!ConnectRules.TryParse(args, _lastHost, _lastPort, out string host, out int port, out string error))
+            {
+                AnsiConsole.MarkupLine($"[bold red][[!]]:[/] [white]{Markup.Escape(error)}[/]");
+                return;
+            }
+
+            try { _tcpClient?.Close(); } catch { }
+
+            AnsiConsole.MarkupLine($"[grey]Connessione a:[/] [bold green]{Markup.Escape(host)}:{port}[/]");
+            if (!await ConnectAsync(host, port)) return;
+
+            _player = null;
+            _commandLoopActive = false;   // durante il login il prompt dei comandi non va ripristinato
             _ = Task.Run(() => ListenToServerAsync());
+
+            if (!await LoginAsync()) return;
+
+            _commandLoopActive = true;
+        }
+
+        /// <summary>
+        /// Chiede lo username e attende l'esito del login. False se la connessione cade prima del completamento.
+        /// </summary>
+        private async Task<bool> LoginAsync()
+        {
+            if (_writer == null) return false;
 
             bool loggedIn = false;
 
@@ -1202,20 +1242,32 @@ namespace RPG.Client
                 loggedIn = true;
             }
 
-            if (!loggedIn) return;
+            return loggedIn;
+        }
+
+        /// <summary>
+        /// Loop principale di I/O: gestisce il login, i comandi dell'utente e l'ascolto dei messaggi del server.
+        /// </summary>
+        public async Task RunLoopAsync()
+        {
+            if (_reader == null || _writer == null) return;
+
+            _ = Task.Run(() => ListenToServerAsync());
+
+            if (!await LoginAsync()) return;
 
             PrintHelpMenu();
 
             _commandLoopActive = true;
 
-            while (_isRunning)
+            while (!_exitRequested)
             {
                 ShowPromptIfIdle();
 
                 string? input = Console.ReadLine();
                 _promptPending = false;
 
-                if (!_isRunning) break;
+                if (_exitRequested) break;
 
                 if (string.IsNullOrWhiteSpace(input))
                 {
@@ -1223,6 +1275,17 @@ namespace RPG.Client
                 }
 
                 string trimmedInput = input.Trim();
+
+                // Senza connessione non si può fare altro che /connect, /help e /exit
+                if (!_isRunning
+                    && !trimmedInput.Equals("/exit", StringComparison.OrdinalIgnoreCase)
+                    && !trimmedInput.Equals("/help", StringComparison.OrdinalIgnoreCase)
+                    && !trimmedInput.Equals("/connect", StringComparison.OrdinalIgnoreCase)
+                    && !trimmedInput.StartsWith("/connect ", StringComparison.OrdinalIgnoreCase))
+                {
+                    AnsiConsole.MarkupLine("[bold red][[!]]: Non sei connesso al server. Usa[/] [yellow]/connect [[host]] [[porta]][/] [bold red]oppure[/] [yellow]/exit[/][bold red].[/]");
+                    continue;
+                }
 
                 if (trimmedInput.Equals("/ping", StringComparison.OrdinalIgnoreCase))
                 {
@@ -1263,6 +1326,7 @@ namespace RPG.Client
 
                 if (trimmedInput.Equals("/exit", StringComparison.OrdinalIgnoreCase))
                 {
+                    _exitRequested = true;
                     _isRunning = false;
                     break;
                 }
@@ -1270,6 +1334,13 @@ namespace RPG.Client
                 if (trimmedInput.Equals("/help", StringComparison.OrdinalIgnoreCase))
                 {
                     PrintHelpMenu();
+                    continue;
+                }
+
+                if (trimmedInput.Equals("/connect", StringComparison.OrdinalIgnoreCase)
+                    || trimmedInput.StartsWith("/connect ", StringComparison.OrdinalIgnoreCase))
+                {
+                    await ReconnectAsync(trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries).Skip(1).ToArray());
                     continue;
                 }
 
