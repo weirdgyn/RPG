@@ -21,9 +21,20 @@ Comandi mancanti:
 
 
 Guarigione e impianti:
-	/heal personaggio:	se utilizzato da personaggio/npc (medtech etc) tiro su abilità -> cura, 
-						se presso centro tiri/costo ?, 
-						se master (free)
+	/heal personaggio [caselle]: FATTO -> giocatore/npc (/as npc heal): stabilizzazione con tiro (Pronto Soccorso/Tecnomedicina, TN = danno subito, max 2,5 m, azione del turno);
+								master: cura gratis completa o di N caselle (anche i morti).
+	Da fare: cura presso un centro (tiri/costo), richiede soldi e negozi (/buy)
+
+Tempo di gioco (da progettare in modo organico):
+	/day [N] (master) -> fa scorrere i giorni di gioco; guarigione nel tempo: 0.5 PF/giorno (Pronto Soccorso), 1 PF/giorno (Tecnomedicina)
+	da decidere: gestione delle frazioni (accumulo nella scheda?), chi guarisce (curante dichiarato o ritmo della propria abilità), effetto sul combattimento e sulle azioni libere
+
+Tecnico:
+	Validatore delle schede (limiti su stat, abilità, armi, armature, dadi, soldi) usato al caricamento: prerequisito di /upload
+	Test dei passaggi di turno con dadi iniettabili (stordimento, tiro contro la morte, turni saltati)
+	Un lock per game al posto di _gamesLock/_combatLock
+	Mischia come tiro contrapposto
+	Timeout di inattività dopo il login
 
 
 Addestramento:

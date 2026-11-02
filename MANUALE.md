@@ -25,6 +25,8 @@ Altre opzioni: `-i` (mostra la sequenza intro), `-f <font>` (font del banner).
 
 All'avvio il client chiede lo **username**. Se lo lasci vuoto ne viene generato uno (`Punk_xxxx`). Lo username è unico: se è già in uso sul server il login viene rifiutato e puoi riprovare.
 
+> **Connessione:** se non completi il login entro **30 secondi** dalla connessione il server la chiude; un client che per più di **10 secondi** non legge i messaggi del server viene disconnesso. Una volta fatto il login non c'è un timeout di inattività.
+
 > **Nota:** il login non richiede password e la connessione TCP non è cifrata. Usa il client solo con server di cui ti fidi e non usare nomi o dati sensibili.
 
 ### 1.3 Il percorso tipico
@@ -326,7 +328,7 @@ Il BODY non cambia le caselle: agisce sul BTM. La penalità si applica ai tiri d
 
 **Stordimento (solo in combattimento).** Dopo un colpo che infligge almeno 1 danno, il bersaglio tira un d10: se il risultato è **inferiore** a `BODY − modificatore di stato`, resiste; altrimenti è stordito. Il modificatore è 0 per le ferite Leggere, 1 per le Serie, 2 per le Critiche, 3 per Mortale 0, 4 per Mortale 1, e così via. Un personaggio stordito non può agire né muoversi; all'inizio del suo turno ritenta il tiro con la stessa soglia e, se fallisce, viene saltato. Se nessuno può agire ma c'è almeno uno stordito, il turno resta a uno di loro, che può solo passare con `/next`; se sono tutti morti, il combattimento termina.
 
-Il danno si accumula fino a riempire le 40 caselle: a **40 danni** il personaggio è all'ultima casella (**Mortale 6**, −6 ai tiri); con **41 danni o più** è **morto** e non può più agire (attacco, lancio, ricarica, movimento e prove sono tutti bloccati). Lo stato di **stordimento**, invece, è di sessione: non viene salvato nella scheda, non ha effetto fuori dal combattimento e viene azzerato all'avvio e alla fine esplicita del combattimento.
+Il danno si accumula fino a riempire le 40 caselle: a **40 danni** il personaggio è all'ultima casella (**Mortale 6**, −6 ai tiri); con **41 danni o più** è **morto** e non può più agire (attacco, lancio, ricarica, movimento e prove sono tutti bloccati). Un morto non può più essere bersaglio di attacchi né subire i danni di un'esplosione; solo il master lo riporta in vita con `/heal`. Lo stato di **stordimento**, invece, è di sessione: non viene salvato nella scheda, non ha effetto fuori dal combattimento e viene azzerato all'avvio e alla fine esplicita del combattimento.
 
 ---
 
@@ -357,7 +359,7 @@ Il danno si accumula fino a riempire le 40 caselle: a **40 danni** il personaggi
 | `/attack <bersaglio> [arma]` | giocatore | attacca |
 | `/reload [munizioni] [arma]` | giocatore | ricarica |
 | `/throw <X> <Y> [Z] [arma]` | giocatore | lancia granata |
-| `/heal <personaggio>` | giocatore/master | stabilizza (giocatore) o cura completa (master) |
+| `/heal <personaggio> [caselle]` | giocatore/master | stabilizza (giocatore); cura completa o di N caselle (master) |
 | `/next` (`/endturn`) | turno/master | termina il turno |
 | `/combat start\|end\|status` | master (status: tutti) | combattimento a turni |
 | `/check skill\|init\|status\|close\|cancel` | master | prove collettive |
@@ -383,6 +385,6 @@ Il danno si accumula fino a riempire le 40 caselle: a **40 danni** il personaggi
 
 Regole previste ma non ancora implementate:
 
-- **recupero ferite fuori dal combattimento** (0.5 caselle/giorno con Pronto Soccorso o 1/giorno con Tecnomedicina): durante il game `/heal` stabilizza soltanto;
+- **passaggio del tempo di gioco e recupero delle ferite nel tempo** (previsti 0,5 caselle/giorno con Pronto Soccorso e 1/giorno con Tecnomedicina, da progettare insieme al comando del master per far scorrere i giorni): oggi `/heal` stabilizza (giocatori e NPC) e il master cura gratuitamente, per intero o di N caselle;
 - **mischia come tiro contrapposto**;
-- timeout delle connessioni inattive.
+- timeout delle connessioni **inattive dopo il login** (il timeout di login e la disconnessione dei client che non leggono sono già attivi).
