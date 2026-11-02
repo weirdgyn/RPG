@@ -264,6 +264,10 @@ public class RpgTcpServer(string ipAddress, int port)
             case OpCode.C2S_GetGames:
                 await HandleGetGamesAsync(client);
                 break;
+            case OpCode.C2S_GetArchetypes:
+                await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_ArchetypesResponse,
+                    new ArchetypesResponsePayload { Archetypes = CharacterTemplateFactory.GetAvailableArchetypes() }));
+                break;
             default:
                 Console.WriteLine($"[SERVER] OpCode sconosciuto ricevuto: {packet.OpCode}");
                 break;

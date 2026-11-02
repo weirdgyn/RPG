@@ -5,7 +5,7 @@ Gestione inventario/oggetti:
 
 	/pick item -> prende un item dalla mappa (se possibile)
 
-	/archetypes -> produce un elenco di archetipi disponibili (archetypes.json)
+	/archetypes -> FATTO (elenca gli archetipi in Data/Archetypes)
 
 
 Comandi mancanti:

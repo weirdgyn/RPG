@@ -86,6 +86,7 @@ Il ruolo di master si prende entrando in un game con `/join <game> master`: se i
 | `/list [game]` | Elenca i giocatori online, o quelli di un game. |
 | `/games` | Elenca i game attivi. |
 | `/characters` | Elenca le schede salvate sul server con il loro stato (libera, in uso, NPC di un game). |
+| `/archetypes` | Elenca gli archetipi disponibili sul server (da usare con `/create`). |
 | `/chat "messaggio" [utente]` | Messaggio a tutti, o privato se indichi un utente. Il messaggio va tra virgolette. |
 
 ### 3.2 Personaggio
@@ -343,6 +344,7 @@ Il danno si accumula fino a riempire le 40 caselle: a **40 danni** il personaggi
 | `/list [game]` | tutti | giocatori online |
 | `/games` | tutti | game attivi |
 | `/characters` | tutti | schede sul server |
+| `/archetypes` | tutti | archetipi per `/create` |
 | `/chat "msg" [utente]` | tutti | chat pubblica o privata |
 | `/create <archetipo> <handle>` | tutti | nuovo personaggio |
 | `/link <personaggio>` | giocatore | collega la scheda |

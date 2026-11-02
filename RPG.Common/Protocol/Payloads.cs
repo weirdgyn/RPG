@@ -447,6 +447,11 @@ public class GamesResponsePayload
     public List<string> Games { get; set; } = [];
 }
 
+public class ArchetypesResponsePayload
+{
+    public List<string> Archetypes { get; set; } = [];
+}
+
 public class CharactersResponsePayload
 {
     public class CharacterNode

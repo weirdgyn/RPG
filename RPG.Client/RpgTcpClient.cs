@@ -788,6 +788,27 @@ namespace RPG.Client
                     }
                     break;
 
+                case OpCode.S2C_ArchetypesResponse:
+                    var archetypesResp = packet.DeserializePayload<ArchetypesResponsePayload>();
+                    if (archetypesResp != null)
+                    {
+                        PrintServerOutput(() =>
+                        {
+                            var table = new Table().Border(TableBorder.Rounded).BorderColor(Color.Yellow);
+                            table.AddColumn("[bold yellow]Archetipo[/]");
+                            if (archetypesResp.Archetypes.Count > 0)
+                            {
+                                foreach (var a in archetypesResp.Archetypes) table.AddRow(Markup.Escape(a));
+                            }
+                            else
+                            {
+                                table.AddRow("[grey](Nessun archetipo sul server)[/]");
+                            }
+                            AnsiConsole.Write(new Panel(table) { Header = new PanelHeader("[bold yellow] ARCHETIPI DISPONIBILI (/create <archetipo>) [/]"), BorderStyle = new Style(Color.Yellow) });
+                        });
+                    }
+                    break;
+
                 default:
                     PrintServerOutput(() => AnsiConsole.MarkupLine($"[grey][[PACKET]][/] Ricevuto OpCode: [yellow]{packet.OpCode}[/]"));
                     break;
@@ -964,6 +985,7 @@ namespace RPG.Client
                 table.AddRow("[bold white]/list[/]", "[grey][[game]][/]", "Elenca i giocatori online (o filtrati per stanza di gioco)");
                 table.AddRow("[bold white]/games[/]", "[grey]-[/]", "Elenca le sessioni di gioco attive");
                 table.AddRow("[bold white]/characters[/]", "[grey]-[/]", "Elenca i personaggi salvati sul server");
+                table.AddRow("[bold white]/archetypes[/]", "[grey]-[/]", "Elenca gli archetipi disponibili per /create");
                 table.AddRow("[bold white]/join[/]", "[cyan]<game> [[master|player]][/]", "Entra in un gioco (serve un personaggio collegato) o ne crea uno (solo Master)");
                 table.AddRow("[bold white]/leave[/]", "", "Esce dal gioco corrente");
                 table.AddRow("[bold white]/npc[/]", "[cyan]add <h> | list | remove <h> | status <h>[/]", "Master: usa una scheda esistente come NPC del game");
@@ -1316,6 +1338,12 @@ namespace RPG.Client
                 if (trimmedInput.Equals("/games", StringComparison.OrdinalIgnoreCase))
                 {
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetGames, new { })));
+                    continue;
+                }
+
+                if (trimmedInput.Equals("/archetypes", StringComparison.OrdinalIgnoreCase))
+                {
+                    await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetArchetypes, new { })));
                     continue;
                 }
 

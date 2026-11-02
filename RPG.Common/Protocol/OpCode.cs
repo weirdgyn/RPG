@@ -30,6 +30,7 @@ public enum OpCode
     C2S_GetCharacters = 99, // List characters
     C2S_Join = 100,         // Richiesta di entrare in una stanza di gioco
     C2S_Unlink = 102,       // Scollega la sessione dal personaggio corrente (solo fuori da un game)
+    C2S_GetArchetypes = 104, // Elenco degli archetipi disponibili per /create
     C2S_Heal = 103,         // Stabilizza/cura un personaggio (Pronto Soccorso/Tecnomedicina, o master free)
     // Server -> Client (S2C)
     S2C_Pong = 101,
@@ -56,5 +57,6 @@ public enum OpCode
     S2C_WhoAmIResponse = 250,
     S2C_GameStatusResponse = 251,
     S2C_UnlinkResponse = 252, // Risposta alla richiesta di scollegare il personaggio
-    S2C_HealResponse = 253    // Risposta a /heal (cura/stabilizzazione)
+    S2C_HealResponse = 253,   // Risposta a /heal (cura/stabilizzazione)
+    S2C_ArchetypesResponse = 254 // Elenco degli archetipi disponibili
 }
