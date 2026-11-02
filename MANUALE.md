@@ -80,6 +80,7 @@ Il ruolo di master si prende entrando in un game con `/join <game> master`: se i
 | Comando | Cosa fa |
 |---|---|
 | `/help` | Mostra l'elenco dei comandi. |
+| `/help [comando]` | Mostra informazioni su un comando specifico. |
 | `/ping` | Misura la latenza con il server. |
 | `/exit` | Si disconnette ed esce. |
 | `/connect [host] [porta]` | Ritenta la connessione dopo che il server è caduto: senza parametri riusa l'ultimo server, altrimenti host e/o porta indicati. Rifiutato se sei già connesso. Non fa login, `/link` o `/join` automatici: dopo il collegamento si riparte dal login. Senza connessione sono accettati solo `/connect`, `/help` e `/exit`. |
