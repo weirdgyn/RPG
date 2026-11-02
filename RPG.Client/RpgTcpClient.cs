@@ -81,7 +81,7 @@ namespace RPG.Client
         {
             lock (_consoleLock)
             {
-                Console.WriteLine(); // chiude l'eventuale riga del prompt corrente
+                Console.WriteLine();
                 render();
                 if (_commandLoopActive)
                 {
@@ -146,7 +146,6 @@ namespace RPG.Client
             }
             catch (Exception)
             {
-                // Errore di rete (connessione interrotta, socket chiuso)
             }
 
             if (_isRunning)
@@ -157,9 +156,6 @@ namespace RPG.Client
             }
         }
 
-        /// <summary>
-        /// Gestisce i pacchetti ricevuti dal server, deserializzando il payload e stampando le informazioni con Spectre.Console
-        /// </summary>
         private void HandleServerPacket(NetworkPacket packet)
         {
             switch (packet.OpCode)
@@ -198,7 +194,6 @@ namespace RPG.Client
                         {
                             var grid = new Grid();
                             grid.AddColumn();
-
                             grid.AddRow(new Markup($"[bold yellow]{Markup.Escape(attackResp.AttackerHandle)}[/] [red]attacca[/] [bold yellow]{Markup.Escape(attackResp.TargetHandle)}[/]" +
                                 (attackResp.WeaponName.Length > 0 ? $" con [cyan]{Markup.Escape(attackResp.WeaponName)}[/]" : "")));
 
@@ -247,151 +242,12 @@ namespace RPG.Client
                     }
                     break;
 
-                case OpCode.S2C_SkillCheckResult:
-                    var skillResp = packet.DeserializePayload<SkillCheckResponsePayload>();
-                    if (skillResp != null)
-                    {
-                        PrintServerOutput(() =>
-                        {
-                            string icon = skillResp.IsFumble ? "[bold red] FALLIMENTO CRITICO[/]"
-                                : skillResp.IsSuccess ? "[bold green] SUCCESSO[/]" : "[bold red] FALLIMENTO[/]";
-                            var grid = new Grid();
-                            grid.AddColumn();
-                            grid.AddRow(new Markup($"[bold cyan]{Markup.Escape(skillResp.CharacterHandle)}[/] prova [bold yellow]{Markup.Escape(skillResp.SkillName)}[/] ({skillResp.StatName})"));
-                            grid.AddRow(new Markup($"   Calcolo: [cyan]{skillResp.TotalResult}[/] [grey](Stat:{skillResp.StatValue} + Lvl:{skillResp.SkillLevel} + d10:{skillResp.DiceRoll})[/] vs [cyan]{skillResp.TargetNumber}[/]"));
-                            grid.AddRow(new Markup($"   Esito: {icon} - [white]{Markup.Escape(skillResp.Message)}[/]"));
-
-                            var panel = new Panel(grid)
-                            {
-                                Header = new PanelHeader("[bold magenta] PROVA ABILITÀ [/]"),
-                                Border = BoxBorder.Rounded,
-                                BorderStyle = new Style(skillResp.IsSuccess ? Color.Green : Color.Red)
-                            };
-
-                            AnsiConsole.Write(panel);
-                        });
-                    }
-                    break;
-
-                case OpCode.S2C_ChatMessage:
-                    var chat = packet.DeserializePayload<ChatPayload>();
-                    if (chat != null)
-                    {
-                        bool isMine = _player != null && string.Equals(_player.Username, chat.Sender, StringComparison.OrdinalIgnoreCase);
-                        bool hasRecipient = !string.IsNullOrWhiteSpace(chat.Recipient);
-
-                        PrintServerOutput(() =>
-                        {
-                            if (hasRecipient && isMine)
-                            {
-                                AnsiConsole.MarkupLine($"[italic fuchsia][[PRIVATO → {Markup.Escape(chat.Recipient!)}]][/] [white]{Markup.Escape(chat.Message)}[/]");
-                            }
-                            else if (hasRecipient)
-                            {
-                                AnsiConsole.MarkupLine($"[italic fuchsia][[PRIVATO da {Markup.Escape(chat.Sender)}]][/] [bold white]{Markup.Escape(chat.Message)}[/]");
-                            }
-                            else
-                            {
-                                AnsiConsole.MarkupLine($"[bold cyan][[{Markup.Escape(chat.Sender)}]][/] [white]{Markup.Escape(chat.Message)}[/]");
-                            }
-                        });
-                    }
-                    break;
-
-                case OpCode.S2C_SkillListResponse:
-                    var skillListResp = packet.DeserializePayload<SkillListResponsePayload>();
-                    if (skillListResp != null)
-                    {
-                        PrintServerOutput(() =>
-                        {
-                            var table = new Table().Border(TableBorder.Rounded).BorderColor(Color.Cyan1);
-                            table.AddColumns(
-                                new TableColumn("[bold yellow]Abilità[/]"),
-                                new TableColumn("[bold cyan]Livello[/]").Centered(),
-                                new TableColumn("[bold magenta]Statistica[/]").Centered(),
-                                new TableColumn("[bold green]Pool Base[/]").Centered(),
-                                new TableColumn("[bold green]Pool Effettivo[/]").Centered()
-                            );
-
-                            if (skillListResp.Skills.Count == 0)
-                            {
-                                table.AddRow("[grey](Nessuna abilità registrata)[/]", "-", "-", "-", "-");
-                            }
-
-                            foreach (var s in skillListResp.Skills)
-                            {
-                                int effectivePool = Math.Max(0, s.BasePool + skillListResp.WoundPenalty);
-                                string statDisplay = $"{s.Stat} ({s.StatValue})";
-                                string effDisplay = skillListResp.WoundPenalty < 0
-                                    ? $"[bold red]{effectivePool}[/]"
-                                    : $"[bold green]{effectivePool}[/]";
-
-                                table.AddRow(
-                                    Markup.Escape(s.Name),
-                                    s.Level.ToString(),
-                                    statDisplay,
-                                    s.BasePool.ToString(),
-                                    effDisplay
-                                );
-                            }
-
-                            string headerText = $"[bold yellow] ABILITÀ - {Markup.Escape(skillListResp.Character)} [/]";
-                            if (skillListResp.WoundPenalty < 0)
-                            {
-                                headerText += $"[bold red](Penalità Ferite: {skillListResp.WoundPenalty})[/]";
-                            }
-
-                            var panel = new Panel(table)
-                            {
-                                Header = new PanelHeader(headerText),
-                                Border = BoxBorder.Heavy,
-                                BorderStyle = new Style(Color.Yellow)
-                            };
-
-                            AnsiConsole.Write(panel);
-                        });
-                    }
-                    break;
-
-                case OpCode.S2C_PlayerMoved:
-                    var movePayload = packet.DeserializePayload<MoveResultPayload>();
-                    if (movePayload != null)
-                    {
-                        bool isSelf = _player?.Character != null
-                            && string.Equals(_player.Character.Handle, movePayload.PlayerHandle, StringComparison.OrdinalIgnoreCase);
-
-                        PrintServerOutput(() =>
-                        {
-                            if (movePayload.Result == GameMap.MovementResult.Success)
-                            {
-                                var pos = movePayload.ActualPosition;
-                                if (isSelf)
-                                {
-                                    AnsiConsole.MarkupLine($"[bold green][[MOVIMENTO]][/] [white]{Markup.Escape(movePayload.Message)}[/]");
-                                }
-                                else
-                                {
-                                    AnsiConsole.MarkupLine($"[bold blue][[MOVIMENTO]][/] [bold cyan]{Markup.Escape(movePayload.PlayerHandle)}[/] si è spostato a [green]({pos.X}, {pos.Y}, {pos.Z})[/]");
-                                }
-                            }
-                            else
-                            {
-                                AnsiConsole.MarkupLine($"[bold red][[MOVIMENTO FALLITO]][/] [white]{Markup.Escape(movePayload.Message)}[/]");
-                            }
-                        });
-                    }
-                    break;
-
                 default:
                     PrintServerOutput(() => AnsiConsole.MarkupLine($"[grey][[PACKET]][/] Ricevuto OpCode: [yellow]{packet.OpCode}[/]"));
                     break;
             }
         }
 
-        /// <summary>
-        /// Una riga del calcolo di combattimento ("Etichetta: dettaglio"): l'etichetta in evidenza, il resto
-        /// con il testo del server sempre escapato.
-        /// </summary>
         private static string FormatCombatStep(string step)
         {
             int colon = step.IndexOf(':');
@@ -399,125 +255,115 @@ namespace RPG.Client
             return $"[bold cyan]{Markup.Escape(step[..(colon + 1)])}[/]{Markup.Escape(step[(colon + 1)..])}";
         }
 
-        private static ThrowRequestPayload? BuildThrowRequest(string[] args)
+        private static string FormatWeaponAmmo(Weapon w)
         {
-            if (args.Length < 2 || !int.TryParse(args[0], out int x) || !int.TryParse(args[1], out int y)) return null;
-
-            int z = 0;
-            bool zProvided = args.Length >= 3 && int.TryParse(args[2], out z);
-            int weaponIndex = zProvided ? 3 : 2;
-
-            return new ThrowRequestPayload
+            if (w != null && w.MagazineCapacity > 0 && !string.IsNullOrEmpty(w.Caliber))
             {
-                Position = new Position3D { X = x, Y = y, Z = z },
-                ZProvided = zProvided,
-                WeaponKey = args.Length > weaponIndex ? string.Join(' ', args.Skip(weaponIndex)) : null
-            };
-        }
-
-        private static CheckRequestPayload? BuildCheckRequest(string[] parts)
-        {
-            if (parts.Length < 2) return null;
-
-            string verb = parts[1].ToLowerInvariant();
-            string[] SplitHandles(int from) => string.Join(' ', parts.Skip(from))
-                .Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-            switch (verb)
-            {
-                case "skill" when parts.Length >= 4 && int.TryParse(parts[3], out int tn):
-                    return new CheckRequestPayload { Action = "skill", SkillName = parts[2], TargetNumber = tn, Handles = [.. SplitHandles(4)] };
-
-                case "init":
-                case "initiative":
-                case "iniziativa":
-                    return new CheckRequestPayload { Action = "init", Handles = [.. SplitHandles(2)] };
-
-                case "status":
-                case "close":
-                case "cancel":
-                    return new CheckRequestPayload { Action = verb };
-
-                default:
-                    return null;
+                return $" | Caricatore: {w.CurrentAmmo}/{w.MagazineCapacity} ({w.Caliber})";
             }
+            return string.Empty;
         }
 
-        private static NetworkPacket? BuildAsPacket(string npcHandle, string verb, string[] args)
+        private static void PrintCharacterStatus(Character c)
         {
-            OpCode innerOp;
-            string innerJson;
+            var mainGrid = new Grid();
+            mainGrid.AddColumn();
 
-            switch (verb)
+            mainGrid.AddRow(new Markup($"[bold yellow]PERSONAGGIO:[/] [bold cyan]{Markup.Escape(c.Handle)}[/]  [grey]|[/]  [bold yellow]RUOLO:[/] [white]{Markup.Escape(c.Role.ToString())}[/]  [grey]|[/]  [bold yellow]POS:[/] [cyan]({c.Position.X}, {c.Position.Y}, {c.Position.Z})[/]"));
+
+            int currentHp = Math.Max(0, c.Health.CurrentHealth);
+            int maxHp = Math.Max(1, c.Health.MaxHealth);
+            double hpPercent = (double)currentHp / maxHp;
+            string hpColor = hpPercent > 0.6 ? "green" : (hpPercent > 0.25 ? "yellow" : "red");
+            int barTotal = 20;
+            int filled = Math.Clamp((int)Math.Round(hpPercent * barTotal), 0, barTotal);
+            string bar = new string('█', filled) + new string('░', barTotal - filled);
+            mainGrid.AddRow(new Markup($"[bold yellow]SALUTE:[/] [{hpColor}]{bar}[/] [{hpColor}]{currentHp}/{maxHp}[/] [grey]({Markup.Escape(c.Health.GetWoundStatusDescription())})[/]"));
+
+            var statsTable = new Table().Border(TableBorder.Rounded).BorderColor(Color.Grey);
+            statsTable.AddColumns("[yellow]INT[/]", "[yellow]REF[/]", "[yellow]TECH[/]", "[yellow]COOL[/]", "[yellow]ATTR[/]", "[yellow]MA[/]", "[yellow]BODY[/]", "[yellow]EMP[/]");
+            statsTable.AddRow(
+                c.Stats.INT.ToString(),
+                c.Stats.REF.ToString(),
+                c.Stats.TECH.ToString(),
+                c.Stats.COOL.ToString(),
+                c.Stats.ATTR.ToString(),
+                c.Stats.MA.ToString(),
+                c.Stats.BODY.ToString(),
+                c.Stats.EMP.ToString());
+            mainGrid.AddRow(statsTable);
+
+            var equipTable = new Table().Border(TableBorder.Simple).BorderColor(Color.DarkSlateGray3);
+            equipTable.AddColumns("[cyan]Locazione[/]", "[cyan]Armatura[/]", "[cyan]SP Attuale / Max[/]");
+
+            bool anyArmor = false;
+            if (c.Armor != null)
             {
-                case "attack" when args.Length >= 1:
-                    innerOp = OpCode.C2S_Attack;
-                    innerJson = JsonSerializer.Serialize(new AttackRequestPayload
+                foreach (var loc in new[] { ArmorLocation.Head, ArmorLocation.Torso, ArmorLocation.Arms, ArmorLocation.Legs })
+                {
+                    var piece = c.Armor.GetPiece(loc);
+                    if (piece != null)
                     {
-                        TargetHandle = args[0],
-                        WeaponOrSkill = args.Length >= 2 ? args[1] : null
-                    });
-                    break;
-
-                case "skill" when args.Length >= 1:
-                    innerOp = OpCode.C2S_SkillCheck;
-                    innerJson = JsonSerializer.Serialize(new SkillCheckRequestPayload
-                    {
-                        SkillName = args[0],
-                        Difficulty = args.Length >= 2 && int.TryParse(args[1], out int tn) ? tn : 15
-                    });
-                    break;
-
-                case "move" when args.Length >= 2 && int.TryParse(args[0], out int x) && int.TryParse(args[1], out int y):
-                    int z = 0;
-                    bool zProvided = args.Length >= 3;
-                    if (zProvided && !int.TryParse(args[2], out z)) return null;
-                    innerOp = OpCode.C2S_Move;
-                    innerJson = JsonSerializer.Serialize(new MoveRequestPayload
-                    {
-                        Position = new Position3D { X = x, Y = y, Z = z },
-                        ZProvided = zProvided
-                    });
-                    break;
-
-                case "reload":
-                    innerOp = OpCode.C2S_Reload;
-                    innerJson = JsonSerializer.Serialize(new ReloadRequestPayload
-                    {
-                        AmmoKey = args.Length >= 1 ? args[0] : null,
-                        WeaponKey = args.Length >= 2 ? args[1] : null
-                    });
-                    break;
-
-                case "throw":
-                    {
-                        var throwPayload = BuildThrowRequest(args);
-                        if (throwPayload == null) return null;
-                        innerOp = OpCode.C2S_Throw;
-                        innerJson = JsonSerializer.Serialize(throwPayload);
-                        break;
+                        anyArmor = true;
+                        string spColor = piece.CurrentStopPower == piece.MaxStopPower ? "green" : (piece.CurrentStopPower > 0 ? "yellow" : "red");
+                        equipTable.AddRow(loc.ToString(), Markup.Escape(piece.Name), $"[{spColor}]{piece.CurrentStopPower}/{piece.MaxStopPower}[/]");
                     }
+                }
+            }
+            if (!anyArmor)
+            {
+                equipTable.AddRow("-", "[grey]Nessuna armatura equipaggiata[/]", "-");
+            }
+            mainGrid.AddRow(equipTable);
 
-                case "init":
-                    innerOp = OpCode.C2S_Init;
-                    innerJson = JsonSerializer.Serialize(new InitRequest());
-                    break;
-
-                case "heal" when args.Length >= 1:
-                    innerOp = OpCode.C2S_Heal;
-                    innerJson = JsonSerializer.Serialize(new HealRequestPayload { TargetHandle = args[0] });
-                    break;
-
-                default:
-                    return null;
+            if (c.EquippedWeapon != null)
+            {
+                string ammoInfo = FormatWeaponAmmo(c.EquippedWeapon);
+                mainGrid.AddRow(new Markup($"[bold yellow]ARMA IN PUGNO:[/] [bold cyan]{Markup.Escape(c.EquippedWeapon.Name)}[/] [grey]({c.EquippedWeapon.Type})[/] [grey]|[/] Danno: [bold red]{c.EquippedWeapon.DamageDice}[/]{ammoInfo}"));
+            }
+            else
+            {
+                mainGrid.AddRow(new Markup("[bold yellow]ARMA IN PUGNO:[/] [grey]Nessuna[/]"));
             }
 
-            return NetworkPacket.Create(OpCode.C2S_As, new AsRequestPayload
+            if (c.Weapons != null && c.Weapons.Count > 0)
             {
-                ActorHandle = npcHandle,
-                InnerOpCode = innerOp,
-                InnerPayload = innerJson
-            });
+                var wepLines = c.Weapons.Select(w =>
+                {
+                    string equipped = (c.EquippedWeapon != null && c.EquippedWeapon.Id == w.Id) ? " [bold green](EQUIPAGGIATA)[/]" : string.Empty;
+                    return $"[white]{Markup.Escape(w.Name)}[/] [grey]({w.DamageDice})[/]{equipped}";
+                });
+                mainGrid.AddRow(new Markup("[bold yellow] ARMI:[/] " + string.Join("  ", wepLines)));
+            }
+
+            if (c.Ammos != null && c.Ammos.Count > 0)
+            {
+                var ammoLines = c.Ammos.Select(a =>
+                {
+                    string effect = a.Effect == AmmoEffect.ArmorPiercing ? " [red](AP)[/]" : (a.Effect == AmmoEffect.Expanding ? " [yellow](EX)[/]" : string.Empty);
+                    return $"[white]{Markup.Escape(a.Name)}[/]{effect}: [green]{a.Quantity}[/]";
+                });
+                mainGrid.AddRow(new Markup("[bold yellow] MUNIZIONI:[/] " + string.Join("  ", ammoLines)));
+            }
+
+            if (c.Cyberware != null && c.Cyberware.Count > 0)
+            {
+                var cwLines = c.Cyberware.Select(cw =>
+                {
+                    string bonus = cw.Bonus != null && cw.Bonus.Value != 0 ? $" [green][[{cw.Bonus.Value:+0;-0} {cw.Bonus.ApplyTo}]][/ ]" : string.Empty;
+                    return $"[cyan]{Markup.Escape(cw.ID)}[/] [grey]({cw.Type})[/]{bonus} - [grey]{Markup.Escape(cw.Description)}[/]";
+                });
+                mainGrid.AddRow(new Markup("[bold yellow] CYBERWARE:[/]\n  " + string.Join("\n  ", cwLines)));
+            }
+
+            var panel = new Panel(mainGrid)
+            {
+                Border = BoxBorder.Heavy,
+                Header = new PanelHeader($"[bold yellow] SCHEDA PERSONAGGIO - {Markup.Escape(c.Handle)} [/]"),
+                BorderStyle = new Style(Color.Yellow)
+            };
+
+            AnsiConsole.Write(panel);
         }
 
         private static void PrintHelpMenu()
@@ -645,7 +491,7 @@ namespace RPG.Client
                         continue;
                     }
 
-                    PrintServerOutput(() => AnsiConsole.MarkupLine($"[bold green]✓ Accesso autorizzato:[/] [bold cyan]{Markup.Escape(loginResp.PlayerName)}[/]\n"));
+                    PrintServerOutput(() => AnsiConsole.MarkupLine($"[bold green]��� Accesso autorizzato:[/] [bold cyan]{Markup.Escape(loginResp.PlayerName)}[/]\n"));
 
                     _player = new Player
                     {
