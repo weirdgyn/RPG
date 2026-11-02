@@ -264,6 +264,9 @@ public class RpgTcpServer(string ipAddress, int port)
             case OpCode.C2S_GetGames:
                 await HandleGetGamesAsync(client);
                 break;
+            case OpCode.C2S_Teleport:
+                await HandleTeleportAsync(client, packet);
+                break;
             case OpCode.C2S_GetArchetypes:
                 await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_ArchetypesResponse,
                     new ArchetypesResponsePayload { Archetypes = CharacterTemplateFactory.GetAvailableArchetypes() }));
@@ -2196,6 +2199,91 @@ public class RpgTcpServer(string ipAddress, int port)
         {
             // Solo gli altri partecipanti dello stesso game vedono lo spostamento
             await BroadcastToGameAsync(reporter, NetworkPacket.Create(OpCode.S2C_PlayerMoved, movePayload), includeOrigin: false);
+        }
+    }
+
+    /// <summary>
+    /// /teleport X Y Z personaggio1 personaggio2 ... (solo master): sposta personaggi e NPC del game nel punto
+    /// indicato. Non è un'azione e non è soggetto al limite di movimento; la destinazione deve però essere
+    /// dentro la mappa e libera da ostacoli. O si spostano tutti o nessuno.
+    /// </summary>
+    private async Task HandleTeleportAsync(ClientSession client, NetworkPacket packet)
+    {
+        async Task Fail(string message) =>
+            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = message }));
+
+        var req = packet.DeserializePayload<TeleportRequestPayload>();
+        if (req?.Position == null) { await Fail("Uso: /teleport <X> <Y> <Z> <personaggio> [altri personaggi]"); return; }
+
+        if (client.Player.Role != Player.RoleType.master)
+        {
+            await Fail("Solo il master può usare /teleport.");
+            return;
+        }
+
+        var handles = TeleportRules.ParseTargets(req.Targets.Select(t => InputLimits.Clean(t, InputLimits.MaxNameFieldLength)));
+        if (handles.Count == 0) { await Fail("Uso: /teleport <X> <Y> <Z> <personaggio> [altri personaggi]"); return; }
+        if (handles.Count > TeleportRules.MaxTargets) { await Fail($"Troppi personaggi: al massimo {TeleportRules.MaxTargets} per comando."); return; }
+
+        var destination = new Position3D { X = req.Position.X, Y = req.Position.Y, Z = req.Position.Z };
+        var moved = new List<Character>();
+        string? error = null;
+
+        lock (_gamesLock)
+        {
+            var game = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
+            if (game?.Map == null)
+            {
+                error = "Devi essere in un game per usare /teleport: usa /join <game>.";
+            }
+            else
+            {
+                var found = new List<Character>();
+                foreach (var handle in handles)
+                {
+                    var character = FindCombatantInGame(game, handle)?.Character;
+                    if (character == null) { error = $"Personaggio '{handle}' non trovato in questo game: nessuno spostato."; break; }
+                    found.Add(character);
+                }
+
+                if (error == null)
+                {
+                    var result = game.Map.GetMovementResult(destination);
+                    if (result != GameMap.MovementResult.Success)
+                    {
+                        error = result == GameMap.MovementResult.OutOfBounds
+                            ? $"({destination.X}, {destination.Y}, {destination.Z}) è fuori dai confini della mappa: nessuno spostato."
+                            : $"C'è un ostacolo in ({destination.X}, {destination.Y}, {destination.Z}): nessuno spostato.";
+                    }
+                }
+
+                if (error == null)
+                {
+                    foreach (var character in found)
+                    {
+                        character.Position = new Position3D { X = destination.X, Y = destination.Y, Z = destination.Z };
+                        moved.Add(character);
+                    }
+                }
+            }
+        }
+
+        if (error != null) { await Fail(error); return; }
+
+        foreach (var character in moved)
+        {
+            CharacterRepository.TrySaveCharacter(character);
+            Console.WriteLine($"[TELEPORT] {client.Player.Username} (master) sposta {character.Handle} a ({destination.X}, {destination.Y}, {destination.Z}).");
+
+            var payload = new MoveResultPayload
+            {
+                PlayerHandle = character.Handle,
+                RequestedPosition = destination,
+                ActualPosition = character.Position,
+                Result = GameMap.MovementResult.Success,
+                Message = $"Il master ti ha spostato a ({destination.X}, {destination.Y}, {destination.Z})."
+            };
+            await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_PlayerMoved, payload), includeOrigin: true);
         }
     }
 

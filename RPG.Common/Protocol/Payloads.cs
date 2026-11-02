@@ -39,6 +39,13 @@ public class MoveRequestPayload
     public bool ZProvided { get; set; }
 }
 
+public class TeleportRequestPayload
+{
+    public Position3D Position { get; set; } = new();
+    /// <summary>Handle dei personaggi (o NPC) da spostare.</summary>
+    public List<string> Targets { get; set; } = [];
+}
+
 public class MoveResultPayload
 {
     public string PlayerHandle { get; set; } = string.Empty;

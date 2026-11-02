@@ -1,3 +1,4 @@
+using RPG.Common;
 using RPG.Common.Models;
 using RPG.Common.Protocol;
 using RPG.Common.World;
@@ -985,6 +986,7 @@ namespace RPG.Client
                 table.AddRow("[bold white]/list[/]", "[grey][[game]][/]", "Elenca i giocatori online (o filtrati per stanza di gioco)");
                 table.AddRow("[bold white]/games[/]", "[grey]-[/]", "Elenca le sessioni di gioco attive");
                 table.AddRow("[bold white]/characters[/]", "[grey]-[/]", "Elenca i personaggi salvati sul server");
+                table.AddRow("[bold white]/teleport[/]", "[cyan]<X> <Y> <Z> <pg> [[altri]][/]", "[yellow]Master:[/] sposta personaggi/NPC nel punto indicato (non è un'azione)");
                 table.AddRow("[bold white]/archetypes[/]", "[grey]-[/]", "Elenca gli archetipi disponibili per /create");
                 table.AddRow("[bold white]/join[/]", "[cyan]<game> [[master|player]][/]", "Entra in un gioco (serve un personaggio collegato) o ne crea uno (solo Master)");
                 table.AddRow("[bold white]/leave[/]", "", "Esce dal gioco corrente");
@@ -1435,6 +1437,31 @@ namespace RPG.Client
                     else
                     {
                         AnsiConsole.MarkupLine("[bold red][[!]]: Sintassi non valida. Usa: /move <X> <Y> [[Z]][/]");
+                    }
+                    continue;
+                }
+
+                if (trimmedInput.Equals("/teleport", StringComparison.OrdinalIgnoreCase)
+                    || trimmedInput.StartsWith("/teleport ", StringComparison.OrdinalIgnoreCase))
+                {
+                    string[] tp = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    var targets = TeleportRules.ParseTargets(tp.Skip(4));
+
+                    if (tp.Length >= 5 &&
+                        int.TryParse(tp[1], out int tx) &&
+                        int.TryParse(tp[2], out int ty) &&
+                        int.TryParse(tp[3], out int tz) &&
+                        targets.Count > 0)
+                    {
+                        await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_Teleport, new TeleportRequestPayload
+                        {
+                            Position = new Position3D { X = tx, Y = ty, Z = tz },
+                            Targets = targets
+                        })));
+                    }
+                    else
+                    {
+                        AnsiConsole.MarkupLine("[bold red][[!]]: Uso:[/] [yellow]/teleport <X> <Y> <Z> <personaggio> [[altri personaggi]][/] (solo master)");
                     }
                     continue;
                 }

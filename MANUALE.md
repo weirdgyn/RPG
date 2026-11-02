@@ -132,6 +132,8 @@ Gli NPC compaiono nell'elenco con il loro stato qualitativo (per esempio "Seria"
 - Durante un combattimento MA è il totale del turno: più `/move` si sommano (vedi 5.1).
 - Se ometti la `Z`, l'azione resta sulla **quota corrente** del personaggio (non va a 0): da `(0,0,2)` un `/move 2 1` porta a `(2,1,2)`. Vale anche per `/throw` e per `/as <npc> move` / `/as <npc> throw` (che usano la quota corrente dell'NPC).
 
+**Master:** `/teleport <X> <Y> <Z> <personaggio> [altri personaggi]` sposta uno o più personaggi o NPC del game nel punto indicato (nomi separati da spazi o virgole, max 20). Non conta come azione, non consuma il movimento del turno e non ha il limite di MA; la destinazione deve però stare dentro la mappa e senza ostacoli. La `Z` è obbligatoria. Se un personaggio non esiste o la destinazione non è valida **non si sposta nessuno**.
+
 ### 3.6 Combattimento
 
 | Comando | Cosa fa |
@@ -358,6 +360,7 @@ Il danno si accumula fino a riempire le 40 caselle: a **40 danni** il personaggi
 | `/roll <espr> [motivo]` | tutti | tiro di dadi libero |
 | `/init` | giocatore | iniziativa (master: come `/check init`) |
 | `/move <X> <Y> [Z]` | giocatore | muoviti (max MA) |
+| `/teleport <X> <Y> <Z> <pg> [altri]` | master | sposta personaggi/NPC, senza limite di movimento |
 | `/attack <bersaglio> [arma]` | giocatore | attacca |
 | `/reload [munizioni] [arma]` | giocatore | ricarica |
 | `/throw <X> <Y> [Z] [arma]` | giocatore | lancia granata |
