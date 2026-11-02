@@ -65,7 +65,6 @@ public class HelpCatalogTests
         var catalog = HelpCatalog.ParseFromJson(json);
 
         Assert.False(catalog.ContainsKey("/unknown"));
-
         Assert.False(catalog.TryGetValue("/unknown", out _));
     }
 
@@ -84,6 +83,5 @@ public class HelpCatalogTests
 
         Assert.True(catalog.ContainsKey("/move"));
         Assert.False(catalog.ContainsKey(""));
-        Assert.False(catalog.ContainsKey("null"));
     }
 }

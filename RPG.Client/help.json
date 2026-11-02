@@ -26,12 +26,12 @@
   },
   {
     "command": "/heal",
-    "parameters": "<personaggio> [[caselle]]",
+    "parameters": "<personaggio> [caselle]",
     "description": "Master: cura completa o N caselle. Giocatore: stabilizza (Pronto Soccorso/Tecnomedicina)."
   },
   {
     "command": "/list",
-    "parameters": "[[game]]",
+    "parameters": "[game]",
     "description": "Elenca i giocatori online (oppure filtrati per stanza di gioco)."
   },
   {
@@ -46,12 +46,12 @@
   },
   {
     "command": "/connect",
-    "parameters": "[[host]] [[porta]]",
+    "parameters": "[host] [porta]",
     "description": "Ritenta la connessione al server dopo una caduta; senza parametri usa l'ultimo server."
   },
   {
     "command": "/teleport",
-    "parameters": "<X> <Y> <Z> <pg> [[altri]]",
+    "parameters": "<X> <Y> <Z> <pg> [altri]",
     "description": "Master: sposta personaggi/NPC nel punto indicato (non è un'azione)."
   },
   {
@@ -61,7 +61,7 @@
   },
   {
     "command": "/join",
-    "parameters": "<game> [[master|player]]",
+    "parameters": "<game> [master|player]",
     "description": "Entra in un gioco o ne crea uno (solo Master)."
   },
   {
@@ -81,7 +81,7 @@
   },
   {
     "command": "/attack",
-    "parameters": "<target> [[arma|skill]]",
+    "parameters": "<target> [arma|skill]",
     "description": "Attacca un bersaglio con arma in pugno o specificata."
   },
   {
@@ -106,32 +106,32 @@
   },
   {
     "command": "/throw",
-    "parameters": "<X> <Y> [[Z]] [[arma]]",
+    "parameters": "<X> <Y> [Z] [arma]",
     "description": "Lancia un'arma ad area verso un punto; se manca devia."
   },
   {
     "command": "/reload",
-    "parameters": "[[munizioni]] [[arma]]",
+    "parameters": "[munizioni] [arma]",
     "description": "Ricarica l'arma in pugno (opzionalmente con tipo di munizioni)."
   },
   {
     "command": "/skill",
-    "parameters": "<nome> [[TN]]",
+    "parameters": "<nome> [TN]",
     "description": "Effettua una prova di abilità d10 (es. /skill Pistola 15)."
   },
   {
     "command": "/roll",
-    "parameters": "<espressione> [[motivo]]",
+    "parameters": "<espressione> [motivo]",
     "description": "Tiro di dadi personalizzato (es. /roll 2d6+3 Danno)."
   },
   {
     "command": "/move",
-    "parameters": "<X> <Y> [[Z]]",
+    "parameters": "<X> <Y> [Z]",
     "description": "Muove il personaggio nello spazio 3D."
   },
   {
     "command": "/chat",
-    "parameters": "\"<messaggio>\" [[user]]",
+    "parameters": "\"<messaggio>\" [user]",
     "description": "Messaggio broadcast o privato."
   },
   {
@@ -141,7 +141,7 @@
   },
   {
     "command": "/check",
-    "parameters": "skill <abilità> <TN> [[pg]] | init [[pg]] | status | close | cancel",
+    "parameters": "skill <abilità> <TN> [pg] | init [pg] | status | close | cancel",
     "description": "Master: prova collettiva con spoglio finale (abilità o iniziativa)."
   },
   {
@@ -151,7 +151,7 @@
   },
   {
     "command": "/help",
-    "parameters": "[[comando]]",
+    "parameters": "[comando]",
     "description": "Mostra il menu dei comandi oppure la descrizione dettagliata di un comando specifico."
   },
   {
