@@ -2453,22 +2453,24 @@ public class RpgTcpServer(string ipAddress, int port)
     /// completamente e azzera morte e stordimento. La guarigione off-combat (0.5/1 casella al giorno) è fuori
     /// da questo comando.
     /// </summary>
+    private const int MaxHealAmount = 1000;
+
+    private static Task ReplyHealAsync(ClientSession reporter, bool success, string message, string target = "") =>
+        reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_HealResponse, new HealResponsePayload
+        {
+            Success = success,
+            Message = message,
+            TargetHandle = target
+        }));
+
     private async Task HandleHealAsync(ClientSession client, NetworkPacket packet)
     {
         var req = packet.DeserializePayload<HealRequestPayload>();
         string targetHandle = InputLimits.Clean(req?.TargetHandle, InputLimits.MaxNameFieldLength);
 
-        async Task Reply(bool success, string message, string target = "") =>
-            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_HealResponse, new HealResponsePayload
-            {
-                Success = success,
-                Message = message,
-                TargetHandle = target
-            }));
-
         if (targetHandle.Length == 0)
         {
-            await Reply(false, "Uso: /heal <personaggio>");
+            await ReplyHealAsync(client, false, "Uso: /heal <personaggio> [caselle]");
             return;
         }
 
@@ -2480,11 +2482,39 @@ public class RpgTcpServer(string ipAddress, int port)
 
         if (game == null)
         {
-            await Reply(false, "Devi essere in un game per curare: usa /join <game>.");
+            await ReplyHealAsync(client, false, "Devi essere in un game per curare: usa /join <game>.");
             return;
         }
 
-        bool isMaster = client.Player.Role == Player.RoleType.master;
+        if (client.Player.Role == Player.RoleType.master)
+        {
+            await MasterHealAsync(client, game, targetHandle, req?.Amount);
+            return;
+        }
+
+        if (req?.Amount != null)
+        {
+            await ReplyHealAsync(client, false, "Solo il master può indicare quante caselle restituire.");
+            return;
+        }
+
+        // Giocatore: stabilizzazione con la migliore fra Pronto Soccorso e Tecnomedicina (azione del turno).
+        if (!await EnsureCharacterLinkedAsync(client)) return;
+        Character healer = client.Player.Character!;
+        if (!await EnsureAliveAsync(client, healer)) return;
+
+        await ResolveStabilizeAsync(client, game, healer, targetHandle);
+    }
+
+    // Master: cura gratuita e senza tiro. Senza <amount> cura completamente e azzera morte, stordimento e
+    // stabilizzazione; con <amount> restituisce solo quelle caselle.
+    private async Task MasterHealAsync(ClientSession client, Game game, string targetHandle, int? amount)
+    {
+        if (amount is <= 0 or > MaxHealAmount)
+        {
+            await ReplyHealAsync(client, false, $"Le caselle da restituire devono essere tra 1 e {MaxHealAmount}.");
+            return;
+        }
 
         Character? target;
         lock (_gamesLock)
@@ -2494,30 +2524,55 @@ public class RpgTcpServer(string ipAddress, int port)
 
         if (target == null)
         {
-            await Reply(false, $"Personaggio '{targetHandle}' non trovato in questo game.");
+            await ReplyHealAsync(client, false, $"Personaggio '{targetHandle}' non trovato in questo game.");
             return;
         }
 
-        // Master: cura completa, azzera morte e stordimento.
-        if (isMaster)
+        // La salute si modifica sotto il lock del combattimento, come negli attacchi
+        string text;
+        lock (_combatLock)
         {
-            // La salute si modifica sotto il lock del combattimento, come negli attacchi
-            lock (_combatLock)
+            if (amount == null)
             {
                 target.Health.FullHeal();
+                text = $"Il master cura completamente {target.Handle}: salute {target.Health.RemainingBoxes}/{target.Health.MaxHealth}.";
             }
-            CharacterRepository.TrySaveCharacter(target);
-            string text = $"Il master cura completamente {target.Handle}: salute {target.Health.RemainingBoxes}/{target.Health.MaxHealth}.";
-            Console.WriteLine($"[HEAL] {client.Player.Username} (master) cura {target.Handle}.");
-            await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = text }), includeOrigin: false);
-            await Reply(true, text, target.Handle);
+            else
+            {
+                target.Health.Heal(amount.Value);
+                text = $"Il master restituisce {amount} caselle a {target.Handle}: salute {target.Health.RemainingBoxes}/{target.Health.MaxHealth} ({target.Health.GetWoundStatusDescription()}).";
+            }
+        }
+        CharacterRepository.TrySaveCharacter(target);
+
+        Console.WriteLine($"[HEAL] {client.Player.Username} (master) cura {target.Handle}{(amount != null ? $" di {amount}" : " completamente")}.");
+        await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = text }), includeOrigin: false);
+        await ReplyHealAsync(client, true, text, target.Handle);
+    }
+
+    /// <summary>
+    /// Stabilizzazione di <paramref name="targetHandle"/> da parte di <paramref name="healer"/> (un giocatore, o un
+    /// NPC con /as): solo se il ferito è in Mortale, entro 2,5 m, con l'azione del turno. <paramref name="reporter"/>
+    /// è la sessione che ha dato il comando e riceve la risposta.
+    /// </summary>
+    private async Task ResolveStabilizeAsync(ClientSession reporter, Game game, Character healer, string targetHandle)
+    {
+        Character? target;
+        lock (_gamesLock)
+        {
+            target = FindCombatantInGame(game, targetHandle)?.Character;
+        }
+
+        if (target == null)
+        {
+            await ReplyHealAsync(reporter, false, $"Personaggio '{targetHandle}' non trovato in questo game.");
             return;
         }
 
         var block = MedicalRules.GetStabilizeBlock(target.Health);
         if (block != MedicalRules.StabilizeBlock.None)
         {
-            await Reply(false, block switch
+            await ReplyHealAsync(reporter, false, block switch
             {
                 MedicalRules.StabilizeBlock.Dead => $"{target.Handle} è morto: solo il master può rianimarlo.",
                 MedicalRules.StabilizeBlock.NotMortal => $"{target.Handle} non è in Mortale ({target.Health.GetWoundStatusDescription()}): non c'è nulla da stabilizzare.",
@@ -2526,22 +2581,17 @@ public class RpgTcpServer(string ipAddress, int port)
             return;
         }
 
-        // Giocatore: stabilizzazione con la migliore fra Pronto Soccorso e Tecnomedicina (azione del turno).
-        if (!await EnsureCharacterLinkedAsync(client)) return;
-        Character healer = client.Player.Character!;
-        if (!await EnsureAliveAsync(client, healer)) return;
-
         double distance = CombatRules.CalculateDistance(healer.Position, target.Position);
         if (distance > MedicalRules.HealRangeMeters)
         {
-            await Reply(false, $"{target.Handle} è troppo lontano per essere curato: {distance:F1} m, serve essere a {MedicalRules.HealRangeMeters} m o meno.");
+            await ReplyHealAsync(reporter, false, $"{target.Handle} è troppo lontano per essere curato da {healer.Handle}: {distance:F1} m, serve essere a {MedicalRules.HealRangeMeters} m o meno.");
             return;
         }
 
         var lease = BeginAction(game, healer, needsAction: true);
         if (lease.Error != null)
         {
-            await Reply(false, lease.Error);
+            await ReplyHealAsync(reporter, false, lease.Error);
             return;
         }
 
@@ -2562,8 +2612,8 @@ public class RpgTcpServer(string ipAddress, int port)
         if (!success)
         {
             string failMessage = $"{healer.Handle} tenta di stabilizzare {target.Handle} ma fallisce: {total} contro TN {tn}{(stab.IsFumble ? " (fallimento critico)" : "")}.";
-            await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = failMessage }), includeOrigin: false);
-            await Reply(false, failMessage, target.Handle);
+            await BroadcastToGameAsync(reporter, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = failMessage }), includeOrigin: false);
+            await ReplyHealAsync(reporter, false, failMessage, target.Handle);
             return;
         }
 
@@ -2572,8 +2622,8 @@ public class RpgTcpServer(string ipAddress, int port)
             target.Health.IsStabilized = true;
         }
         string message = $"{healer.Handle} stabilizza {target.Handle}: {total} contro TN {tn}. Non tira più il salvezza contro la morte.";
-        await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = message }), includeOrigin: false);
-        await Reply(true, message, target.Handle);
+        await BroadcastToGameAsync(reporter, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = message }), includeOrigin: false);
+        await ReplyHealAsync(reporter, true, message, target.Handle);
     }
 
     private async Task HandleCreateCharacterAsync(ClientSession client, NetworkPacket packet)
@@ -2705,7 +2755,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
     // Comandi che il master può dare a un NPC con /as (gli stessi dei giocatori, con l'NPC come attore)
     private static readonly HashSet<OpCode> NpcAllowedCommands =
-        [OpCode.C2S_Attack, OpCode.C2S_SkillCheck, OpCode.C2S_Move, OpCode.C2S_Init, OpCode.C2S_Reload, OpCode.C2S_Throw];
+        [OpCode.C2S_Attack, OpCode.C2S_SkillCheck, OpCode.C2S_Move, OpCode.C2S_Init, OpCode.C2S_Reload, OpCode.C2S_Throw, OpCode.C2S_Heal];
 
     private static Task SendNpcResponseAsync(ClientSession client, NpcResponsePayload payload)
         => client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_NpcResponse, payload));
@@ -2981,7 +3031,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
         if (!NpcAllowedCommands.Contains(req.InnerOpCode))
         {
-            await Fail("Con /as si possono usare solo: attack, skill, move, init, reload, throw.");
+            await Fail("Con /as si possono usare solo: attack, skill, move, init, reload, throw, heal.");
             return;
         }
 
@@ -3038,6 +3088,16 @@ public class RpgTcpServer(string ipAddress, int port)
 
                         throwReq.WeaponKey = InputLimits.Clean(throwReq.WeaponKey, InputLimits.MaxNameFieldLength);
                         await ResolveThrowAsync(client, npc, throwReq);
+                        break;
+                    }
+
+                case OpCode.C2S_Heal:
+                    {
+                        var healReq = JsonSerializer.Deserialize<HealRequestPayload>(req.InnerPayload);
+                        string healTarget = InputLimits.Clean(healReq?.TargetHandle, InputLimits.MaxNameFieldLength);
+                        if (healTarget.Length == 0) { await Fail("Uso: /as <npc> heal <personaggio>"); return; }
+
+                        await ResolveStabilizeAsync(client, game, npc, healTarget);
                         break;
                     }
             }

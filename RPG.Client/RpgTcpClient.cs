@@ -924,6 +924,11 @@ namespace RPG.Client
                     innerJson = JsonSerializer.Serialize(new InitRequest());
                     break;
 
+                case "heal" when args.Length >= 1:
+                    innerOp = OpCode.C2S_Heal;
+                    innerJson = JsonSerializer.Serialize(new HealRequestPayload { TargetHandle = args[0] });
+                    break;
+
                 default:
                     return null;
             }
@@ -955,7 +960,7 @@ namespace RPG.Client
                 table.AddRow("[bold white]/create[/]", "[cyan]<archetipo> <handle>[/]", "Crea un nuovo personaggio da un archetipo (con stat casuali)");
                 table.AddRow("[bold white]/link[/]", "[cyan]<character>[/]", "Collega la sessione ad un personaggio esistente");
                 table.AddRow("[bold white]/unlink[/]", "[grey]-[/]", "Scollega il personaggio corrente (solo fuori da un game)");
-                table.AddRow("[bold white]/heal[/]", "[cyan]<personaggio>[/]", "Master: cura completa. Giocatore: stabilizza (Pronto Soccorso/Tecnomedicina)");
+                table.AddRow("[bold white]/heal[/]", "[cyan]<personaggio> [[caselle]][/]", "Master: cura completa, o <caselle> se indicate. Giocatore: stabilizza (Pronto Soccorso/Tecnomedicina)");
                 table.AddRow("[bold white]/list[/]", "[grey][[game]][/]", "Elenca i giocatori online (o filtrati per stanza di gioco)");
                 table.AddRow("[bold white]/games[/]", "[grey]-[/]", "Elenca le sessioni di gioco attive");
                 table.AddRow("[bold white]/characters[/]", "[grey]-[/]", "Elenca i personaggi salvati sul server");
@@ -1282,7 +1287,7 @@ namespace RPG.Client
 
                     if (asPacket == null)
                     {
-                        AnsiConsole.MarkupLine("[bold red][[!]]: Uso:[/] [yellow]/as <npc> attack <bersaglio> [[arma|skill]][/] | [yellow]/as <npc> skill <abilità> [[TN]][/] | [yellow]/as <npc> move <X> <Y> [[Z]][/] | [yellow]/as <npc> init[/] | [yellow]/as <npc> reload [[munizioni]] [[arma]][/] | [yellow]/as <npc> throw <X> <Y> [[Z]] [[arma]][/]");
+                        AnsiConsole.MarkupLine("[bold red][[!]]: Uso:[/] [yellow]/as <npc> attack <bersaglio> [[arma|skill]][/] | [yellow]/as <npc> skill <abilità> [[TN]][/] | [yellow]/as <npc> move <X> <Y> [[Z]][/] | [yellow]/as <npc> init[/] | [yellow]/as <npc> reload [[munizioni]] [[arma]][/] | [yellow]/as <npc> throw <X> <Y> [[Z]] [[arma]][/] | [yellow]/as <npc> heal <personaggio>[/]");
                         continue;
                     }
 
@@ -1624,12 +1629,23 @@ namespace RPG.Client
                     string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                     if (parts.Length < 2)
                     {
-                        AnsiConsole.MarkupLine("[bold red][[!]]: Uso:[/] [yellow]/heal <personaggio>[/]");
+                        AnsiConsole.MarkupLine("[bold red][[!]]: Uso:[/] [yellow]/heal <personaggio>[/] (master: [yellow]/heal <personaggio> [[caselle]][/])");
                         continue;
                     }
 
+                    int? healAmount = null;
+                    if (parts.Length >= 3)
+                    {
+                        if (!int.TryParse(parts[2], out int amountValue) || amountValue <= 0)
+                        {
+                            AnsiConsole.MarkupLine("[bold red][[!]]: Le caselle devono essere un numero intero positivo.[/]");
+                            continue;
+                        }
+                        healAmount = amountValue;
+                    }
+
                     await _writer.WriteLineAsync(JsonSerializer.Serialize(
-                        NetworkPacket.Create(OpCode.C2S_Heal, new HealRequestPayload { TargetHandle = parts[1] })));
+                        NetworkPacket.Create(OpCode.C2S_Heal, new HealRequestPayload { TargetHandle = parts[1], Amount = healAmount })));
                     continue;
                 }
 

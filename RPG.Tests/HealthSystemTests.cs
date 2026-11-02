@@ -124,6 +124,60 @@ public class HealthSystemTests
     }
 
     [Fact]
+    public void Heal_RestoresBoxes_UpToMax()
+    {
+        var h = WithDamage(20);
+
+        h.Heal(5);
+        Assert.Equal(25, h.CurrentHealth);
+
+        h.Heal(500);
+        Assert.Equal(40, h.CurrentHealth);
+    }
+
+    [Fact]
+    public void Heal_ZeroOrNegative_DoesNothing()
+    {
+        var h = WithDamage(20);
+
+        h.Heal(0);
+        h.Heal(-3);
+
+        Assert.Equal(20, h.CurrentHealth);
+    }
+
+    [Theory]
+    [InlineData(-1)]    // 41 danni
+    [InlineData(-68)]   // danno registrato molto oltre la pista
+    public void Heal_OnDead_RestartsFromTheEdgeOfTheTrack(int currentHealth)
+    {
+        var h = new HealthSystem { CurrentHealth = currentHealth };
+        Assert.True(h.IsDead);
+
+        h.Heal(1);
+
+        Assert.Equal(0, h.CurrentHealth);
+        Assert.False(h.IsDead);
+        Assert.Equal(6, h.MortalLevel);
+    }
+
+    [Fact]
+    public void Heal_KeepsStunAndStabilization_FullHealClearsThem()
+    {
+        var h = WithDamage(20);
+        h.IsStabilized = true;
+        h.IsStunned = true;
+
+        h.Heal(2);
+        Assert.True(h.IsStabilized);
+        Assert.True(h.IsStunned);
+
+        h.FullHeal();
+        Assert.False(h.IsStabilized);
+        Assert.False(h.IsStunned);
+    }
+
+    [Fact]
     public void Kill_MakesDead_AndFullHealRevives()
     {
         var h = WithDamage(20);

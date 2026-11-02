@@ -375,6 +375,8 @@ public class UnlinkResponsePayload
 public class HealRequestPayload
 {
     public string TargetHandle { get; set; } = string.Empty;
+    /// <summary>Solo master: caselle da restituire. Null = cura completa.</summary>
+    public int? Amount { get; set; }
 }
 
 public class HealResponsePayload

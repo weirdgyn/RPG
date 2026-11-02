@@ -69,6 +69,18 @@ public class HealthSystem
         IsStunned = false;
     }
 
+    /// <summary>
+    /// Cura parziale (uso del master): restituisce <paramref name="amount"/> caselle, fino al massimo. Un morto
+    /// riparte dal primo danno oltre la pista (41 danni = -1), anche se il danno registrato era molto più alto.
+    /// Non tocca stordimento e stabilizzazione.
+    /// </summary>
+    public void Heal(int amount)
+    {
+        if (amount <= 0) return;
+        int start = Math.Max(CurrentHealth, -1);
+        CurrentHealth = (int)Math.Min((long)MaxHealth, (long)start + amount);
+    }
+
     // In Cyberpunk le ferite applicano penalità ai tiri di dado (qui piatte su tutte le azioni)
     public int GetWoundPenalty()
     {

@@ -151,7 +151,7 @@ Le regole del combattimento sono nella sezione 5.
 1. `/join <game> master` crea il game (o ne prende la guida se è libero).
 2. I giocatori entrano con `/join <game>`.
 3. Con `/game` vedi in qualsiasi momento tutti i partecipanti, gli NPC (con i punti ferita numerici), il combattimento e i check aperti.
-4. Con `/heal <personaggio>` (giocatori o NPC) curi **completamente** il bersaglio e ne azzera morte e stordimento.
+4. Con `/heal <personaggio>` (giocatori o NPC) curi **completamente** il bersaglio e ne azzeri morte, stordimento e stabilizzazione. Con `/heal <personaggio> <caselle>` restituisci solo quel numero di caselle (da 1 a 1000): un morto riparte dal limite della pista (0 caselle, Mortale 6), e stordimento e stabilizzazione restano come sono. È gratuito, senza tiro e non conta come azione. Per far curare un NPC in gioco usa `/as <npc> heal <personaggio>` (stesse regole dei giocatori: tiro, 2,5 m, azione del turno).
 
 Se il master esce o si disconnette, il ruolo torna libero e i giocatori vengono avvisati. Un game senza partecipanti viene chiuso.
 
@@ -176,6 +176,7 @@ Comandi consentiti con `/as`:
 /as <npc> init
 /as <npc> reload [munizioni] [arma]
 /as <npc> throw <X> <Y> [Z] [arma]
+/as <npc> heal <personaggio>
 ```
 
 > Per `/as move` e `/as throw` la `Z` è la **quota corrente dell'NPC** se la ometti: indicala solo quando vuoi cambiare piano.
