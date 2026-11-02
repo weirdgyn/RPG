@@ -1,0 +1,162 @@
+[
+  {
+    "command": "/status",
+    "parameters": "[character]",
+    "description": "Visualizza la scheda del personaggio collegato (o specifico se Master)."
+  },
+  {
+    "command": "/skills",
+    "parameters": "-",
+    "description": "Elenco abilità, statistiche associate e pool di tiro."
+  },
+  {
+    "command": "/create",
+    "parameters": "<archetipo> <handle>",
+    "description": "Crea un nuovo personaggio da un archetipo (con stat casuali)."
+  },
+  {
+    "command": "/link",
+    "parameters": "<character>",
+    "description": "Collega la sessione a un personaggio esistente."
+  },
+  {
+    "command": "/unlink",
+    "parameters": "-",
+    "description": "Scollega il personaggio corrente (solo fuori da un game)."
+  },
+  {
+    "command": "/heal",
+    "parameters": "<personaggio> [[caselle]]",
+    "description": "Master: cura completa o N caselle. Giocatore: stabilizza (Pronto Soccorso/Tecnomedicina)."
+  },
+  {
+    "command": "/list",
+    "parameters": "[[game]]",
+    "description": "Elenca i giocatori online (oppure filtrati per stanza di gioco)."
+  },
+  {
+    "command": "/games",
+    "parameters": "-",
+    "description": "Elenca le sessioni di gioco attive."
+  },
+  {
+    "command": "/characters",
+    "parameters": "-",
+    "description": "Elenca i personaggi salvati sul server."
+  },
+  {
+    "command": "/connect",
+    "parameters": "[[host]] [[porta]]",
+    "description": "Ritenta la connessione al server dopo una caduta; senza parametri usa l'ultimo server."
+  },
+  {
+    "command": "/teleport",
+    "parameters": "<X> <Y> <Z> <pg> [[altri]]",
+    "description": "Master: sposta personaggi/NPC nel punto indicato (non è un'azione)."
+  },
+  {
+    "command": "/archetypes",
+    "parameters": "-",
+    "description": "Elenca gli archetipi disponibili per /create."
+  },
+  {
+    "command": "/join",
+    "parameters": "<game> [[master|player]]",
+    "description": "Entra in un gioco o ne crea uno (solo Master)."
+  },
+  {
+    "command": "/leave",
+    "parameters": "-",
+    "description": "Esce dal gioco corrente."
+  },
+  {
+    "command": "/npc",
+    "parameters": "add <h> | list | remove <h> | status <h>",
+    "description": "Master: usa una scheda esistente come NPC del game."
+  },
+  {
+    "command": "/as",
+    "parameters": "<npc> attack|skill|move|init|reload|throw ...",
+    "description": "Master: esegue il comando per conto di un NPC."
+  },
+  {
+    "command": "/attack",
+    "parameters": "<target> [[arma|skill]]",
+    "description": "Attacca un bersaglio con arma in pugno o specificata."
+  },
+  {
+    "command": "/whoami",
+    "parameters": "-",
+    "description": "Mostra chi sei: utente, ruolo, game e personaggio collegato."
+  },
+  {
+    "command": "/game",
+    "parameters": "-",
+    "description": "Stato del game: partecipanti, NPC, combattimento e check (alias /gamestatus)."
+  },
+  {
+    "command": "/combat",
+    "parameters": "start | end | status",
+    "description": "Master: avvia/termina il combattimento a turni; status per tutti."
+  },
+  {
+    "command": "/next",
+    "parameters": "-",
+    "description": "Termina il tuo turno (il master può sempre farlo)."
+  },
+  {
+    "command": "/throw",
+    "parameters": "<X> <Y> [[Z]] [[arma]]",
+    "description": "Lancia un'arma ad area verso un punto; se manca devia."
+  },
+  {
+    "command": "/reload",
+    "parameters": "[[munizioni]] [[arma]]",
+    "description": "Ricarica l'arma in pugno (opzionalmente con tipo di munizioni)."
+  },
+  {
+    "command": "/skill",
+    "parameters": "<nome> [[TN]]",
+    "description": "Effettua una prova di abilità d10 (es. /skill Pistola 15)."
+  },
+  {
+    "command": "/roll",
+    "parameters": "<espressione> [[motivo]]",
+    "description": "Tiro di dadi personalizzato (es. /roll 2d6+3 Danno)."
+  },
+  {
+    "command": "/move",
+    "parameters": "<X> <Y> [[Z]]",
+    "description": "Muove il personaggio nello spazio 3D."
+  },
+  {
+    "command": "/chat",
+    "parameters": "\"<messaggio>\" [[user]]",
+    "description": "Messaggio broadcast o privato."
+  },
+  {
+    "command": "/init",
+    "parameters": "-",
+    "description": "Tiro di iniziativa (il master può avviare il tiro per tutti)."
+  },
+  {
+    "command": "/check",
+    "parameters": "skill <abilità> <TN> [[pg]] | init [[pg]] | status | close | cancel",
+    "description": "Master: prova collettiva con spoglio finale (abilità o iniziativa)."
+  },
+  {
+    "command": "/ping",
+    "parameters": "-",
+    "description": "Verifica la latenza di rete con il server (RTT)."
+  },
+  {
+    "command": "/help",
+    "parameters": "[[comando]]",
+    "description": "Mostra il menu dei comandi oppure la descrizione dettagliata di un comando specifico."
+  },
+  {
+    "command": "/exit",
+    "parameters": "-",
+    "description": "Disconnettiti ed esci da Night City."
+  }
+]

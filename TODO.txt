@@ -11,18 +11,12 @@ Gestione inventario/oggetti:
 Comandi mancanti:
 	/help [comando] -> produce un elenco dei comandi disponibili o una spiegazione del comando richiesto (help.json?)
 
-	/connect [host] [porta] -> FATTO (rifiutato se già connesso; senza connessione solo /connect, /help, /exit; nessun login/link/join automatico)
-
-	/teleport X Y Z personaggio1, personaggio2, … -> FATTO (master; non è un'azione, niente limite MA, la destinazione deve essere nella mappa e senza ostacoli)
-
 	/upload personaggio -> lounge/triage (la scheda di un personaggio può essere uploadata dal client -> server ma non è immediatamente giocabile finisce nella zona triage per ispezione (valutazione parzialmente automatica, somma stats, somma skills + skillpoints, somma valori inventario, money).
 
 	/eval personaggio/npc -> produce un riassunto del livello personaggio effettuando somme dei valori di stats, skills + skillpoints, valori di inventario, money)
 
 
 Guarigione e impianti:
-	/heal personaggio [caselle]: FATTO -> giocatore/npc (/as npc heal): stabilizzazione con tiro (Pronto Soccorso/Tecnomedicina, TN = danno subito, max 2,5 m, azione del turno);
-								master: cura gratis completa o di N caselle (anche i morti).
 	Da fare: cura presso un centro (tiri/costo), richiede soldi e negozi (/buy)
 
 Tempo di gioco (da progettare in modo organico):

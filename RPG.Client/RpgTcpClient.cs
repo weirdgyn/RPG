@@ -36,8 +36,59 @@ namespace RPG.Client
         // Timestamp dell'ultimo /ping inviato (per calcolare il RTT del Pong)
         private DateTime _lastPingSentUtc;
 
+        private sealed class HelpEntry
+        {
+            public string Command { get; set; } = string.Empty;
+            public string Parameters { get; set; } = "-";
+            public string Description { get; set; } = string.Empty;
+        }
+
+        private static readonly Dictionary<string, HelpEntry> HelpCatalog = LoadHelpCatalog();
+
         // Completato dal listener di rete quando arriva la risposta al login
         private TaskCompletionSource<LoginResponsePayload> _loginTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        private static Dictionary<string, HelpEntry> LoadHelpCatalog()
+        {
+            var result = new Dictionary<string, HelpEntry>(StringComparer.OrdinalIgnoreCase);
+
+            string path = Path.Combine(AppContext.BaseDirectory, "help.json");
+            if (!File.Exists(path))
+            {
+                return result;
+            }
+
+            try
+            {
+                var options = new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                };
+                string json = File.ReadAllText(path);
+                var entries = JsonSerializer.Deserialize<List<HelpEntry>>(json, options);
+                if (entries == null)
+                {
+                    return result;
+                }
+
+                foreach (var entry in entries)
+                {
+                    if (string.IsNullOrWhiteSpace(entry.Command))
+                    {
+                        continue;
+                    }
+
+                    result[entry.Command.Trim()] = entry;
+                }
+            }
+            catch
+            {
+                // Se il file è assente o corrotto, il catalogo resta vuoto.
+                // /help fallirà in modo elegante ma non rompe il client.
+            }
+
+            return result;
+        }
 
         /// <summary>
         /// Mostra il prompt solo se non è già visibile (evita prompt duplicati
@@ -981,42 +1032,19 @@ namespace RPG.Client
                 var table = new Table().Border(TableBorder.Rounded).BorderColor(Color.Yellow);
                 table.AddColumns(
                     new TableColumn("[bold yellow]Comando[/]"),
-                    new TableColumn("[bold cyan]Argomenti[/]"),
+                    new TableColumn("[bold cyan]Parametri[/]"),
                     new TableColumn("[bold green]Descrizione[/]")
                 );
 
-                table.AddRow("[bold white]/status[/]", "[grey][[character>]][/]", "Visualizza la scheda del personaggio collegato (o specifico se Master)");
-                table.AddRow("[bold white]/skills[/]", "[grey]-[/]", "Elenco abilità, statistiche associate e pool di tiro");
-                table.AddRow("[bold white]/create[/]", "[cyan]<archetipo> <handle>[/]", "Crea un nuovo personaggio da un archetipo (con stat casuali)");
-                table.AddRow("[bold white]/link[/]", "[cyan]<character>[/]", "Collega la sessione ad un personaggio esistente");
-                table.AddRow("[bold white]/unlink[/]", "[grey]-[/]", "Scollega il personaggio corrente (solo fuori da un game)");
-                table.AddRow("[bold white]/heal[/]", "[cyan]<personaggio> [[caselle]][/]", "Master: cura completa, o <caselle> se indicate. Giocatore: stabilizza (Pronto Soccorso/Tecnomedicina)");
-                table.AddRow("[bold white]/list[/]", "[grey][[game]][/]", "Elenca i giocatori online (o filtrati per stanza di gioco)");
-                table.AddRow("[bold white]/games[/]", "[grey]-[/]", "Elenca le sessioni di gioco attive");
-                table.AddRow("[bold white]/characters[/]", "[grey]-[/]", "Elenca i personaggi salvati sul server");
-                table.AddRow("[bold white]/connect[/]", "[cyan][[host]] [[porta]][/]", "Ritenta la connessione al server dopo una caduta (senza parametri usa l'ultimo server)");
-                table.AddRow("[bold white]/teleport[/]", "[cyan]<X> <Y> <Z> <pg> [[altri]][/]", "[yellow]Master:[/] sposta personaggi/NPC nel punto indicato (non è un'azione)");
-                table.AddRow("[bold white]/archetypes[/]", "[grey]-[/]", "Elenca gli archetipi disponibili per /create");
-                table.AddRow("[bold white]/join[/]", "[cyan]<game> [[master|player]][/]", "Entra in un gioco (serve un personaggio collegato) o ne crea uno (solo Master)");
-                table.AddRow("[bold white]/leave[/]", "", "Esce dal gioco corrente");
-                table.AddRow("[bold white]/npc[/]", "[cyan]add <h> | list | remove <h> | status <h>[/]", "Master: usa una scheda esistente come NPC del game");
-                table.AddRow("[bold white]/as[/]", "[cyan]<npc> attack|skill|move|init|reload|throw ...[/]", "Master: esegue il comando per conto di un NPC");
-                table.AddRow("[bold white]/attack[/]", "[cyan]<target> [[arma|skill]][/]", "Attacca un bersaglio con arma in pugno o specificata");
-                table.AddRow("[bold white]/whoami[/]", "[grey]-[/]", "Chi sei: utente, ruolo, game e personaggio collegato");
-                table.AddRow("[bold white]/game[/]", "[grey]-[/]", "Stato del game: partecipanti, NPC, combattimento e check (alias /gamestatus)");
-                table.AddRow("[bold white]/combat[/]", "[cyan]start | end | status[/]", "Master: avvia/termina il combattimento a turni (dopo /check init); status per tutti");
-                table.AddRow("[bold white]/next[/]", "[grey]-[/]", "Termina il tuo turno (il master può sempre farlo)");
-                table.AddRow("[bold white]/throw[/]", "[cyan]<X> <Y> [[Z]] [[arma]][/]", "Lancia un'arma ad area (granata) verso un punto: se manca devia");
-                table.AddRow("[bold white]/reload[/]", "[cyan][[munizioni]] [[arma]][/]", "Ricarica l'arma in pugno (opz. tipo di munizioni, es. /reload ap)");
-                table.AddRow("[bold white]/skill[/]", "[cyan]<nome> [[TN]][/]", "Effettua una prova di abilità d10 (es. /skill Pistola 15)");
-                table.AddRow("[bold white]/roll[/]", "[cyan]<espressione> [[motivo]][/]", "Tiro di dadi personalizzato (es. /roll 2d6+3 Danno)");
-                table.AddRow("[bold white]/move[/]", "[cyan]<X> <Y> [[Z]][/]", "Muove il personaggio nello spazio 3D");
-                table.AddRow("[bold white]/chat[/]", "[cyan]\"msg\" [[user]][/]", "Messaggio broadcast o privato");
-                table.AddRow("[bold white]/init[/]", "[grey]-[/]", "Tiro di iniziativa (il master: avvia il tiro per tutti, come /check init)");
-                table.AddRow("[bold white]/check[/]", "[cyan]skill <abilità> <TN> [[pg]] | init [[pg]] | status | close | cancel[/]", "Master: prova collettiva con spoglio finale (abilità o iniziativa)");
-                table.AddRow("[bold white]/ping[/]", "[grey]-[/]", "Verifica latenza di rete con il server (RTT)");
-                table.AddRow("[bold white]/help[/]", "[grey]-[/]", "Mostra questo menu dei comandi");
-                table.AddRow("[bold white]/exit[/]", "[grey]-[/]", "Disconnettiti ed esci da Night City");
+                foreach (var entry in HelpCatalog.Values
+                             .OrderBy(x => x.Command, StringComparer.OrdinalIgnoreCase))
+                {
+                    table.AddRow(
+                        $"[bold white]{Markup.Escape(entry.Command)}[/]",
+                        $"[grey]{Markup.Escape(entry.Parameters)}[/]",
+                        Markup.Escape(entry.Description)
+                    );
+                }
 
                 var panel = new Panel(table)
                 {
@@ -1028,7 +1056,22 @@ namespace RPG.Client
                 AnsiConsole.Write(panel);
             }
         }
+        
+        private static void PrintHelpEntry(HelpEntry entry)
+        {
+            var panel = new Panel(
+                new Rows(
+                    new Markup($"[bold yellow]Comando:[/] [cyan]{Markup.Escape(entry.Command)}[/]"),
+                    new Markup($"[bold yellow]Parametri:[/] [green]{Markup.Escape(entry.Parameters)}[/]"),
+                    new Markup($"[bold yellow]Descrizione:[/] [white]{Markup.Escape(entry.Description)}[/]")
+                ))
+            {
+                Header = new PanelHeader("[bold cyan] HELP [/]")
+            };
 
+            AnsiConsole.Write(panel);
+        }
+        
         private static string FormatWeaponAmmo(Weapon w)
         {
             if (w != null && w.MagazineCapacity > 0 && !string.IsNullOrEmpty(w.Caliber))
@@ -1334,6 +1377,27 @@ namespace RPG.Client
                 if (trimmedInput.Equals("/help", StringComparison.OrdinalIgnoreCase))
                 {
                     PrintHelpMenu();
+                    continue;
+                }
+
+                if (trimmedInput.StartsWith("/help ", StringComparison.OrdinalIgnoreCase))
+                {
+                    string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length < 2)
+                    {
+                        PrintHelpMenu();
+                        continue;
+                    }
+
+                    string command = parts[1].Trim();
+
+                    if (!HelpCatalog.TryGetValue(command, out var entry))
+                    {
+                        AnsiConsole.MarkupLine($"[bold red][[!]]: Comando non trovato:[/] [yellow]{Markup.Escape(command)}[/]. Digita [cyan]/help[/] per la lista.");
+                        continue;
+                    }
+
+                    PrintHelpEntry(entry);
                     continue;
                 }
 
