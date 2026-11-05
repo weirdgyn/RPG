@@ -22,11 +22,10 @@ public static class CharacterTemplateFactory
         string absoluteDir = DataPaths.Resolve(folder);
         if (!Directory.Exists(absoluteDir)) return [];
 
-        return Directory.EnumerateFiles(absoluteDir, "*.json")
+        return [.. Directory.EnumerateFiles(absoluteDir, "*.json")
             .Select(f => Path.GetFileNameWithoutExtension(f))
             .Where(name => !name.Equals("DefaultCharacter", StringComparison.OrdinalIgnoreCase))
-            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)];
     }
 
     /// <summary>
@@ -39,27 +38,16 @@ public static class CharacterTemplateFactory
         // coincide (senza distinguere maiuscole/minuscole) con un archetipo realmente presente, e il
         // file si ricava dall'elenco della cartella, non dal testo ricevuto.
         string absoluteDir = DataPaths.Resolve(folder);
-        string? targetFile = Directory.Exists(absoluteDir)
+        string? targetFile = (Directory.Exists(absoluteDir)
             ? Directory.EnumerateFiles(absoluteDir, "*.json").FirstOrDefault(f =>
                 {
                     string name = Path.GetFileNameWithoutExtension(f);
                     return !name.Equals("DefaultCharacter", StringComparison.OrdinalIgnoreCase)
                         && name.Equals(archetypeName, StringComparison.OrdinalIgnoreCase);
                 })
-            : null;
-
-        if (targetFile == null)
-        {
-            throw new FileNotFoundException($"Archetipo '{archetypeName}' non trovato.");
-        }
-
+            : null) ?? throw new FileNotFoundException($"Archetipo '{archetypeName}' non trovato.");
         string templateJson = File.ReadAllText(targetFile);
-        var character = JsonSerializer.Deserialize<Character>(templateJson);
-        if (character == null)
-        {
-            throw new InvalidOperationException($"L'archetipo in '{targetFile}' è vuoto o non valido.");
-        }
-
+        var character = JsonSerializer.Deserialize<Character>(templateJson) ?? throw new InvalidOperationException($"L'archetipo in '{targetFile}' è vuoto o non valido.");
         return character;
     }
 

@@ -552,7 +552,7 @@ public class RpgTcpServer(string ipAddress, int port)
             string? denial = CheckActorLocked(game, attacker);
             if (denial == null && !IsInGameLocked(game, target.Character)) denial = $"{target.Character.Handle} non è più in questo game.";
             if (denial == null && target.Character.Health.IsDead) denial = $"{target.Character.Handle} è già morto.";
-            if (denial == null) denial = CheckTurnLocked(game, attacker, needsAction: true);
+            denial ??= CheckTurnLocked(game, attacker, needsAction: true);
 
             if (denial != null)
             {
@@ -2726,7 +2726,7 @@ public class RpgTcpServer(string ipAddress, int port)
                 }
             }
 
-            if (error == null) error = CheckTurnLocked(game, healer, needsAction: true);
+            error ??= CheckTurnLocked(game, healer, needsAction: true);
 
             if (error == null)
             {

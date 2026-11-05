@@ -30,7 +30,7 @@ internal static class InputLimits
     {
         if (string.IsNullOrEmpty(s)) return string.Empty;
 
-        string cleaned = HasControlChars(s) ? new string(s.Where(c => !char.IsControl(c)).ToArray()) : s;
+        string cleaned = HasControlChars(s) ? new string([.. s.Where(c => !char.IsControl(c))]) : s;
         cleaned = cleaned.Trim();
         return cleaned.Length > max ? cleaned[..max] : cleaned;
     }

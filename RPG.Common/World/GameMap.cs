@@ -8,7 +8,7 @@ public class GameMap
     private readonly int _maxY = 100;
     private readonly int _minZ = -2; // Es. sotterranei
     private readonly int _maxZ = 5;  // Es. grattacieli
-    private readonly HashSet<Position3D> _obstacles = new();
+    private readonly HashSet<Position3D> _obstacles = [];
     public GameMap()
     {
         // Esempio: possiamo piazzare qualche ostacolo di prova al piano 0
