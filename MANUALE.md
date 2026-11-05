@@ -134,7 +134,6 @@ Gli NPC compaiono nell'elenco con il loro stato qualitativo (per esempio "Seria"
 - Durante un combattimento MA è il totale del turno: più `/move` si sommano (vedi 5.1).
 - Se ometti la `Z`, l'azione resta sulla **quota corrente** del personaggio (non va a 0): da `(0,0,2)` un `/move 2 1` porta a `(2,1,2)`. Vale anche per `/throw` e per `/as <npc> move` / `/as <npc> throw` (che usano la quota corrente dell'NPC).
 
-**Master:** `/teleport <X> <Y> <Z> <personaggio> [altri personaggi]` sposta uno o più personaggi o NPC del game nel punto indicato (nomi separati da spazi o virgole, max 20). Non conta come azione, non consuma il movimento del turno e non ha il limite di MA; la destinazione deve però stare dentro la mappa e senza ostacoli. La `Z` è obbligatoria. Se un personaggio non esiste o la destinazione non è valida **non si sposta nessuno**.
 
 ### 3.6 Combattimento
 
@@ -397,3 +396,6 @@ Regole previste ma non ancora implementate:
 - **passaggio del tempo di gioco e recupero delle ferite nel tempo** (previsti 0,5 caselle/giorno con Pronto Soccorso e 1/giorno con Tecnomedicina, da progettare insieme al comando del master per far scorrere i giorni): oggi `/heal` stabilizza (giocatori e NPC) e il master cura gratuitamente, per intero o di N caselle;
 - **mischia come tiro contrapposto**;
 - timeout delle connessioni **inattive dopo il login** (il timeout di login e la disconnessione dei client che non leggono sono già attivi).
+- **inventario, negozi e oggetti** (`/inventory`, `/buy`, `/pick`);
+- **caricamento e valutazione di schede esterne** (`/upload`, `/eval`), con un validatore delle schede;
+- **addestramento e ricompense** (`/train`, `/reward`), **bonus** di circostanza e ad attivazione (`/bonus`, `/activate`), **veicoli** (`/drive`) e cyberpsicosi.
