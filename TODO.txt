@@ -9,7 +9,7 @@ Gestione inventario/oggetti:
 
 
 Comandi mancanti:
-	/help [comando] -> produce un elenco dei comandi disponibili o una spiegazione del comando richiesto (help.json?)
+	/help [comando] -> FATTO (menu completo o help singolo comando con help.json)
 
 	/upload personaggio -> lounge/triage (la scheda di un personaggio può essere uploadata dal client -> server ma non è immediatamente giocabile finisce nella zona triage per ispezione (valutazione parzialmente automatica, somma stats, somma skills + skillpoints, somma valori inventario, money).
 

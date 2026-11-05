@@ -6,7 +6,7 @@ namespace RPG.Common;
 public static class JoinRules
 {
     /// <summary>
-    /// Il master non interpreta personaggi (con una scheda collegata deve riconnettersi); un giocatore deve
+    /// Il master non interpreta personaggi (con una scheda collegata deve usare /unlink); un giocatore deve
     /// avere un personaggio collegato prima di entrare. Restituisce il motivo del rifiuto, o null se può entrare.
     /// </summary>
     public static string? GetRoleDenial(Player.RoleType role, bool hasLinkedCharacter)
@@ -14,7 +14,7 @@ public static class JoinRules
         if (role == Player.RoleType.master)
         {
             return hasLinkedCharacter
-                ? "Un master non può avere un personaggio collegato: riconnettiti senza scegliere una scheda per fare il master."
+                ? "Un master non può avere un personaggio collegato: usa /unlink per scollegarlo prima di fare il master."
                 : null;
         }
 

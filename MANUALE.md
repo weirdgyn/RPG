@@ -32,7 +32,7 @@ All'avvio il client chiede lo **username**. Se lo lasci vuoto ne viene generato 
 ### 1.3 Il percorso tipico
 
 ```
-/login  →  /create (oppure /link)  →  /join  →  gioca
+login all'avvio  →  /create (oppure /link)  →  /join  →  gioca
 ```
 
 1. **Crea** un personaggio da un archetipo: `/create Solo Razor`.
@@ -159,6 +159,7 @@ Le regole del combattimento sono nella sezione 5.
 2. I giocatori entrano con `/join <game>`, dopo aver collegato il loro personaggio (senza personaggio il `/join` viene rifiutato; il master non ne ha uno).
 3. Con `/game` vedi in qualsiasi momento tutti i partecipanti, gli NPC (con i punti ferita numerici), il combattimento e i check aperti.
 4. Con `/heal <personaggio>` (giocatori o NPC) curi **completamente** il bersaglio e ne azzeri morte, stordimento e stabilizzazione. Con `/heal <personaggio> <caselle>` restituisci solo quel numero di caselle (da 1 a 1000): un morto riparte dal limite della pista (0 caselle, Mortale 6), e stordimento e stabilizzazione restano come sono. È gratuito, senza tiro e non conta come azione. Per far curare un NPC in gioco usa `/as <npc> heal <personaggio>` (stesse regole dei giocatori: tiro, 2,5 m, azione del turno).
+5. Con `/teleport <X> <Y> <Z> <personaggio> [altri...]` sposti istantaneamente personaggi o NPC del game nel punto indicato della mappa (destinazione valida e priva di ostacoli). Non conta come azione e non consuma movimento del turno.
 
 Se il master esce o si disconnette, il ruolo torna libero e i giocatori vengono avvisati. Un game senza partecipanti viene chiuso.
 
@@ -341,7 +342,7 @@ Il danno si accumula fino a riempire le 40 caselle: a **40 danni** il personaggi
 
 | Comando | Chi | Sintesi |
 |---|---|---|
-| `/help` | tutti | elenco comandi |
+| `/help [comando]` | tutti | elenco comandi o guida del singolo comando |
 | `/ping` | tutti | latenza |
 | `/exit` | tutti | esci |
 | `/connect [host] [porta]` | tutti | riconnessione dopo una caduta |

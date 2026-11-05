@@ -19,6 +19,7 @@ public class JoinRulesTests
 
         Assert.NotNull(denial);
         Assert.Contains("master", denial, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("/unlink", denial);
     }
 
     [Fact]
