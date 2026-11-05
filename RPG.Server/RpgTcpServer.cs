@@ -544,28 +544,33 @@ public class RpgTcpServer(string ipAddress, int port)
             return;
         }
 
-        if (target.Character.Health.IsDead)
+        // Validazione, consumo dell'azione e risoluzione nella stessa sezione critica: tra un controllo e
+        // l'altro non possono infilarsi /next, l'uscita del bersaglio o la sua morte.
+        AttackOutcome outcome;
+        lock (game.SyncRoot)
         {
-            await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"{target.Character.Handle} è già morto." }));
-            return;
+            string? denial = CheckActorLocked(game, attacker);
+            if (denial == null && !IsInGameLocked(game, target.Character)) denial = $"{target.Character.Handle} non è più in questo game.";
+            if (denial == null && target.Character.Health.IsDead) denial = $"{target.Character.Handle} è già morto.";
+            if (denial == null) denial = CheckTurnLocked(game, attacker, needsAction: true);
+
+            if (denial != null)
+            {
+                outcome = new AttackOutcome(denial, null, null);
+            }
+            else
+            {
+                outcome = ResolveAttackRules(game, attacker, target.Character, attackReq.WeaponOrSkill, game.CombatActive);
+                if (outcome.Error != null) RefundActionLocked(game);
+                else if (!game.CombatActive) game.FreeActionsCounter++;
+            }
         }
 
-        var lease = BeginAction(game, attacker, needsAction: true);
-        if (lease.Error != null)
-        {
-            await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = lease.Error }));
-            return;
-        }
-
-        var outcome = ResolveAttackRules(game, attacker, target.Character, attackReq.WeaponOrSkill, game.CombatActive);
         if (outcome.Error != null)
         {
-            RefundAction(game, attacker, lease.TurnStamp);
             await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = outcome.Error }));
             return;
         }
-
-        CountFreeAction(game);
 
         // Il colpo sparato consuma munizioni: la scheda dell'attaccante va salvata anche se ha mancato
         if (outcome.AttackerChanged)
@@ -593,11 +598,42 @@ public class RpgTcpServer(string ipAddress, int port)
     // Combattimento a turni
     // ---------------------------------------------------------------------------------------------
 
-    // Diritto d'azione concesso a un attore: se Error è null l'azione è autorizzata e, in combattimento,
-    // consumata subito. TurnStamp serve a un eventuale rimborso (vedi RefundAction).
-    private readonly record struct ActionLease(string? Error, int TurnStamp);
+    // Da chiamare sotto Game.SyncRoot. La composizione del game (Players, NPCs) cambia solo con entrambi i lock
+    // (_gamesLock e SyncRoot), quindi chi tiene il SyncRoot la vede stabile.
+    private static bool IsInGameLocked(Game game, Character character) =>
+        game.NPCs.Any(n => ReferenceEquals(n, character)) || game.Players.Any(p => ReferenceEquals(p.Character, character));
 
-    // Da chiamare sotto _gamesLock. Verifica che l'attore possa agire adesso e, se needsAction e siamo in
+    // Da chiamare sotto Game.SyncRoot: tutti i personaggi del game (giocatori e NPC), senza doppioni.
+    private static List<Character> ParticipantsLocked(Game game)
+    {
+        var all = new List<Character>();
+        foreach (var p in game.Players)
+        {
+            if (p.Character != null && !all.Contains(p.Character)) all.Add(p.Character);
+        }
+        foreach (var npc in game.NPCs)
+        {
+            if (!all.Contains(npc)) all.Add(npc);
+        }
+        return all;
+    }
+
+    // Da chiamare sotto Game.SyncRoot, nella stessa sezione critica di un CheckTurnLocked(needsAction: true) andato
+    // a buon fine, se la risoluzione fallisce: restituisce l'azione (il turno non può essere cambiato nel frattempo).
+    private static void RefundActionLocked(Game game)
+    {
+        if (game.CombatActive) game.TurnActionUsed = false;
+    }
+
+    // Controlli comuni a chi agisce (attacco, lancio, ricarica, cura): in partita e vivo. Sotto SyncRoot.
+    private static string? CheckActorLocked(Game game, Character actor)
+    {
+        if (!IsInGameLocked(game, actor)) return $"{actor.Handle} non è più in questo game.";
+        if (actor.Health.IsDead) return $"{actor.Handle} è morto e non può agire.";
+        return null;
+    }
+
+    // Da chiamare sotto Game.SyncRoot. Verifica che l'attore possa agire adesso e, se needsAction e siamo in
     // combattimento, consuma l'azione nella stessa sezione critica: tra il controllo e il consumo non può
     // infilarsi un /next. Restituisce null se l'azione è consentita.
     private static string? CheckTurnLocked(Game game, Character actor, bool needsAction)
@@ -622,29 +658,6 @@ public class RpgTcpServer(string ipAddress, int port)
 
         if (needsAction) game.TurnActionUsed = true;
         return null;
-    }
-
-    // Valida e (in combattimento) consuma l'azione in modo atomico. Da usare prima di risolvere attacco,
-    // lancio o ricarica. Fuori dal combattimento non consuma nulla e non c'è limite di turno.
-    private ActionLease BeginAction(Game game, Character actor, bool needsAction)
-    {
-        lock (game.SyncRoot)
-        {
-            return new ActionLease(CheckTurnLocked(game, actor, needsAction), game.TurnStamp);
-        }
-    }
-
-    // Restituisce l'azione consumata se la risoluzione è fallita. Non fa nulla se il turno è cambiato nel
-    // frattempo: in quel caso l'azione apparteneva a un turno ormai passato.
-    private void RefundAction(Game game, Character actor, int turnStamp)
-    {
-        lock (game.SyncRoot)
-        {
-            if (game.TurnStamp != turnStamp || !game.CombatActive) return;
-            string? current = game.CurrentTurnHandle;
-            if (current == null || !current.Equals(actor.Handle, StringComparison.OrdinalIgnoreCase)) return;
-            game.TurnActionUsed = false;
-        }
     }
 
     // Esito di un movimento atomico: se Error è null, Result è la posizione raggiunta (o il motivo del
@@ -1169,7 +1182,6 @@ public class RpgTcpServer(string ipAddress, int port)
     {
         Game? game;
         GameMap? map = null;
-        List<Character> everyone = [];
         List<ClientSession> audience = [];
 
         lock (_gamesLock)
@@ -1179,14 +1191,6 @@ public class RpgTcpServer(string ipAddress, int port)
             {
                 map = game.Map;
                 audience = GetGameSessions(game);
-                foreach (var p in game.Players)
-                {
-                    if (p.Character != null && !everyone.Contains(p.Character)) everyone.Add(p.Character);
-                }
-                foreach (var npc in game.NPCs)
-                {
-                    if (!everyone.Contains(npc)) everyone.Add(npc);
-                }
             }
         }
 
@@ -1204,17 +1208,25 @@ public class RpgTcpServer(string ipAddress, int port)
             return;
         }
 
-        var lease = BeginAction(game, thrower, needsAction: true);
-        if (lease.Error != null)
+        // Validazione, consumo dell'azione e risoluzione nella stessa sezione critica; i bersagli dell'area
+        // sono i partecipanti di quel momento, non una copia presa prima.
+        ThrowOutcome outcome;
+        lock (game.SyncRoot)
         {
-            await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = lease.Error }));
-            return;
+            string? denial = CheckActorLocked(game, thrower) ?? CheckTurnLocked(game, thrower, needsAction: true);
+            if (denial != null)
+            {
+                outcome = new ThrowOutcome(denial, null, null, []);
+            }
+            else
+            {
+                outcome = ResolveThrowRules(game, thrower, target, throwReq.WeaponKey, ParticipantsLocked(game), game.CombatActive);
+                if (outcome.Error != null) RefundActionLocked(game);
+            }
         }
 
-        var outcome = ResolveThrowRules(game, thrower, target, throwReq.WeaponKey, everyone, game.CombatActive);
         if (outcome.Error != null)
         {
-            RefundAction(game, thrower, lease.TurnStamp);
             await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = outcome.Error }));
             return;
         }
@@ -1459,27 +1471,24 @@ public class RpgTcpServer(string ipAddress, int port)
             game = _games.FirstOrDefault(g => g.Players.Contains(reporter.Player));
         }
 
-        ActionLease lease = default;
-        if (game != null)
-        {
-            lease = BeginAction(game, actor, needsAction: true);
-            if (lease.Error != null)
-            {
-                await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = lease.Error }));
-                return;
-            }
-        }
-
         string? error;
         string? message;
         lock (game?.SyncRoot ?? _noGameSync)
         {
-            (error, message) = ReloadRules(actor, ammoKey, weaponKey);
+            string? denial = game != null ? CheckActorLocked(game, actor) ?? CheckTurnLocked(game, actor, needsAction: true) : null;
+            if (denial != null)
+            {
+                (error, message) = (denial, null);
+            }
+            else
+            {
+                (error, message) = ReloadRules(actor, ammoKey, weaponKey);
+                if (error != null && game != null) RefundActionLocked(game);
+            }
         }
 
         if (error != null)
         {
-            if (game != null) RefundAction(game, actor, lease.TurnStamp);
             await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = error }));
             return;
         }
@@ -2630,11 +2639,15 @@ public class RpgTcpServer(string ipAddress, int port)
             return;
         }
 
-        // La salute si modifica sotto il lock del combattimento, come negli attacchi
+        // La salute si modifica sotto il lock del game, come negli attacchi
         string text;
         lock (game.SyncRoot)
         {
-            if (amount == null)
+            if (!IsInGameLocked(game, target))
+            {
+                text = string.Empty;
+            }
+            else if (amount == null)
             {
                 target.Health.FullHeal();
                 text = $"Il master cura completamente {target.Handle}: salute {target.Health.RemainingBoxes}/{target.Health.MaxHealth}.";
@@ -2645,6 +2658,13 @@ public class RpgTcpServer(string ipAddress, int port)
                 text = $"Il master restituisce {amount} caselle a {target.Handle}: salute {target.Health.RemainingBoxes}/{target.Health.MaxHealth} ({target.Health.GetWoundStatusDescription()}).";
             }
         }
+
+        if (text.Length == 0)
+        {
+            await ReplyHealAsync(client, false, $"{target.Handle} non è più in questo game.");
+            return;
+        }
+
         CharacterRepository.TrySaveCharacter(target);
 
         Console.WriteLine($"[HEAL] {client.Player.Username} (master) cura {target.Handle}{(amount != null ? $" di {amount}" : " completamente")}.");
@@ -2671,58 +2691,78 @@ public class RpgTcpServer(string ipAddress, int port)
             return;
         }
 
-        var block = MedicalRules.GetStabilizeBlock(target.Health);
-        if (block != MedicalRules.StabilizeBlock.None)
+        // Controlli, consumo dell'azione, tiro ed effetto nella stessa sezione critica: il ferito non può morire,
+        // allontanarsi o essere stabilizzato da altri tra il controllo e l'esito.
+        string? error = null;
+        bool success = false;
+        int total = 0, tn = 0;
+        bool fumble = false;
+
+        lock (game.SyncRoot)
         {
-            await ReplyHealAsync(reporter, false, block switch
+            error = CheckActorLocked(game, healer);
+            if (error == null && !IsInGameLocked(game, target)) error = $"{target.Handle} non è più in questo game.";
+
+            if (error == null)
             {
-                MedicalRules.StabilizeBlock.Dead => $"{target.Handle} è morto: solo il master può rianimarlo.",
-                MedicalRules.StabilizeBlock.NotMortal => $"{target.Handle} non è in Mortale ({target.Health.GetWoundStatusDescription()}): non c'è nulla da stabilizzare.",
-                _ => $"{target.Handle} è già stabilizzato."
-            });
-            return;
+                var block = MedicalRules.GetStabilizeBlock(target.Health);
+                if (block != MedicalRules.StabilizeBlock.None)
+                {
+                    error = block switch
+                    {
+                        MedicalRules.StabilizeBlock.Dead => $"{target.Handle} è morto: solo il master può rianimarlo.",
+                        MedicalRules.StabilizeBlock.NotMortal => $"{target.Handle} non è in Mortale ({target.Health.GetWoundStatusDescription()}): non c'è nulla da stabilizzare.",
+                        _ => $"{target.Handle} è già stabilizzato."
+                    };
+                }
+            }
+
+            if (error == null)
+            {
+                double distance = CombatRules.CalculateDistance(healer.Position, target.Position);
+                if (distance > MedicalRules.HealRangeMeters)
+                {
+                    error = $"{target.Handle} è troppo lontano per essere curato da {healer.Handle}: {distance:F1} m, serve essere a {MedicalRules.HealRangeMeters} m o meno.";
+                }
+            }
+
+            if (error == null) error = CheckTurnLocked(game, healer, needsAction: true);
+
+            if (error == null)
+            {
+                if (!game.CombatActive) game.FreeActionsCounter++;
+
+                int skillLvl = HealSkillLevel(healer);
+                int tech = healer.Stats.GetStatValue("TECH");
+                int penalty = healer.Health.GetWoundPenalty();
+                var roll = GameDice.RollExplodingD10Detailed();
+                var stab = MedicalRules.ResolveStabilization(roll, tech, skillLvl, penalty, target.Health.DamageTaken);
+                total = stab.Total;
+                tn = stab.TargetNumber;
+                success = stab.Success;
+                fumble = stab.IsFumble;
+
+                Console.WriteLine($"[HEAL] {healer.Handle} tenta di stabilizzare {target.Handle}: d10 {roll.Total}{(roll.Exploded ? " (esploso)" : "")} + TECH {tech} + cura {skillLvl} - ferite {Math.Abs(penalty)} = {total} vs TN {tn} -> {(success ? "OK" : "FALLITO")}");
+
+                if (success) target.Health.IsStabilized = true;
+            }
         }
 
-        double distance = CombatRules.CalculateDistance(healer.Position, target.Position);
-        if (distance > MedicalRules.HealRangeMeters)
+        if (error != null)
         {
-            await ReplyHealAsync(reporter, false, $"{target.Handle} è troppo lontano per essere curato da {healer.Handle}: {distance:F1} m, serve essere a {MedicalRules.HealRangeMeters} m o meno.");
+            await ReplyHealAsync(reporter, false, error);
             return;
         }
-
-        var lease = BeginAction(game, healer, needsAction: true);
-        if (lease.Error != null)
-        {
-            await ReplyHealAsync(reporter, false, lease.Error);
-            return;
-        }
-
-        CountFreeAction(game);
-
-        int skillLvl = HealSkillLevel(healer);
-        int tech = healer.Stats.GetStatValue("TECH");
-        int penalty = healer.Health.GetWoundPenalty();
-        var roll = GameDice.RollExplodingD10Detailed();
-        var stab = MedicalRules.ResolveStabilization(roll, tech, skillLvl, penalty, target.Health.DamageTaken);
-        int total = stab.Total;
-        int tn = stab.TargetNumber;
-        bool success = stab.Success;
-
-        Console.WriteLine($"[HEAL] {healer.Handle} tenta di stabilizzare {target.Handle}: d10 {roll.Total}{(roll.Exploded ? " (esploso)" : "")} + TECH {tech} + cura {skillLvl} - ferite {Math.Abs(penalty)} = {total} vs TN {tn} -> {(success ? "OK" : "FALLITO")}");
 
         // Un tentativo fallito costa comunque l'azione del turno: niente rimborso (il rimborso è solo per errori).
         if (!success)
         {
-            string failMessage = $"{healer.Handle} tenta di stabilizzare {target.Handle} ma fallisce: {total} contro TN {tn}{(stab.IsFumble ? " (fallimento critico)" : "")}.";
+            string failMessage = $"{healer.Handle} tenta di stabilizzare {target.Handle} ma fallisce: {total} contro TN {tn}{(fumble ? " (fallimento critico)" : "")}.";
             await BroadcastToGameAsync(reporter, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = failMessage }), includeOrigin: false);
             await ReplyHealAsync(reporter, false, failMessage, target.Handle);
             return;
         }
 
-        lock (game.SyncRoot)
-        {
-            target.Health.IsStabilized = true;
-        }
         string message = $"{healer.Handle} stabilizza {target.Handle}: {total} contro TN {tn}. Non tira più il salvezza contro la morte.";
         await BroadcastToGameAsync(reporter, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = message }), includeOrigin: false);
         await ReplyHealAsync(reporter, true, message, target.Handle);
@@ -3075,7 +3115,10 @@ public class RpgTcpServer(string ipAddress, int port)
                 }
                 else
                 {
-                    game.NPCs.Add(npc);
+                    lock (game.SyncRoot)
+                    {
+                        game.NPCs.Add(npc);
+                    }
                 }
             }
         }
@@ -3430,7 +3473,11 @@ public class RpgTcpServer(string ipAddress, int port)
             if (success && game != null)
             {
                 // Difesa in profondità: una sessione non deve comparire due volte nello stesso game.
-                if (!game.Players.Contains(client.Player)) game.Players.Add(client.Player);
+                // La composizione del game cambia sotto entrambi i lock (vedi IsInGameLocked)
+                lock (game.SyncRoot)
+                {
+                    if (!game.Players.Contains(client.Player)) game.Players.Add(client.Player);
+                }
                 client.Player.Role = joinReq.Role;
             }
         }
