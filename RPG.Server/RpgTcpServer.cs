@@ -24,6 +24,8 @@ public class RpgTcpServer(string ipAddress, int port)
     // Game.SyncRoot protegge lo stato di gioco di UN game: turni, movimento, azioni, salute, munizioni e
     // posizione dei suoi personaggi. Chi tiene un Game.SyncRoot non deve prendere _gamesLock né il SyncRoot
     // di un altro game.
+    // Salvataggio schede: SaveCharacter() prende CharacterRepository._saveLock e poi il SyncRoot del game del
+    // personaggio per serializzare la scheda; va chiamato senza tenere alcun lock di gioco.
     private readonly object _gamesLock = new();
     // Serializza le operazioni di login per rendere atomico il controllo sull'unicità dell'handle
     private readonly object _loginLock = new();
@@ -145,7 +147,7 @@ public class RpgTcpServer(string ipAddress, int port)
             var masterNotices = RemovePlayerFromGames(client.Player, out var completedChecks, out var turnNotices, out var deadCharacters);
 
             // Il salvezza morte può essere scattato al passaggio di turno: le schede dei morti vanno salvate.
-            foreach (var dead in deadCharacters) CharacterRepository.TrySaveCharacter(dead);
+            foreach (var dead in deadCharacters) SaveCharacter(dead);
 
             string userName = !string.IsNullOrEmpty(client.Player.Username) ? client.Player.Username : client.IdShort;
             Console.WriteLine($"[SERVER] Client disconnesso: {userName}");
@@ -376,6 +378,35 @@ public class RpgTcpServer(string ipAddress, int port)
     // può toccare quella scheda, ma il lock evita comunque di avere un ramo senza protezione.
     private readonly object _noGameSync = new();
 
+    // Il game che contiene il personaggio (come giocatore o NPC), o null se è fuori da ogni game.
+    // Prende _gamesLock e lo rilascia prima di restituire: non va chiamato da chi tiene un Game.SyncRoot.
+    private Game? FindGameOf(Character character)
+    {
+        lock (_gamesLock)
+        {
+            return _games.FirstOrDefault(g =>
+                g.NPCs.Any(n => ReferenceEquals(n, character)) || g.Players.Any(p => ReferenceEquals(p.Character, character)));
+        }
+    }
+
+    // Lock che protegge lo stato del personaggio: il SyncRoot del suo game, oppure uno condiviso se è fuori partita.
+    private object SyncFor(Character character) => FindGameOf(character)?.SyncRoot ?? _noGameSync;
+
+    // Salva la scheda serializzandola sotto il lock del suo game: il file è sempre uno stato coerente.
+    // Da chiamare SENZA tenere _gamesLock né alcun Game.SyncRoot (vedi la gerarchia dei lock).
+    private void SaveCharacter(Character character)
+        => CharacterRepository.TrySaveCharacter(character, CharacterRepository.CharactersFolder, SyncFor(character));
+
+    // Pacchetto con una scheda (o un payload che la contiene): la serializzazione avviene sotto il lock del
+    // game del personaggio, così il client riceve uno stato coerente. Anche questo SENZA lock già in mano.
+    private NetworkPacket CreateCharacterPacket<T>(OpCode opCode, T payload, Character character)
+    {
+        lock (SyncFor(character))
+        {
+            return NetworkPacket.Create(opCode, payload);
+        }
+    }
+
     /// <summary>Un partecipante al combattimento: il personaggio e la sua sessione (se è un giocatore).</summary>
     private sealed record Combatant(Character Character, ClientSession? Session);
 
@@ -575,14 +606,14 @@ public class RpgTcpServer(string ipAddress, int port)
         // Il colpo sparato consuma munizioni: la scheda dell'attaccante va salvata anche se ha mancato
         if (outcome.AttackerChanged)
         {
-            CharacterRepository.TrySaveCharacter(attacker);
+            SaveCharacter(attacker);
         }
 
         Console.WriteLine(outcome.LogLine);
 
         if (outcome.Result!.IsHit)
         {
-            CharacterRepository.TrySaveCharacter(target.Character);
+            SaveCharacter(target.Character);
         }
 
         // Il risultato va a tutto il game (attaccante e bersaglio compresi), non agli altri game
@@ -919,7 +950,7 @@ public class RpgTcpServer(string ipAddress, int port)
                         }
                     }
 
-                    foreach (var dead in newlyDead) CharacterRepository.TrySaveCharacter(dead);
+                    foreach (var dead in newlyDead) SaveCharacter(dead);
 
                     if (error != null) await Reply(error);
                     else
@@ -1148,7 +1179,7 @@ public class RpgTcpServer(string ipAddress, int port)
             }
         }
 
-        foreach (var dead in newlyDead) CharacterRepository.TrySaveCharacter(dead);
+        foreach (var dead in newlyDead) SaveCharacter(dead);
 
         if (error != null)
         {
@@ -1235,7 +1266,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
         foreach (var changed in outcome.Changed)
         {
-            CharacterRepository.TrySaveCharacter(changed);
+            SaveCharacter(changed);
         }
 
         var packet = NetworkPacket.Create(OpCode.S2C_AreaResult, outcome.Result);
@@ -1493,7 +1524,7 @@ public class RpgTcpServer(string ipAddress, int port)
             return;
         }
 
-        CharacterRepository.TrySaveCharacter(actor);
+        SaveCharacter(actor);
         Console.WriteLine($"[COMBAT] {message}");
         await BroadcastToGameAsync(reporter, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = message }));
     }
@@ -1935,7 +1966,7 @@ public class RpgTcpServer(string ipAddress, int port)
         Console.WriteLine($"[CHAT] {client.Player.Username} -> {target.Player.Username} (privato): {message}");
     }
 
-    private static async Task HandleGetSkillsAsync(ClientSession client)
+    private async Task HandleGetSkillsAsync(ClientSession client)
     {
         if (client.Player.Character != null)
         {
@@ -1951,38 +1982,42 @@ public class RpgTcpServer(string ipAddress, int port)
     }
 
     // Elenco abilità di <paramref name="character"/> inviato a <paramref name="reporter"/>.
-    private static async Task SendSkillsAsync(ClientSession reporter, Character character)
+    private async Task SendSkillsAsync(ClientSession reporter, Character character)
     {
-        int penalty = character.Health.GetWoundPenalty();
-
-        var skillInfos = character.Skills
-            .OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
-            .Select(kv =>
-            {
-                string statName = Skills.GetStatForSkill(kv.Key);
-                int statVal = character.Stats.GetStatValue(statName);
-                return new SkillInfoPayload
-                {
-                    Name = kv.Key,
-                    Level = kv.Value,
-                    Stat = statName,
-                    StatValue = statVal,
-                    BasePool = statVal + kv.Value
-                };
-            })
-            .ToList();
-
-        var skillListPayload = new SkillListResponsePayload
+        SkillListResponsePayload skillListPayload;
+        lock (SyncFor(character))
         {
-            Character = character.Handle,
-            WoundPenalty = penalty,
-            Skills = skillInfos
-        };
+            int penalty = character.Health.GetWoundPenalty();
+
+            var skillInfos = character.Skills
+                .OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(kv =>
+                {
+                    string statName = Skills.GetStatForSkill(kv.Key);
+                    int statVal = character.Stats.GetStatValue(statName);
+                    return new SkillInfoPayload
+                    {
+                        Name = kv.Key,
+                        Level = kv.Value,
+                        Stat = statName,
+                        StatValue = statVal,
+                        BasePool = statVal + kv.Value
+                    };
+                })
+                .ToList();
+
+            skillListPayload = new SkillListResponsePayload
+            {
+                Character = character.Handle,
+                WoundPenalty = penalty,
+                Skills = skillInfos
+            };
+        }
 
         await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_SkillListResponse, skillListPayload));
     }
 
-    private static async Task HandleGetStatusAsync(ClientSession client)
+    private async Task HandleGetStatusAsync(ClientSession client)
     {
         if (client.Player.Character != null)
         {
@@ -1991,12 +2026,12 @@ public class RpgTcpServer(string ipAddress, int port)
     }
 
     // La scheda di <paramref name="character"/> inviata a <paramref name="reporter"/> (chi ha dato il comando).
-    private static async Task SendStatusAsync(ClientSession reporter, Character character)
+    private async Task SendStatusAsync(ClientSession reporter, Character character)
     {
-        await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_PlayerStateUpdate, new CharacterStatePayload
+        await reporter.SendPacketAsync(CreateCharacterPacket(OpCode.S2C_PlayerStateUpdate, new CharacterStatePayload
         {
             Character = character
-        }));
+        }, character));
     }
 
     private async Task HandleGetPlayersAsync(ClientSession client, NetworkPacket packet)
@@ -2189,7 +2224,7 @@ public class RpgTcpServer(string ipAddress, int port)
         string message;
         if (move.Result == GameMap.MovementResult.Success)
         {
-            CharacterRepository.TrySaveCharacter(actor);
+            SaveCharacter(actor);
 
             message = $"Posizione aggiornata a ({requested.X}, {requested.Y}, {requested.Z})";
             Console.WriteLine($"[MOVE] {actor.Handle} si è spostato a ({requested.X}, {requested.Y}, {requested.Z})");
@@ -2291,7 +2326,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
         foreach (var character in moved)
         {
-            CharacterRepository.TrySaveCharacter(character);
+            SaveCharacter(character);
             Console.WriteLine($"[TELEPORT] {client.Player.Username} (master) sposta {character.Handle} a ({destination.X}, {destination.Y}, {destination.Z}).");
 
             var payload = new MoveResultPayload
@@ -2455,7 +2490,7 @@ public class RpgTcpServer(string ipAddress, int port)
             // Senza failure il personaggio è stato caricato e associato alla sessione
             Character linkedCharacter = loadedCharacter!;
 
-            CharacterRepository.TrySaveCharacter(linkedCharacter);
+            SaveCharacter(linkedCharacter);
 
             await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_LinkResponse, new LinkResponsePayload
             {
@@ -2527,7 +2562,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
                     // Salva prima di liberare la scheda: un /link o /npc add successivo non deve
                     // caricare dal disco uno stato precedente alle ultime azioni.
-                    if (character != null) CharacterRepository.TrySaveCharacter(character);
+                    if (character != null) SaveCharacter(character);
 
                     client.Player.Character = null;
                     client.LinkedCharacterHandle = null;
@@ -2665,7 +2700,7 @@ public class RpgTcpServer(string ipAddress, int port)
             return;
         }
 
-        CharacterRepository.TrySaveCharacter(target);
+        SaveCharacter(target);
 
         Console.WriteLine($"[HEAL] {client.Player.Username} (master) cura {target.Handle}{(amount != null ? $" di {amount}" : " completamente")}.");
         await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = text }), includeOrigin: false);
@@ -2994,7 +3029,7 @@ public class RpgTcpServer(string ipAddress, int port)
                         }
                     }
 
-                    foreach (var dead in newlyDead) CharacterRepository.TrySaveCharacter(dead);
+                    foreach (var dead in newlyDead) SaveCharacter(dead);
 
                     if (turnNotice != null)
                     {
@@ -3025,13 +3060,21 @@ public class RpgTcpServer(string ipAddress, int port)
                         npc = game.NPCs.FirstOrDefault(n => n.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase));
                     }
 
-                    await SendNpcResponseAsync(client, new NpcResponsePayload
+                    var npcStatus = new NpcResponsePayload
                     {
                         Success = npc != null,
                         Action = action,
                         Message = npc != null ? $"Scheda dell'NPC '{npc.Handle}'." : $"NPC '{handle}' non trovato in questo game.",
                         Character = npc
-                    });
+                    };
+
+                    // La scheda si serializza sotto il lock del game (vedi CreateCharacterPacket)
+                    NetworkPacket npcPacket;
+                    lock (game.SyncRoot)
+                    {
+                        npcPacket = NetworkPacket.Create(OpCode.S2C_NpcResponse, npcStatus);
+                    }
+                    await client.SendPacketAsync(npcPacket);
                     break;
                 }
 
@@ -3299,7 +3342,7 @@ public class RpgTcpServer(string ipAddress, int port)
             }
         }
 
-        foreach (var dead in newlyDead) CharacterRepository.TrySaveCharacter(dead);
+        foreach (var dead in newlyDead) SaveCharacter(dead);
 
         if (gameName.Length == 0)
         {

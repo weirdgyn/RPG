@@ -117,7 +117,7 @@ public static class CharacterRepository
     /// Salva la scheda del personaggio su disco. 
     /// Applica le stesse validazioni di sicurezza di LoadCharacter.
     /// </summary>
-    public static void SaveCharacter(Character character, string directoryPath = CharactersFolder)
+    public static void SaveCharacter(Character character, string directoryPath = CharactersFolder, object? syncRoot = null)
     {
         if (character == null || string.IsNullOrWhiteSpace(character.Handle))
         {
@@ -139,9 +139,21 @@ public static class CharacterRepository
             // Un solo salvataggio alla volta: due thread che scrivono lo stesso file darebbero un
             // IOException (e un salvataggio perso). Si scrive su un file temporaneo e poi lo si sostituisce:
             // un crash a metà scrittura non lascia una scheda troncata (che non sarebbe più caricabile).
+            // Ordine dei lock: _saveLock, poi syncRoot (il SyncRoot del game del personaggio). Chi tiene un
+            // SyncRoot non deve mai salvare: così non c'è inversione. La scheda si serializza sotto il SyncRoot,
+            // altrimenti un altro thread potrebbe modificarla a metà e il file conterrebbe uno stato mai esistito.
             lock (_saveLock)
             {
-                string json = JsonSerializer.Serialize(character, JsonOpts);
+                string json;
+                if (syncRoot != null)
+                {
+                    lock (syncRoot) { json = JsonSerializer.Serialize(character, JsonOpts); }
+                }
+                else
+                {
+                    json = JsonSerializer.Serialize(character, JsonOpts);
+                }
+
                 string tempPath = fullFilePath + ".tmp";
                 File.WriteAllText(tempPath, json);
                 File.Move(tempPath, fullFilePath, overwrite: true);
@@ -163,11 +175,11 @@ public static class CharacterRepository
     /// Come <see cref="SaveCharacter"/>, ma senza propagare le eccezioni: restituisce false e lo scrive
     /// nel log.
     /// </summary>
-    public static bool TrySaveCharacter(Character character, string directoryPath = CharactersFolder)
+    public static bool TrySaveCharacter(Character character, string directoryPath = CharactersFolder, object? syncRoot = null)
     {
         try
         {
-            SaveCharacter(character, directoryPath);
+            SaveCharacter(character, directoryPath, syncRoot);
             return true;
         }
         catch (Exception ex)
