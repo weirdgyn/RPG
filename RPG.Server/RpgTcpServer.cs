@@ -19,6 +19,11 @@ public class RpgTcpServer(string ipAddress, int port)
     private readonly List<Game> _games = [];
     // Protegge _games e Game.Players: vengono modificati da più task (join, disconnessioni).
     // Gli await non sono ammessi dentro il lock: si copia ciò che serve e si invia fuori.
+    // Gerarchia dei lock (si prendono sempre in quest'ordine, mai al contrario):
+    //   _linkLock -> _gamesLock -> Game.SyncRoot
+    // Game.SyncRoot protegge lo stato di gioco di UN game: turni, movimento, azioni, salute, munizioni e
+    // posizione dei suoi personaggi. Chi tiene un Game.SyncRoot non deve prendere _gamesLock né il SyncRoot
+    // di un altro game.
     private readonly object _gamesLock = new();
     // Serializza le operazioni di login per rendere atomico il controllo sull'unicità dell'handle
     private readonly object _loginLock = new();
@@ -367,10 +372,9 @@ public class RpgTcpServer(string ipAddress, int port)
         await BroadcastPacketAsync(joinNotify, excludeClientId: client.Id);
     }
 
-    // Serializza la risoluzione degli attacchi: lettura e modifica dei punti ferita di attaccante e
-    // bersaglio avvengono sotto questo lock, altrimenti due attacchi simultanei sullo stesso bersaglio
-    // possono perdere un colpo (lettura, calcolo e scrittura non atomici).
-    private readonly object _combatLock = new();
+    // Fuori da un game (es. /reload di un personaggio non in partita) non c'è un Game.SyncRoot: nessun altro
+    // può toccare quella scheda, ma il lock evita comunque di avere un ramo senza protezione.
+    private readonly object _noGameSync = new();
 
     /// <summary>Un partecipante al combattimento: il personaggio e la sua sessione (se è un giocatore).</summary>
     private sealed record Combatant(Character Character, ClientSession? Session);
@@ -553,7 +557,7 @@ public class RpgTcpServer(string ipAddress, int port)
             return;
         }
 
-        var outcome = ResolveAttackRules(attacker, target.Character, attackReq.WeaponOrSkill, game.CombatActive);
+        var outcome = ResolveAttackRules(game, attacker, target.Character, attackReq.WeaponOrSkill, game.CombatActive);
         if (outcome.Error != null)
         {
             RefundAction(game, attacker, lease.TurnStamp);
@@ -624,7 +628,7 @@ public class RpgTcpServer(string ipAddress, int port)
     // lancio o ricarica. Fuori dal combattimento non consuma nulla e non c'è limite di turno.
     private ActionLease BeginAction(Game game, Character actor, bool needsAction)
     {
-        lock (_gamesLock)
+        lock (game.SyncRoot)
         {
             return new ActionLease(CheckTurnLocked(game, actor, needsAction), game.TurnStamp);
         }
@@ -634,7 +638,7 @@ public class RpgTcpServer(string ipAddress, int port)
     // frattempo: in quel caso l'azione apparteneva a un turno ormai passato.
     private void RefundAction(Game game, Character actor, int turnStamp)
     {
-        lock (_gamesLock)
+        lock (game.SyncRoot)
         {
             if (game.TurnStamp != turnStamp || !game.CombatActive) return;
             string? current = game.CurrentTurnHandle;
@@ -651,7 +655,7 @@ public class RpgTcpServer(string ipAddress, int port)
     // combattimento, oppure il contatore delle azioni libere fuori) avvengono nella stessa sezione critica.
     private MoveOutcome TryMove(Game game, GameMap map, Character actor, Position3D requested)
     {
-        lock (_gamesLock)
+        lock (game.SyncRoot)
         {
             string? error = CheckTurnLocked(game, actor, needsAction: false);
             if (error != null) return new MoveOutcome(error, GameMap.MovementResult.Success);
@@ -689,7 +693,7 @@ public class RpgTcpServer(string ipAddress, int port)
     // (/skill, /roll, /attack risolto; il /move è contato direttamente dentro TryMove).
     private void CountFreeAction(Game game)
     {
-        lock (_gamesLock)
+        lock (game.SyncRoot)
         {
             if (!game.CombatActive) game.FreeActionsCounter++;
         }
@@ -833,6 +837,7 @@ public class RpgTcpServer(string ipAddress, int port)
         {
             string text;
             lock (_gamesLock)
+            lock (game.SyncRoot)
             {
                 if (!game.CombatActive)
                 {
@@ -864,6 +869,7 @@ public class RpgTcpServer(string ipAddress, int port)
                     string announce = string.Empty;
                     var newlyDead = new List<Character>();
                     lock (_gamesLock)
+                    lock (game.SyncRoot)
                     {
                         if (game.CombatActive)
                         {
@@ -915,6 +921,7 @@ public class RpgTcpServer(string ipAddress, int port)
                 {
                     bool was;
                     lock (_gamesLock)
+                    lock (game.SyncRoot)
                     {
                         was = game.CombatActive;
                         game.CombatActive = false;
@@ -994,6 +1001,7 @@ public class RpgTcpServer(string ipAddress, int port)
         {
             var game = _games.FirstOrDefault(g => g.Players.Contains(me));
             if (game != null)
+            lock (game.SyncRoot)
             {
                 bool viewerIsMaster = me.Role == Player.RoleType.master;
                 payload.InGame = true;
@@ -1093,6 +1101,7 @@ public class RpgTcpServer(string ipAddress, int port)
         string announce = string.Empty;
         var newlyDead = new List<Character>();
         lock (_gamesLock)
+        lock (game.SyncRoot)
         {
             if (!game.CombatActive)
             {
@@ -1202,7 +1211,7 @@ public class RpgTcpServer(string ipAddress, int port)
             return;
         }
 
-        var outcome = ResolveThrowRules(thrower, target, throwReq.WeaponKey, everyone, game.CombatActive);
+        var outcome = ResolveThrowRules(game, thrower, target, throwReq.WeaponKey, everyone, game.CombatActive);
         if (outcome.Error != null)
         {
             RefundAction(game, thrower, lease.TurnStamp);
@@ -1225,12 +1234,12 @@ public class RpgTcpServer(string ipAddress, int port)
         }
     }
 
-    // Regole del lancio/esplosione, sincrone e sotto _combatLock. Nessun I/O di rete qui dentro.
-    private ThrowOutcome ResolveThrowRules(Character thrower, Position3D aimed, string? weaponKey, List<Character> everyone, bool combatActive)
+    // Regole del lancio/esplosione, sincrone e sotto Game.SyncRoot. Nessun I/O di rete qui dentro.
+    private ThrowOutcome ResolveThrowRules(Game game, Character thrower, Position3D aimed, string? weaponKey, List<Character> everyone, bool combatActive)
     {
         static ThrowOutcome Error(string message) => new(message, null, null, []);
 
-        lock (_combatLock)
+        lock (game.SyncRoot)
         {
             Weapon? weapon;
             if (!string.IsNullOrWhiteSpace(weaponKey))
@@ -1463,7 +1472,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
         string? error;
         string? message;
-        lock (_combatLock)
+        lock (game?.SyncRoot ?? _noGameSync)
         {
             (error, message) = ReloadRules(actor, ammoKey, weaponKey);
         }
@@ -1480,7 +1489,7 @@ public class RpgTcpServer(string ipAddress, int port)
         await BroadcastToGameAsync(reporter, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = message }));
     }
 
-    // Regole della ricarica, sincrone e sotto _combatLock. I colpi rimasti nel caricatore tornano nella
+    // Regole della ricarica, sincrone e sotto Game.SyncRoot. I colpi rimasti nel caricatore tornano nella
     // pila di provenienza, poi si caricano fino a capienza dalla pila scelta.
     private static (string? Error, string? Message) ReloadRules(Character actor, string ammoKey, string weaponKey)
     {
@@ -1564,10 +1573,10 @@ public class RpgTcpServer(string ipAddress, int port)
         return (null, $"{actor.Handle} ricarica {weapon.Name} con {chosen.Name}: {loaded}/{weapon.MagazineCapacity} colpi (in riserva: {chosen.Quantity}).");
     }
 
-    // Regole dell'attacco, sincrone e sotto _combatLock. Nessun I/O di rete qui dentro.
-    private AttackOutcome ResolveAttackRules(Character attacker, Character target, string? weaponKey, bool combatActive)
+    // Regole dell'attacco, sincrone e sotto Game.SyncRoot. Nessun I/O di rete qui dentro.
+    private AttackOutcome ResolveAttackRules(Game game, Character attacker, Character target, string? weaponKey, bool combatActive)
     {
-        lock (_combatLock)
+        lock (game.SyncRoot)
         {
             Weapon? weaponToUse = null;
             if (!string.IsNullOrWhiteSpace(weaponKey))
@@ -2237,6 +2246,7 @@ public class RpgTcpServer(string ipAddress, int port)
                 error = "Devi essere in un game per usare /teleport: usa /join <game>.";
             }
             else
+            lock (game.SyncRoot)
             {
                 var found = new List<Character>();
                 foreach (var handle in handles)
@@ -2622,7 +2632,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
         // La salute si modifica sotto il lock del combattimento, come negli attacchi
         string text;
-        lock (_combatLock)
+        lock (game.SyncRoot)
         {
             if (amount == null)
             {
@@ -2709,7 +2719,7 @@ public class RpgTcpServer(string ipAddress, int port)
             return;
         }
 
-        lock (_combatLock)
+        lock (game.SyncRoot)
         {
             target.Health.IsStabilized = true;
         }
@@ -2902,6 +2912,7 @@ public class RpgTcpServer(string ipAddress, int port)
                 {
                     List<NpcInfoPayload> infos;
                     lock (_gamesLock)
+                    lock (game.SyncRoot)
                     {
                         infos = [.. game.NPCs.Select(n => new NpcInfoPayload
                         {
@@ -2931,6 +2942,7 @@ public class RpgTcpServer(string ipAddress, int port)
                     Game.Check? completedCheck = null;
                     var newlyDead = new List<Character>();
                     lock (_gamesLock)
+                    lock (game.SyncRoot)
                     {
                         removed = game.NPCs.RemoveAll(n => n.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase)) > 0;
                         if (removed)
@@ -3215,6 +3227,7 @@ public class RpgTcpServer(string ipAddress, int port)
         {
             var game = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
             if (game != null)
+            lock (game.SyncRoot)
             {
                 leftGame = game;
                 gameName = game.Name;
@@ -3696,6 +3709,7 @@ public class RpgTcpServer(string ipAddress, int port)
         string? error = null;
 
         lock (_gamesLock)
+        lock (game.SyncRoot)
         {
             if (game.ActiveCheck != null)
             {
@@ -3837,6 +3851,7 @@ public class RpgTcpServer(string ipAddress, int port)
         };
 
         lock (_gamesLock)
+        lock (game.SyncRoot)
         {
             audience = GetGameSessions(game);
 
@@ -4055,6 +4070,7 @@ public class RpgTcpServer(string ipAddress, int port)
         lock (_gamesLock)
         {
             foreach (var game in _games.Where(g => g.Players.Contains(player)).ToList())
+            lock (game.SyncRoot)
             {
                 game.Players.Remove(player);
 

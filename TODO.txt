@@ -26,7 +26,7 @@ Tempo di gioco (da progettare in modo organico):
 Tecnico:
 	Validatore delle schede (limiti su stat, abilità, armi, armature, dadi, soldi) usato al caricamento: prerequisito di /upload
 	Test dei passaggi di turno con dadi iniettabili (stordimento, tiro contro la morte, turni saltati)
-	Un lock per game al posto di _gamesLock/_combatLock
+	Lock per game: Game.SyncRoot al posto di _combatLock (FATTO, vedi gerarchia in RpgTcpServer.cs); restano: validazione+risoluzione atomiche (target ricontrollato nel lock), snapshot per salvataggio/invio scheda
 	Mischia come tiro contrapposto
 	Timeout di inattività dopo il login
 

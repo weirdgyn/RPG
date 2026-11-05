@@ -10,6 +10,13 @@ public class Game
         public string PlayerName { get; set; } = string.Empty;
         public TimeOnly Timestamp { get; set; }
     }
+    /// <summary>
+    /// Lock dello stato di gioco di questo game (turni, movimento, azioni, salute, munizioni, posizioni):
+    /// ogni modifica di quello stato avviene sotto questo lock. Non serializzato.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public object SyncRoot { get; } = new();
+
     public GameMap Map = new();
     public string Name { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
