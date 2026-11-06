@@ -14,21 +14,36 @@ public class CharacterRepositorySnapshotTests : IDisposable
     }
 
     [Fact]
-    public void Save_WithSyncRoot_WaitsForTheLockBeforeSerializing()
+    public async Task Save_WithSyncRoot_WaitsForTheLockBeforeSerializing()
     {
+        var ct = TestContext.Current.CancellationToken;
         var character = new Character { Handle = "SnapLock" };
         var sync = new object();
-        Task save;
 
-        lock (sync)
+        // Il lock lo tiene un task a parte: in C# non si può fare await dentro un lock
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        var holder = Task.Run(() =>
         {
-            save = Task.Run(() => CharacterRepository.SaveCharacter(character, _dir, sync));
+            lock (sync)
+            {
+                entered.SetResult();
+                release.Wait();
+            }
+        }, ct);
 
-            // Finché qualcuno tiene il lock del game la scheda non può essere serializzata
-            Assert.False(save.Wait(300));
-        }
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
 
-        Assert.True(save.Wait(5000));
+        var save = Task.Run(() => CharacterRepository.SaveCharacter(character, _dir, sync), ct);
+
+        // Finché qualcuno tiene il lock del game la scheda non può essere serializzata
+        var first = await Task.WhenAny(save, Task.Delay(300, ct));
+        Assert.NotSame(save, first);
+
+        release.Set();
+        await save.WaitAsync(TimeSpan.FromSeconds(5), ct);
+        await holder;
+
         Assert.True(CharacterRepository.CharacterExists("SnapLock", _dir));
     }
 
