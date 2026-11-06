@@ -37,10 +37,25 @@ Addestramento:
 		/reward skillpoints money [personaggio] (master only)
 
 
-Bonus (cyberware ad attivazione, droghe):
-	/activate item|drug -> bonus 
-	/bonus [clear] "bonus" personaggio1, personaggio2... -> (master only) applica bonus di circostanza ai personaggi (anche npc), il bonus è valido fino a /bonus clear
-															decidere il formato del "bonus" (es. "STAT/VALUE")
+Effetti (bonus/malus) - infrastruttura comune di /bonus e /activate:
+	Un EFFETTO è un modificatore additivo con segno (malus = negativo) su un personaggio. Stato di sessione: vive in Game (sotto Game.SyncRoot), non nella scheda.
+	Chiave (a cosa si applica): ALL | INIT | HIT | DAMAGE | MOVE | STAT:<stat> | SKILL:<abilità>  (ALL = prove di abilità, colpire, iniziativa; non danni né movimento)
+	Valore: intero, |valore| <= 10; al massimo 20 effetti per personaggio. Stessa chiave + stessa origine sul stesso personaggio = si sostituisce; origini diverse si sommano.
+	Bersaglio: sempre un singolo personaggio; party / npc / all sono scorciatoie espanse dal comando.
+	Durata: manual | combat | r<N> (round) | u<N> (usi) | d<N> (giorni, solo con /day). Un effetto a N round scade all'inizio del round N+1 dall'applicazione.
+	Ogni termine compare nei pannelli di calcolo con la sua etichetta (es. "+3 Sandevistan", "-1 master").
+	Prima versione: gli effetti STAT valgono solo nei tiri (abilità, colpire, lancio, iniziativa), non in BTM, salvezza contro la morte e stordimento.
+	Fasi: 1) modello e regole pure in RPG.Common (FATTO)  2) uso nei tiri, cyberware passivi nello stesso sistema  3) /bonus  4) oggetti ad attivazione e /activate
+
+	/bonus [clear|list] <chiave> <±N> [durata] <bersagli> -> (master only) applica un bonus di circostanza; es. /bonus REF +2 r3 morgan molly, /bonus INIT -2 combat party
+	/activate item|drug -> attiva un oggetto (non un'arma) che produce effetti. Scheda di attivazione dell'oggetto:
+		Mode: Passive (sempre attivo) | Active (effetti solo dopo /activate)
+		ActionCost: 0 (gratuita) | 1 (consuma l'azione del turno)
+		ActivationSkill + ActivationTN (default 15): prova richiesta, indipendente da ActionCost; se fallisce gli effetti non partono (l'azione è spesa se ActionCost = 1)
+		Duration: tipo e quantità (anche espressione di dadi, es. 1d6 round, tirata all'attivazione); Effects: elenco di (chiave, valore)
+		Attivazione gratuita: solo durante il proprio turno (fuori dal combattimento sempre)
+		Limiti d'uso (es. una volta al giorno): solo con /day
+		Il validatore delle schede rifiuta Passive con costo/abilità e Active con abilità inesistente
 
 Veicoli:
 	/drive (check abilità)
