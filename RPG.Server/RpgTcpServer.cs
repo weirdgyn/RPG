@@ -2118,24 +2118,47 @@ public class RpgTcpServer(string ipAddress, int port)
         await ResolveSkillCheckAsync(client, client.Player.Character!, skillReq);
     }
 
-    private sealed record SkillRollResult(string StatName, int StatValue, int SkillLevel, int Penalty, GameDice.D10Roll Dice, int Total);
+    private sealed record SkillRollResult(string StatName, int StatValue, int SkillLevel, int Penalty, GameDice.D10Roll Dice,
+        IReadOnlyList<EffectTerm> Terms, IReadOnlyList<ActiveEffect> Expired, int Total);
 
-    // Tiro di abilità (d10 esplosivo + stat + livello + penalità ferite); null se l'abilità non esiste
-    private static SkillRollResult? RollSkill(Character actor, string skillName)
+    // Testo per il log del server: " +2 master -1 stordito"
+    private static string LogTerms(IEnumerable<EffectTerm> terms) =>
+        string.Concat(terms.Select(t => $" {t.Value:+#;-#;0} {t.Label}"));
+
+    // Tiro di abilità (d10 esplosivo + stat + livello + penalità ferite + effetti); null se l'abilità non esiste.
+    // Con un game va chiamata sotto Game.SyncRoot (legge e consuma gli effetti); senza game (fuori partita)
+    // valgono solo i bonus del cyberware.
+    private static SkillRollResult? RollSkill(Game? game, Character actor, string skillName)
     {
         if (!Skills.TryGetStatForSkill(skillName, out string statName)) return null;
 
         int statVal = actor.Stats.GetStatValue(statName);
         int skillLvl = actor.Skills.TryGetValue(skillName, out int lvl) ? lvl : 0;
         int penalty = actor.Health.GetWoundPenalty();
+        var ctx = new EffectContext(RollKind.Skill, statName, skillName);
+        var terms = EffectRules.CollectTerms(game?.Effects ?? new List<ActiveEffect>(), actor, ctx, SkillExists);
+        var expired = game != null ? EffectRules.ConsumeUses(game.Effects, actor.Handle, ctx) : new List<ActiveEffect>();
         var dice = GameDice.RollExplodingD10Detailed();
-        return new SkillRollResult(statName, statVal, skillLvl, penalty, dice, statVal + skillLvl + penalty + dice.Total);
+        return new SkillRollResult(statName, statVal, skillLvl, penalty, dice, terms, expired,
+            statVal + skillLvl + penalty + terms.Sum(t => t.Value) + dice.Total);
     }
 
     private async Task ResolveSkillCheckAsync(ClientSession reporter, Character actor, SkillCheckRequestPayload skillReq)
     {
         string skillName = InputLimits.Clean(skillReq.SkillName, InputLimits.MaxNameFieldLength);
-        var rolled = RollSkill(actor, skillName);
+
+        Game? checkGame;
+        lock (_gamesLock)
+        {
+            checkGame = _games.FirstOrDefault(g => g.Players.Contains(reporter.Player));
+        }
+
+        SkillRollResult? rolled;
+        lock (checkGame?.SyncRoot ?? _noGameSync)
+        {
+            rolled = RollSkill(checkGame, actor, skillName);
+        }
+
         if (rolled == null)
         {
             await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
@@ -2156,12 +2179,6 @@ public class RpgTcpServer(string ipAddress, int port)
 
         // Se il master ha aperto un check su questa abilità per questo personaggio, il tiro va allo spoglio
         // (il TN è quello del check) e non viene mostrato agli altri finché non hanno tirato tutti.
-        Game? checkGame;
-        lock (_gamesLock)
-        {
-            checkGame = _games.FirstOrDefault(g => g.Players.Contains(reporter.Player));
-        }
-
         if (checkGame != null)
         {
             CountFreeAction(checkGame);
@@ -2175,7 +2192,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
             if (reg != CheckRegistration.NotInCheck)
             {
-                Console.WriteLine($"[CHECK] {actor.Handle} tira '{skillName}' ({statName}:{statVal} + Lvl:{skillLvl} + d10:{diceVal}{(roll.Exploded ? " esploso" : "")} - Pen:{Math.Abs(penalty)}) = {totalResult} ({reg})");
+                Console.WriteLine($"[CHECK] {actor.Handle} tira '{skillName}' ({statName}:{statVal} + Lvl:{skillLvl} + d10:{diceVal}{(roll.Exploded ? " esploso" : "")} - Pen:{Math.Abs(penalty)}{LogTerms(rolled.Terms)}) = {totalResult} ({reg})");
                 await ReplyCheckRegistrationAsync(reporter, actor, reg, $"prova di {skillName}");
                 if (completed != null) await FinalizeCheckAsync(checkGame, completed, forced: false);
                 return;
@@ -2185,7 +2202,7 @@ public class RpgTcpServer(string ipAddress, int port)
         bool isSuccess = !isFumble && totalResult >= skillReq.Difficulty;
 
         string outcome = isFumble ? "FALLIMENTO CRITICO" : isSuccess ? "SUCCESSO" : "FALLIMENTO";
-        Console.WriteLine($"[SKILL] {actor.Handle} prova '{skillName}' ({statName}:{statVal} + Lvl:{skillLvl} + d10:{diceVal}{(roll.Exploded ? " esploso" : "")} - Pen:{Math.Abs(penalty)}) = {totalResult} vs TN {skillReq.Difficulty} -> {outcome}");
+        Console.WriteLine($"[SKILL] {actor.Handle} prova '{skillName}' ({statName}:{statVal} + Lvl:{skillLvl} + d10:{diceVal}{(roll.Exploded ? " esploso" : "")} - Pen:{Math.Abs(penalty)}{LogTerms(rolled.Terms)}) = {totalResult} vs TN {skillReq.Difficulty} -> {outcome}");
 
         var respPayload = new SkillCheckResponsePayload
         {
@@ -2194,6 +2211,8 @@ public class RpgTcpServer(string ipAddress, int port)
             StatName = statName,
             StatValue = statVal,
             SkillLevel = skillLvl,
+            WoundPenalty = penalty,
+            Modifiers = [.. rolled.Terms.Select(t => new RollTermPayload { Label = t.Label, Value = t.Value })],
             DiceRoll = diceVal,
             TotalResult = totalResult,
             TargetNumber = skillReq.Difficulty,
@@ -2757,6 +2776,7 @@ public class RpgTcpServer(string ipAddress, int port)
         bool success = false;
         int total = 0, tn = 0;
         bool fumble = false;
+        string calc = string.Empty;
 
         lock (game.SyncRoot)
         {
@@ -2793,16 +2813,32 @@ public class RpgTcpServer(string ipAddress, int port)
                 if (!game.CombatActive) game.FreeActionsCounter++;
 
                 int skillLvl = HealSkillLevel(healer);
+                string healSkill = HealSkills.OrderByDescending(n => healer.Skills.TryGetValue(n, out int l) ? l : 0).First();
                 int tech = healer.Stats.GetStatValue("TECH");
                 int penalty = healer.Health.GetWoundPenalty();
+
+                // Una cura è una prova di abilità: valgono ALL, STAT:TECH e SKILL:<abilità usata>
+                var healCtx = new EffectContext(RollKind.Skill, "TECH", healSkill);
+                var healTerms = CollectEffectTerms(game, healer, healCtx);
+                var healExpired = EffectRules.ConsumeUses(game.Effects, healer.Handle, healCtx);
                 var roll = GameDice.RollExplodingD10Detailed();
-                var stab = MedicalRules.ResolveStabilization(roll, tech, skillLvl, penalty, target.Health.DamageTaken);
+                var stab = MedicalRules.ResolveStabilization(roll, tech, skillLvl, penalty + healTerms.Sum(t => t.Value), target.Health.DamageTaken);
+
+                var calcParts = new List<(string, int, string?)>
+                {
+                    ("d10", roll.Total, DiceExtra(roll)), ("TECH", tech, null), (healSkill, skillLvl, null)
+                };
+                if (penalty != 0) calcParts.Add(("ferite", penalty, null));
+                AddTermParts(calcParts, healTerms);
+                calc = FormatSum(calcParts);
+                foreach (var note in DescribeExpired(healExpired)) calc += $" [{note}]";
+
                 total = stab.Total;
                 tn = stab.TargetNumber;
                 success = stab.Success;
                 fumble = stab.IsFumble;
 
-                Console.WriteLine($"[HEAL] {healer.Handle} tenta di stabilizzare {target.Handle}: d10 {roll.Total}{(roll.Exploded ? " (esploso)" : "")} + TECH {tech} + cura {skillLvl} - ferite {Math.Abs(penalty)} = {total} vs TN {tn} -> {(success ? "OK" : "FALLITO")}");
+                Console.WriteLine($"[HEAL] {healer.Handle} tenta di stabilizzare {target.Handle}: {calc} vs TN {tn} -> {(success ? "OK" : "FALLITO")}");
 
                 if (success) target.Health.IsStabilized = true;
             }
@@ -2817,13 +2853,13 @@ public class RpgTcpServer(string ipAddress, int port)
         // Un tentativo fallito costa comunque l'azione del turno: niente rimborso (il rimborso è solo per errori).
         if (!success)
         {
-            string failMessage = $"{healer.Handle} tenta di stabilizzare {target.Handle} ma fallisce: {total} contro TN {tn}{(fumble ? " (fallimento critico)" : "")}.";
+            string failMessage = $"{healer.Handle} tenta di stabilizzare {target.Handle} ma fallisce: {calc} contro TN {tn}{(fumble ? " (fallimento critico)" : "")}.";
             await BroadcastToGameAsync(reporter, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = failMessage }), includeOrigin: false);
             await ReplyHealAsync(reporter, false, failMessage, target.Handle);
             return;
         }
 
-        string message = $"{healer.Handle} stabilizza {target.Handle}: {total} contro TN {tn}. Non tira più il salvezza contro la morte.";
+        string message = $"{healer.Handle} stabilizza {target.Handle}: {calc} contro TN {tn}. Non tira più il salvezza contro la morte.";
         await BroadcastToGameAsync(reporter, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = message }), includeOrigin: false);
         await ReplyHealAsync(reporter, true, message, target.Handle);
     }
@@ -3904,7 +3940,12 @@ public class RpgTcpServer(string ipAddress, int port)
             bool fumble = false;
             if (isSkill)
             {
-                var r = RollSkill(c.Character, skillName);
+                SkillRollResult? r;
+                lock (game.SyncRoot)
+                {
+                    r = RollSkill(game, c.Character, skillName);
+                }
+
                 if (r == null) continue;
                 total = r.Total;
                 fumble = r.Dice.IsFumble;

@@ -32,7 +32,8 @@ public static class MedicalRules
 
     /// <summary>
     /// Tentativo di stabilizzazione: TECH + abilità medica + penalità ferite del medico + d10 esplosivo contro
-    /// un TN pari al danno subito dal ferito. Un 1 naturale sul primo dado fallisce sempre.
+    /// un TN pari al danno subito dal ferito.
+    /// <c>healerWoundPenalty</c> è il modificatore totale di chi cura: penalità da ferite (negativa) più eventuali effetti. Un 1 naturale sul primo dado fallisce sempre.
     /// </summary>
     public static StabilizationResult ResolveStabilization(GameDice.D10Roll roll, int tech, int skillLevel,
         int healerWoundPenalty, int targetDamageTaken)

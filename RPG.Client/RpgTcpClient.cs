@@ -251,7 +251,17 @@ public class RpgTcpClient
                         var grid = new Grid();
                         grid.AddColumn();
                         grid.AddRow(new Markup($"[bold cyan]{Markup.Escape(skillResp.CharacterHandle)}[/] prova [bold yellow]{Markup.Escape(skillResp.SkillName)}[/] ({skillResp.StatName})"));
-                        grid.AddRow(new Markup($"   Calcolo: [cyan]{skillResp.TotalResult}[/] [grey](Stat:{skillResp.StatValue} + Lvl:{skillResp.SkillLevel} + d10:{skillResp.DiceRoll})[/] vs TN: [bold yellow]{skillResp.TargetNumber}[/]"));
+                        // Tutti i passaggi: stat + livello + d10, poi ferite ed effetti (ognuno con la sua etichetta)
+                        string skillCalc = $"Stat:{skillResp.StatValue} + Lvl:{skillResp.SkillLevel} + d10:{skillResp.DiceRoll}";
+                        if (skillResp.WoundPenalty != 0)
+                        {
+                            skillCalc += $" {(skillResp.WoundPenalty < 0 ? "-" : "+")} ferite:{Math.Abs(skillResp.WoundPenalty)}";
+                        }
+                        foreach (var m in skillResp.Modifiers)
+                        {
+                            skillCalc += $" {(m.Value < 0 ? "-" : "+")} {m.Label}:{Math.Abs(m.Value)}";
+                        }
+                        grid.AddRow(new Markup($"   Calcolo: [cyan]{skillResp.TotalResult}[/] [grey]({Markup.Escape(skillCalc)})[/] vs TN: [bold yellow]{skillResp.TargetNumber}[/]"));
                         grid.AddRow(new Markup($"   Esito: {icon} - [white]{Markup.Escape(skillResp.Message)}[/]"));
 
                         var panel = new Panel(grid)

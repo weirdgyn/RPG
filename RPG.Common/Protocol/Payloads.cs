@@ -65,6 +65,13 @@ public class SkillCheckRequestPayload
     public int Difficulty { get; set; } = 15; // TN predefinito se non specificato (es. 15 = Medio)
 }
 
+/// <summary>Un termine del calcolo di un tiro (effetto o cyberware) con la sua etichetta.</summary>
+public class RollTermPayload
+{
+    public string Label { get; set; } = string.Empty;
+    public int Value { get; set; }
+}
+
 public class SkillCheckResponsePayload
 {
     public string CharacterHandle { get; set; } = string.Empty;
@@ -72,6 +79,10 @@ public class SkillCheckResponsePayload
     public string StatName { get; set; } = string.Empty;
     public int StatValue { get; set; }
     public int SkillLevel { get; set; }
+    /// <summary>Penalità da ferite già inclusa nel totale (0 o negativa).</summary>
+    public int WoundPenalty { get; set; }
+    /// <summary>Effetti e cyberware che hanno modificato il tiro, già inclusi nel totale.</summary>
+    public List<RollTermPayload> Modifiers { get; set; } = [];
     public int DiceRoll { get; set; }
     public int TotalResult { get; set; }
     public int TargetNumber { get; set; }
