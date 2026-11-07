@@ -1,3 +1,5 @@
+using RPG.Common.Models;
+
 namespace RPG.Common.Effects;
 
 /// <summary>Un termine mostrato nel calcolo di un tiro: l'etichetta dell'effetto e il suo valore.</summary>
@@ -54,6 +56,27 @@ public static class EffectRules
         else effects.Add(effect);
 
         return null;
+    }
+
+    /// <summary>
+    /// Tutti i termini che intervengono in un tiro di un personaggio: prima i bonus del suo cyberware (oggi sempre
+    /// attivi, la chiave è <c>ApplyTo</c>; quelli con chiave non riconosciuta o valore 0 sono ignorati), poi gli
+    /// effetti attivi del game.
+    /// </summary>
+    public static List<EffectTerm> CollectTerms(IEnumerable<ActiveEffect> gameEffects, Character character, EffectContext ctx, Func<string, bool>? skillExists)
+    {
+        var terms = new List<EffectTerm>();
+
+        foreach (var cw in character.Cyberware)
+        {
+            if (cw.Bonus == null || cw.Bonus.Value == 0) continue;
+            if (!EffectKey.TryParse(cw.Bonus.ApplyTo, skillExists, out var key, out _) || !key.Matches(ctx)) continue;
+
+            terms.Add(new EffectTerm(string.IsNullOrWhiteSpace(cw.ID) ? "cyberware" : cw.ID, cw.Bonus.Value));
+        }
+
+        terms.AddRange(Terms(gameEffects, character.Handle, ctx));
+        return terms;
     }
 
     /// <summary>Gli effetti del personaggio che intervengono nel tiro, nell'ordine in cui sono stati aggiunti.</summary>

@@ -1,4 +1,5 @@
 using RPG.Common;
+using RPG.Common.Effects;
 using RPG.Common.Models;
 using RPG.Common.Protocol;
 using RPG.Common.Utils;
@@ -486,11 +487,21 @@ public class RpgTcpServer(string ipAddress, int port)
     private static string DiceExtra(GameDice.D10Roll roll) =>
         roll.Exploded ? $" ({string.Join("+", roll.Rolls)}, esploso)" : string.Empty;
 
-    // Somma dei bonus cyberware con un dato ApplyTo ("HIT", "DAMAGE", ...)
-    private static int SumCyberBonus(Character actor, string applyTo) =>
-        actor.Cyberware
-            .Where(cw => cw.Bonus != null && cw.Bonus.ApplyTo.Equals(applyTo, StringComparison.OrdinalIgnoreCase))
-            .Sum(cw => cw.Bonus.Value);
+    private static bool SkillExists(string name) => Skills.TryGetStatForSkill(name, out _);
+
+    // Termini (cyberware ed effetti del game) che intervengono in un tiro. Va chiamata sotto Game.SyncRoot.
+    private static List<EffectTerm> CollectEffectTerms(Game game, Character character, EffectContext ctx) =>
+        EffectRules.CollectTerms(game.Effects, character, ctx, SkillExists);
+
+    // Aggiunge i termini a un calcolo da mostrare con FormatSum: ognuno con la sua etichetta
+    private static void AddTermParts(List<(string, int, string?)> parts, IEnumerable<EffectTerm> terms)
+    {
+        foreach (var t in terms) parts.Add((t.Label, t.Value, null));
+    }
+
+    // Righe da aggiungere ai passaggi di un tiro quando un effetto a usi si esaurisce
+    private static IEnumerable<string> DescribeExpired(IEnumerable<ActiveEffect> expired) =>
+        expired.Select(e => $"Effetto esaurito: {e.Label} ({e.Key}) su {e.TargetHandle}");
 
     // Pila di munizioni da cui provengono i colpi attualmente nel caricatore (null = standard)
     private static Ammo? FindLoadedAmmo(Character owner, Weapon weapon) =>
@@ -1324,7 +1335,11 @@ public class RpgTcpServer(string ipAddress, int port)
             int statVal = thrower.Stats.GetStatValue(statName);
             int skillLvl = thrower.Skills.TryGetValue(weapon.ScatterSkillName, out int lvl) ? lvl : 0;
             var roll = GameDice.RollExplodingD10Detailed();
-            int total = statVal + skillLvl + penalty + roll.Total;
+            // Un lancio è una prova di abilità: valgono ALL, STAT e SKILL ma non HIT (che è del tiro per colpire)
+            var throwCtx = new EffectContext(RollKind.Skill, statName, weapon.ScatterSkillName);
+            var throwTerms = CollectEffectTerms(game, thrower, throwCtx);
+            var expiredOnThrow = EffectRules.ConsumeUses(game.Effects, thrower.Handle, throwCtx);
+            int total = statVal + skillLvl + penalty + throwTerms.Sum(t => t.Value) + roll.Total;
 
             bool onTarget = !roll.IsFumble && total >= throwTn;
             weapon.CurrentAmmo--;
@@ -1337,7 +1352,9 @@ public class RpgTcpServer(string ipAddress, int port)
                 (weapon.ScatterSkillName, skillLvl, null)
             };
             if (penalty != 0) throwParts.Add(("ferite", penalty, null));
+            AddTermParts(throwParts, throwTerms);
             throwSteps.Add($"Tiro di lancio: {FormatSum(throwParts)}");
+            throwSteps.AddRange(DescribeExpired(expiredOnThrow));
             throwSteps.Add($"Difficoltà: TN {throwTn} (distanza {distance:F1} m, gittata di lancio {throwRange:F0} m)");
             throwSteps.Add(roll.IsFumble
                 ? "Esito: FALLIMENTO CRITICO (1 naturale sul d10)"
@@ -1702,8 +1719,11 @@ public class RpgTcpServer(string ipAddress, int port)
             var attackRoll = GameDice.RollExplodingD10Detailed();
             int diceVal = attackRoll.Total;
             int weaponModifier = weaponToUse.GetAttackModifier();
-            int cyberHit = SumCyberBonus(attacker, "HIT");
-            var toHit = CombatRules.ResolveToHit(attackRoll, attackerStat, attackerSkillLvl, attackerPenalty, weaponModifier, cyberHit, targetNumber);
+            var hitCtx = new EffectContext(RollKind.Hit, statName, skillName);
+            var hitTerms = CollectEffectTerms(game, attacker, hitCtx);
+            int effectsHit = hitTerms.Sum(t => t.Value);
+            var expiredOnHit = EffectRules.ConsumeUses(game.Effects, attacker.Handle, hitCtx);
+            var toHit = CombatRules.ResolveToHit(attackRoll, attackerStat, attackerSkillLvl, attackerPenalty, weaponModifier, effectsHit, targetNumber);
             int attackTotal = toHit.Total;
 
             var steps = new List<string>();
@@ -1714,9 +1734,10 @@ public class RpgTcpServer(string ipAddress, int port)
                 (skillName, attackerSkillLvl, null)
             };
             if (weaponModifier != 0) hitParts.Add(("arma", weaponModifier, null));
-            if (cyberHit != 0) hitParts.Add(("cyber", cyberHit, null));
             if (attackerPenalty != 0) hitParts.Add(("ferite", attackerPenalty, null));
+            AddTermParts(hitParts, hitTerms);
             steps.Add($"Tiro per colpire: {FormatSum(hitParts)}");
+            steps.AddRange(DescribeExpired(expiredOnHit));
             steps.Add($"Difficoltà: {tnText}");
 
             // Un 1 naturale sul primo dado è un fallimento critico: manca comunque (il colpo sparato è perso)
@@ -1738,8 +1759,11 @@ public class RpgTcpServer(string ipAddress, int port)
                 var damageRoll = GameDice.Roll(weaponToUse.DamageDice);
                 int diceDamage = (int)damageRoll.Total;
                 int ammoDamage = loadedAmmo?.DamageModifier ?? 0;
-                int cyberDamage = SumCyberBonus(attacker, "DAMAGE");
-                int rawDamage = Math.Max(0, diceDamage + ammoDamage + cyberDamage);
+                var damageCtx = new EffectContext(RollKind.Damage);
+                var damageTerms = CollectEffectTerms(game, attacker, damageCtx);
+                int effectsDamage = damageTerms.Sum(t => t.Value);
+                var expiredOnDamage = EffectRules.ConsumeUses(game.Effects, attacker.Handle, damageCtx);
+                int rawDamage = Math.Max(0, diceDamage + ammoDamage + effectsDamage);
 
                 // Locazione d'impatto e armatura di quella zona
                 int locRoll = (int)GameDice.Roll("1d10").Total;
@@ -1749,12 +1773,13 @@ public class RpgTcpServer(string ipAddress, int port)
                 steps.Add($"Locazione: d10 {locRoll} -> {loc.Name}{(loc.DamageMultiplier > 1 ? $" (danno x{loc.DamageMultiplier} dopo l'armatura)" : "")}");
 
                 steps.Add($"Dadi di danno ({weaponToUse.DamageDice}): {FormatDiceDetail(damageRoll)}");
-                if (ammoDamage != 0 || cyberDamage != 0)
+                if (ammoDamage != 0 || damageTerms.Count > 0)
                 {
                     var dmgParts = new List<(string, int, string?)> { ("dadi", diceDamage, null) };
                     if (ammoDamage != 0) dmgParts.Add(("munizioni", ammoDamage, null));
-                    if (cyberDamage != 0) dmgParts.Add(("cyber", cyberDamage, null));
+                    AddTermParts(dmgParts, damageTerms);
                     steps.Add($"Bonus al danno: {FormatSum(dmgParts)}");
+                    steps.AddRange(DescribeExpired(expiredOnDamage));
                 }
 
                 var armorPiece = target.Armor.GetPiece(loc.ArmorLocation);
@@ -3886,7 +3911,10 @@ public class RpgTcpServer(string ipAddress, int port)
             }
             else
             {
-                total = RollInitiative(c.Character).Total;
+                lock (game.SyncRoot)
+                {
+                    total = RollInitiative(game, c.Character).Total;
+                }
             }
 
             lock (_gamesLock)
@@ -3995,10 +4023,25 @@ public class RpgTcpServer(string ipAddress, int port)
         }
     }
 
-    private sealed record InitiativeRollResult(int Ref, int CombatSense, int Cyber, int Dice, int Total);
+    private sealed record InitiativeRollResult(int Ref, int CombatSense, IReadOnlyList<EffectTerm> Terms, IReadOnlyList<ActiveEffect> Expired, int Dice, int Total)
+    {
+        public int Effects => Terms.Sum(t => t.Value);
+    }
 
-    // Iniziativa: REF + CombatSense (solo i Solo) + cyberware INIT + d10
-    private static InitiativeRollResult RollInitiative(Character actor)
+    // Calcolo dell'iniziativa con tutti i passaggi: REF + CombatSense + effetti (con etichetta) + d10
+    private static string DescribeInitiative(InitiativeRollResult init)
+    {
+        var parts = new List<(string, int, string?)> { ("REF", init.Ref, null), ("CombatSense", init.CombatSense, null) };
+        AddTermParts(parts, init.Terms);
+        parts.Add(("d10", init.Dice, null));
+        string text = FormatSum(parts);
+        foreach (var note in DescribeExpired(init.Expired)) text += $" [{note}]";
+        return text;
+    }
+
+    // Iniziativa: REF + CombatSense (solo i Solo) + effetti (cyberware INIT, bonus del master) + d10
+    // Va chiamata sotto Game.SyncRoot (legge e consuma gli effetti del game)
+    private static InitiativeRollResult RollInitiative(Game game, Character actor)
     {
         int refStat = actor.Stats.REF;
 
@@ -4008,10 +4051,12 @@ public class RpgTcpServer(string ipAddress, int port)
             combatSense = actor.Skills.TryGetValue("CombatSense", out int csLvl) ? csLvl : 0;
         }
 
-        int cyberInit = SumCyberBonus(actor, "INIT");
+        var initCtx = new EffectContext(RollKind.Init, "REF", "CombatSense");
+        var terms = CollectEffectTerms(game, actor, initCtx);
+        var expired = EffectRules.ConsumeUses(game.Effects, actor.Handle, initCtx);
 
         int dice = (int)GameDice.Roll("1d10").Total;
-        return new InitiativeRollResult(refStat, combatSense, cyberInit, dice, refStat + combatSense + cyberInit + dice);
+        return new InitiativeRollResult(refStat, combatSense, terms, expired, dice, refStat + combatSense + terms.Sum(t => t.Value) + dice);
     }
 
     /// <summary>
@@ -4036,8 +4081,14 @@ public class RpgTcpServer(string ipAddress, int port)
             return;
         }
 
-        var init = RollInitiative(actor);
+        InitiativeRollResult init;
+        lock (game.SyncRoot)
+        {
+            init = RollInitiative(game, actor);
+        }
+
         int total = init.Total;
+        string initCalc = DescribeInitiative(init);
 
         CheckRegistration reg;
         Game.Check? completed;
@@ -4058,7 +4109,7 @@ public class RpgTcpServer(string ipAddress, int port)
             }
         }
 
-        Console.WriteLine($"[INIT] {reporter.Player.Username} ({actor.Handle}) tira iniziativa: REF {init.Ref} + CombatSense {init.CombatSense} + Cyberware {init.Cyber} + d10 {init.Dice} = {total}{(reg == CheckRegistration.NotInCheck ? "" : $" ({reg})")}");
+        Console.WriteLine($"[INIT] {reporter.Player.Username} ({actor.Handle}) tira iniziativa: {initCalc}{(reg == CheckRegistration.NotInCheck ? "" : $" ({reg})")}");
 
         if (reg != CheckRegistration.NotInCheck)
         {
@@ -4069,7 +4120,7 @@ public class RpgTcpServer(string ipAddress, int port)
 
         await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
         {
-            Message = $"Tiro di iniziativa registrato per {actor.Handle}: {total} (REF {init.Ref} + CS {init.CombatSense} + Cyber {init.Cyber} + d10 {init.Dice})."
+            Message = $"Tiro di iniziativa registrato per {actor.Handle}: {initCalc}."
         }));
     }
 

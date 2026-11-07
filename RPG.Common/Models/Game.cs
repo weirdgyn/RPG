@@ -1,4 +1,5 @@
-﻿using RPG.Common.World;
+﻿using RPG.Common.Effects;
+using RPG.Common.World;
 
 namespace RPG.Common.Models;
 
@@ -16,6 +17,13 @@ public class Game
     /// </summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public object SyncRoot { get; } = new();
+
+    /// <summary>
+    /// Effetti (bonus/malus) attivi sui personaggi di questo game. Stato di sessione, sotto <see cref="SyncRoot"/>:
+    /// non finisce nelle schede e non è serializzato.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public List<ActiveEffect> Effects { get; } = [];
 
     public GameMap Map = new();
     public string Name { get; set; } = string.Empty;
