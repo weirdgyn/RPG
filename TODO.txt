@@ -11,6 +11,7 @@ Comandi mancanti:
 
 	/eval personaggio/npc -> produce un riassunto del livello personaggio effettuando somme dei valori di stats, skills + skillpoints, valori di inventario, money)
 
+	/version -> mostra la versione del server e del client
 
 Guarigione e impianti:
 	Da fare: cura presso un centro (tiri/costo), richiede soldi e negozi (/buy)
