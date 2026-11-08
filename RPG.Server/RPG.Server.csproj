@@ -13,6 +13,12 @@
     <Content Include="..\RPG.Common\Data\**\*.*" Link="Data\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- Deny list locale (indirizzi IP bloccati): file non pubblicato (vedi .gitignore), copiato accanto
+       all'eseguibile solo se esiste. Il modello da copiare è server.denylist.example.txt. -->
+  <ItemGroup>
+    <None Update="server.denylist.txt" CopyToOutputDirectory="PreserveNewest" Condition="Exists('server.denylist.txt')" />
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>

@@ -1,0 +1,5 @@
+# Copia questo file in server.denylist.txt (non viene pubblicato) e aggiungi gli indirizzi da bloccare.
+# Una voce per riga: IP singolo o CIDR. Il file è letto all'avvio del server.
+# 203.0.113.7
+# 198.51.100.0/24
+# 2001:db8::/32

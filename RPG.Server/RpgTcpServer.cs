@@ -39,12 +39,27 @@ public class RpgTcpServer(string ipAddress, int port)
     private bool _isRunning;
     // Difese per IP prima del login: connessioni simultanee, frequenza, ban temporaneo.
     private readonly ConnectionGuard _guard = new();
+    // Indirizzi esclusi a mano (file server.denylist.txt, non pubblicato): letto all'avvio.
+    private IpDenyList _denyList = new();
+    public const string DenyListFileName = "server.denylist.txt";
 
     public async Task StartAsync()
     {
         _listener = new TcpListener(_ipAddress, _port);
         _listener.Start();
         _isRunning = true;
+
+        try
+        {
+            _denyList = IpDenyList.Load(DataPaths.Resolve(DenyListFileName));
+            Console.WriteLine($"[SERVER] Deny list: {_denyList.Count} voci da {DenyListFileName}.");
+            foreach (var (line, text) in _denyList.Invalid)
+                Console.WriteLine($"[SERVER] {DenyListFileName} riga {line} ignorata (non valida): {text}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[SERVER] Impossibile leggere {DenyListFileName}: {ex.Message}. Deny list vuota.");
+        }
 
         Console.WriteLine($"[SERVER] In ascolto su {_ipAddress}:{_port}...");
 
@@ -62,6 +77,13 @@ public class RpgTcpServer(string ipAddress, int port)
                 }
 
                 var remote = (tcpClient.Client.RemoteEndPoint as IPEndPoint)?.Address;
+                if (remote != null && _denyList.IsDenied(remote))
+                {
+                    // Voce esplicita nella deny list: chiusura silenziosa, nessun log per connessione.
+                    tcpClient.Close();
+                    continue;
+                }
+
                 if (remote != null)
                 {
                     var admit = _guard.TryAdmit(remote, DateTime.UtcNow);
