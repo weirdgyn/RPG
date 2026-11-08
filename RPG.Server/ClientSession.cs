@@ -29,6 +29,8 @@ public class ClientSession
     public DateTime ConnectedAtUtc { get; } = DateTime.UtcNow;
     // Diventa true solo dopo un login riuscito; i comandi di gioco sono bloccati prima.
     public bool IsAuthenticated { get; set; }
+    /// <summary>Indirizzo remoto (normalizzato) con cui la connessione è stata ammessa da <see cref="ConnectionGuard"/>; null se non tracciato.</summary>
+    public System.Net.IPAddress? RemoteAddress { get; set; }
     public Player Player { get; set; } = new();
     // Handle con cui la sessione ha fatto /link (quello richiesto e validato, cioè il nome del file della
     // scheda). Il controllo "personaggio già in uso" confronta questo valore e non l'Handle scritto

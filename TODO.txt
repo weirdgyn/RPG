@@ -1,6 +1,8 @@
 Sicurezza:
-	implementare access list
-	implementare autenticazione
+	[fatto] limiti per IP (connessioni simultanee, frequenza), primo pacchetto obbligatorio = Login, ban temporaneo automatico
+	implementare access list (deny list da file non pubblicato, CIDR)
+	implementare autenticazione (account con password, hash salato, lockout, ruolo master protetto)
+	implementare TLS (SslStream, certificato autofirmato con pinning dell'impronta)
 
 
 Gestione inventario/oggetti:

@@ -37,6 +37,8 @@ public class RpgTcpServer(string ipAddress, int port)
     private const int MaxCharactersPerSession = 20;
     private const int MaxCharactersTotal = 500;
     private bool _isRunning;
+    // Difese per IP prima del login: connessioni simultanee, frequenza, ban temporaneo.
+    private readonly ConnectionGuard _guard = new();
 
     public async Task StartAsync()
     {
@@ -59,7 +61,21 @@ public class RpgTcpServer(string ipAddress, int port)
                     continue;
                 }
 
-                var session = new ClientSession(tcpClient);
+                var remote = (tcpClient.Client.RemoteEndPoint as IPEndPoint)?.Address;
+                if (remote != null)
+                {
+                    var admit = _guard.TryAdmit(remote, DateTime.UtcNow);
+                    if (admit != AdmitResult.Allowed)
+                    {
+                        // Un indirizzo bannato non viene loggato: uno scanner insistente riempirebbe la console.
+                        if (admit != AdmitResult.Banned)
+                            Console.WriteLine($"[GUARD] Connessione da {ConnectionGuard.Normalize(remote)} rifiutata: {admit}.");
+                        tcpClient.Close();
+                        continue;
+                    }
+                }
+
+                var session = new ClientSession(tcpClient) { RemoteAddress = remote == null ? null : ConnectionGuard.Normalize(remote) };
                 _connectedClients[session.Id] = session;
 
                 Console.WriteLine($"[SERVER] Nuovo client connesso [{session.IdShort}] da {tcpClient.Client.RemoteEndPoint}");
@@ -76,6 +92,9 @@ public class RpgTcpServer(string ipAddress, int port)
 
     private async Task HandleClientAsync(ClientSession client)
     {
+        // Connessione "cattiva": chiusa prima di un login valido (scadenza, spazzatura, primo pacchetto
+        // sbagliato). Alla chiusura conta come strike per l'indirizzo; troppi strike = ban temporaneo.
+        bool badConnection = false;
         try
         {
             string? line;
@@ -97,10 +116,15 @@ public class RpgTcpServer(string ipAddress, int port)
                 catch (OperationCanceledException) when (loginDeadline.IsCancellationRequested && !client.IsAuthenticated)
                 {
                     Console.WriteLine($"[SERVER] Login non completato entro {InputLimits.LoginTimeoutSeconds}s da [{client.IdShort}]: connessione chiusa.");
+                    badConnection = true;
                     break;
                 }
 
-                if (line == null) break;
+                if (line == null)
+                {
+                    badConnection = !client.IsAuthenticated;
+                    break;
+                }
                 if (string.IsNullOrWhiteSpace(line)) continue;
 
                 NetworkPacket? packet;
@@ -110,11 +134,26 @@ public class RpgTcpServer(string ipAddress, int port)
                 }
                 catch (JsonException)
                 {
+                    // Prima del login chi non parla il protocollo non è un client: chiudo subito.
+                    if (!client.IsAuthenticated)
+                    {
+                        Console.WriteLine($"[SERVER] Dati non validi prima del login da [{client.IdShort}]: connessione chiusa.");
+                        badConnection = true;
+                        break;
+                    }
                     // Riga non valida: la scarto senza chiudere la sessione
                     Console.WriteLine($"[SERVER] Pacchetto malformato da [{client.IdShort}] ignorato.");
                     continue;
                 }
                 if (packet == null) continue;
+
+                // Il primo pacchetto di un client vero è un Login (o un Ping): altro prima del login = non è il nostro client.
+                if (!client.IsAuthenticated && packet.OpCode != OpCode.C2S_Login && packet.OpCode != OpCode.C2S_Ping)
+                {
+                    Console.WriteLine($"[SERVER] Pacchetto {packet.OpCode} prima del login da [{client.IdShort}]: connessione chiusa.");
+                    badConnection = true;
+                    break;
+                }
 
                 try
                 {
@@ -140,11 +179,19 @@ public class RpgTcpServer(string ipAddress, int port)
         catch (Exception ex)
         {
             Console.WriteLine($"[SERVER] Connessione interrotta con il client [{client.IdShort}]: {ex.Message}");
+            if (!client.IsAuthenticated) badConnection = true;
         }
         finally
         {
             _connectedClients.TryRemove(client.Id, out _);
             await client.CloseAsync();
+            if (client.RemoteAddress is { } remoteAddress)
+            {
+                var now = DateTime.UtcNow;
+                if (badConnection && !client.IsAuthenticated && _guard.ReportStrike(remoteAddress, now))
+                    Console.WriteLine($"[GUARD] {remoteAddress} bannato per {ConnectionGuard.DefaultBanDuration.TotalMinutes:0} minuti: troppe connessioni senza login valido.");
+                _guard.Release(remoteAddress, now);
+            }
             var masterNotices = RemovePlayerFromGames(client.Player, out var completedChecks, out var turnNotices, out var deadCharacters);
 
             // Il salvezza morte può essere scattato al passaggio di turno: le schede dei morti vanno salvate.
@@ -362,6 +409,7 @@ public class RpgTcpServer(string ipAddress, int port)
             return;
         }
 
+        if (client.RemoteAddress is { } okAddress) _guard.ReportSuccess(okAddress);
         Console.WriteLine($"[LOGIN] Client {client.IdShort} autenticato come '{userName}'");
 
         await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_LoginResponse, new LoginResponsePayload
