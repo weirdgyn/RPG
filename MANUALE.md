@@ -27,7 +27,7 @@ All'avvio il client chiede lo **username**. Se lo lasci vuoto ne viene generato 
 
 > **Connessione:** se non completi il login entro **30 secondi** dalla connessione il server la chiude; un client che per più di **10 secondi** non legge i messaggi del server viene disconnesso. Una volta fatto il login non c'è un timeout di inattività.
 
-> **Nota:** il login non richiede password e la connessione TCP non è cifrata. Usa il client solo con server di cui ti fidi e non usare nomi o dati sensibili.
+> **Nota:** la connessione è cifrata con TLS, ma il login non richiede ancora password. Il server usa un certificato autofirmato (`server.pfx`, creato al primo avvio): alla prima connessione il client ne memorizza l'impronta SHA-256 in `known_servers.json` (cartella ApplicationData, sottocartella `RPG`) e la confronta a ogni collegamento successivo; se cambia, rifiuta la connessione. Per prove in rete locale server e client possono essere avviati entrambi con `--no-tls` (traffico in chiaro).
 
 ### 1.3 Il percorso tipico
 

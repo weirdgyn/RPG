@@ -6,12 +6,15 @@ using RPG.Common.Utils;
 using RPG.Common.World;
 using System.Collections.Concurrent;
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Authentication;
+using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 
 namespace RPG.Server;
 
-public class RpgTcpServer(string ipAddress, int port)
+public class RpgTcpServer(string ipAddress, int port, bool useTls = true)
 {
     private readonly IPAddress _ipAddress = ipAddress == "0.0.0.0" ? IPAddress.Any : IPAddress.Parse(ipAddress);
     private readonly int _port = port;
@@ -41,10 +44,26 @@ public class RpgTcpServer(string ipAddress, int port)
     private readonly ConnectionGuard _guard = new();
     // Indirizzi esclusi a mano (file server.denylist.txt, non pubblicato): letto all'avvio.
     private IpDenyList _denyList = new();
+    // Certificato TLS (null con --no-tls: connessioni in chiaro, solo per prove in rete locale).
+    private X509Certificate2? _certificate;
     public const string DenyListFileName = "server.denylist.txt";
 
     public async Task StartAsync()
     {
+        if (useTls)
+        {
+            string certPath = File.Exists(DataPaths.Resolve(ServerCertificate.FileName))
+                ? DataPaths.Resolve(ServerCertificate.FileName)
+                : Path.GetFullPath(ServerCertificate.FileName);
+            _certificate = ServerCertificate.LoadOrCreate(certPath, out bool created);
+            Console.WriteLine($"[SERVER] TLS attivo. Certificato {(created ? "creato" : "caricato")}: {certPath}");
+            Console.WriteLine($"[SERVER] Impronta SHA-256: {TrustStore.Fingerprint(_certificate.RawData)}");
+        }
+        else
+        {
+            Console.WriteLine("[SERVER] ATTENZIONE: TLS disattivato (--no-tls): il traffico, username compresi, viaggia in chiaro.");
+        }
+
         _listener = new TcpListener(_ipAddress, _port);
         _listener.Start();
         _isRunning = true;
@@ -97,12 +116,8 @@ public class RpgTcpServer(string ipAddress, int port)
                     }
                 }
 
-                var session = new ClientSession(tcpClient) { RemoteAddress = remote == null ? null : ConnectionGuard.Normalize(remote) };
-                _connectedClients[session.Id] = session;
-
-                Console.WriteLine($"[SERVER] Nuovo client connesso [{session.IdShort}] da {tcpClient.Client.RemoteEndPoint}");
-
-                _ = Task.Run(() => HandleClientAsync(session));
+                var normalized = remote == null ? null : ConnectionGuard.Normalize(remote);
+                _ = Task.Run(() => AcceptSessionAsync(tcpClient, normalized));
             }
             catch (Exception ex)
             {
@@ -110,6 +125,53 @@ public class RpgTcpServer(string ipAddress, int port)
                 Console.WriteLine($"[SERVER] Errore nell'accettazione del client: {ex.Message}");
             }
         }
+    }
+
+    /// <summary>
+    /// Completa l'handshake TLS (se attivo) e avvia la sessione. Un handshake che fallisce o scade è un client
+    /// che non parla TLS (scanner, bot, client in chiaro): conta come strike e la connessione è chiusa.
+    /// </summary>
+    private async Task AcceptSessionAsync(TcpClient tcpClient, IPAddress? remote)
+    {
+        Stream stream;
+        try
+        {
+            stream = tcpClient.GetStream();
+            if (_certificate != null)
+            {
+                var ssl = new SslStream(stream, leaveInnerStreamOpen: false);
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(InputLimits.TlsHandshakeTimeoutSeconds));
+                await ssl.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
+                {
+                    ServerCertificate = _certificate,
+                    ClientCertificateRequired = false,
+                    EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13
+                }, timeout.Token);
+                stream = ssl;
+            }
+        }
+        catch (Exception)
+        {
+            try { tcpClient.Close(); } catch { /* già chiuso */ }
+            if (remote != null) FinishGuard(remote, strike: true);
+            return;
+        }
+
+        var session = new ClientSession(tcpClient, stream) { RemoteAddress = remote };
+        _connectedClients[session.Id] = session;
+
+        Console.WriteLine($"[SERVER] Nuovo client connesso [{session.IdShort}] da {tcpClient.Client.RemoteEndPoint}");
+
+        await HandleClientAsync(session);
+    }
+
+    /// <summary>Chiude il conteggio della connessione per l'indirizzo e, se "cattiva", registra lo strike (ed eventuale ban).</summary>
+    private void FinishGuard(IPAddress address, bool strike)
+    {
+        var now = DateTime.UtcNow;
+        if (strike && _guard.ReportStrike(address, now))
+            Console.WriteLine($"[GUARD] {address} bannato per {ConnectionGuard.DefaultBanDuration.TotalMinutes:0} minuti: troppe connessioni senza login valido.");
+        _guard.Release(address, now);
     }
 
     private async Task HandleClientAsync(ClientSession client)
@@ -208,12 +270,7 @@ public class RpgTcpServer(string ipAddress, int port)
             _connectedClients.TryRemove(client.Id, out _);
             await client.CloseAsync();
             if (client.RemoteAddress is { } remoteAddress)
-            {
-                var now = DateTime.UtcNow;
-                if (badConnection && !client.IsAuthenticated && _guard.ReportStrike(remoteAddress, now))
-                    Console.WriteLine($"[GUARD] {remoteAddress} bannato per {ConnectionGuard.DefaultBanDuration.TotalMinutes:0} minuti: troppe connessioni senza login valido.");
-                _guard.Release(remoteAddress, now);
-            }
+                FinishGuard(remoteAddress, strike: badConnection && !client.IsAuthenticated);
             var masterNotices = RemovePlayerFromGames(client.Player, out var completedChecks, out var turnNotices, out var deadCharacters);
 
             // Il salvezza morte può essere scattato al passaggio di turno: le schede dei morti vanno salvate.

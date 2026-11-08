@@ -40,10 +40,10 @@ public class ClientSession
     // Schede create da questa sessione con /create (tetto per sessione contro l'esaurimento del disco).
     // Letto e scritto solo sotto _createLock del server.
     public int CharactersCreated { get; set; }
-    public ClientSession(TcpClient tcpClient)
+    public ClientSession(TcpClient tcpClient, Stream? stream = null)
     {
         TcpClient = tcpClient;
-        var stream = tcpClient.GetStream();
+        stream ??= tcpClient.GetStream();
         Reader = new StreamReader(stream);
         _writer = new StreamWriter(stream) { AutoFlush = true };
         _writerLoop = Task.Run(WriteLoopAsync);

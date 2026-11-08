@@ -387,7 +387,7 @@ internal class Program
             $"[grey]Connessione a:[/] " +
             $"[bold green]{host}:{port}[/]\n");
 
-        var client = new RpgTcpClient();
+        var client = new RpgTcpClient(useTls: !options.NoTls);
 
         bool connected =
             await client.ConnectAsync(

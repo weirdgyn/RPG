@@ -2,7 +2,7 @@ Sicurezza:
 	[fatto] limiti per IP (connessioni simultanee, frequenza), primo pacchetto obbligatorio = Login, ban temporaneo automatico
 	[fatto] deny list da file non pubblicato server.denylist.txt (IP singoli e CIDR, letto all'avvio)
 	implementare autenticazione (account con password, hash salato, lockout, ruolo master protetto)
-	implementare TLS (SslStream, certificato autofirmato con pinning dell'impronta)
+	[fatto] TLS (SslStream, certificato autofirmato server.pfx, impronta memorizzata dal client alla prima connessione), opzione --no-tls
 
 
 Gestione inventario/oggetti:

@@ -3,14 +3,20 @@ using RPG.Common.Models;
 using RPG.Common.Protocol;
 using RPG.Common.World;
 using Spectre.Console;
+using RPG.Common.Utils;
+using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Authentication;
 using System.Text.Json;
 
 namespace RPG.Client;
 
-public class RpgTcpClient
+public class RpgTcpClient(bool useTls = true)
 {
     private const int CONNECTION_TIMEOUT = 15;
+    // Impronte dei certificati dei server già visitati (trust on first use, come known_hosts di SSH).
+    private readonly TrustStore _trust = TrustStore.Load(Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RPG", "known_servers.json"));
     private TcpClient? _tcpClient;
     private StreamReader? _reader;
     private StreamWriter? _writer;
@@ -102,7 +108,8 @@ public class RpgTcpClient
             _tcpClient = new TcpClient();
             await _tcpClient.ConnectAsync(host, port);
 
-            var stream = _tcpClient.GetStream();
+            Stream stream = _tcpClient.GetStream();
+            if (useTls) stream = await AuthenticateTlsAsync(stream, host, port);
             _reader = new StreamReader(stream);
             _writer = new StreamWriter(stream) { AutoFlush = true };
             _isRunning = true;
@@ -111,9 +118,60 @@ public class RpgTcpClient
         }
         catch (Exception ex)
         {
+            try { _tcpClient?.Close(); } catch { /* già chiuso */ }
             AnsiConsole.MarkupLine($"[bold red][[!]]: Errore di connessione:[/] [red]{Markup.Escape(ex.Message)}[/]");
             return false;
         }
+    }
+
+    /// <summary>
+    /// Handshake TLS con verifica dell'impronta: il certificato del server è autofirmato, quindi la fiducia
+    /// si basa sull'impronta memorizzata alla prima connessione. Se cambia, la connessione è rifiutata.
+    /// </summary>
+    private async Task<Stream> AuthenticateTlsAsync(Stream inner, string host, int port)
+    {
+        TrustResult? result = null;
+        string seen = string.Empty;
+
+        var ssl = new SslStream(inner, leaveInnerStreamOpen: false, (_, cert, _, _) =>
+        {
+            if (cert == null) return false;
+            seen = TrustStore.Fingerprint(cert.GetRawCertData());
+            result = _trust.Check(host, port, seen);
+            return result != TrustResult.Mismatch;
+        });
+
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(CONNECTION_TIMEOUT));
+            await ssl.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
+            {
+                TargetHost = host,
+                EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13
+            }, timeout.Token);
+        }
+        catch (Exception ex) when (result == TrustResult.Mismatch)
+        {
+            AnsiConsole.MarkupLine("[bold red][[!]] ATTENZIONE: il certificato di questo server è cambiato.[/]");
+            AnsiConsole.MarkupLine($"[red]Memorizzata:[/] {_trust.Get(host, port)}");
+            AnsiConsole.MarkupLine($"[red]Ricevuta:   [/] {seen}");
+            AnsiConsole.MarkupLine("[grey]Potrebbe essere un'intercettazione. Se il server è stato reinstallato e l'impronta è quella attesa, " +
+                $"rimuovi la voce '{Markup.Escape(TrustStore.Key(host, port))}' dal file known_servers.json (cartella ApplicationData, sottocartella RPG) e riconnettiti.[/]");
+            throw new InvalidOperationException("connessione rifiutata: certificato del server diverso da quello memorizzato.", ex);
+        }
+        catch (Exception ex)
+        {
+            throw new IOException($"handshake TLS fallito ({ex.Message}). Se il server è avviato con --no-tls, avvia il client con --no-tls.", ex);
+        }
+
+        if (result == TrustResult.NewServer)
+        {
+            bool saved = _trust.Remember(host, port, seen);
+            AnsiConsole.MarkupLine($"[grey]Primo collegamento a questo server: impronta del certificato memorizzata{(saved ? "" : " (solo per questa sessione: salvataggio non riuscito)")}.[/]");
+            AnsiConsole.MarkupLine($"[grey]SHA-256:[/] {seen}");
+        }
+
+        return ssl;
     }
 
     private async Task ListenToServerAsync()

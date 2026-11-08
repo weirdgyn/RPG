@@ -20,6 +20,9 @@ public class ClientOptions
     [Option('i', "intro", HelpText = "Mostra la sequenza intro.")]
     public bool Intro { get; set; } = false;
 
+    [Option("no-tls", HelpText = "Connessione in chiaro (senza TLS): solo verso server avviati con --no-tls.")]
+    public bool NoTls { get; set; }
+
     [Option('f', "font", HelpText = "Figlet banner font.")]
     public string Font { get; set; } = string.Empty;
 }

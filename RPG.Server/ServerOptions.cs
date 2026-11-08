@@ -12,4 +12,7 @@ public class ServerOptions
 
     [Option('p', "port", Default = DefaultPort, HelpText = "Porta TCP di ascolto.")]
     public int Port { get; set; } = DefaultPort;
+
+    [Option("no-tls", HelpText = "Disattiva TLS (traffico in chiaro): solo per prove in rete locale. Il client va avviato con --no-tls.")]
+    public bool NoTls { get; set; }
 }

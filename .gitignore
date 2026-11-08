@@ -434,4 +434,6 @@ FodyWeavers.xsd
 client.settings.json
 # Local server deny list (IP addresses, do not commit)
 server.denylist.txt
+# Server TLS certificate with private key (do not commit)
+server.pfx
 /RPG.Client/Properties/launchSettings.json

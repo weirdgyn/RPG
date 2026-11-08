@@ -18,6 +18,8 @@ internal static class InputLimits
 
     /// <summary>Tempo massimo, dalla connessione, per completare il login: oltre la connessione è chiusa.</summary>
     public const int LoginTimeoutSeconds = 30;
+    /// <summary>Tempo massimo per completare l'handshake TLS: chi non lo completa non è un client.</summary>
+    public const int TlsHandshakeTimeoutSeconds = 10;
     /// <summary>Tempo massimo per scrivere un pacchetto su un client: se non lo legge, la sessione è chiusa.</summary>
     public const int SendTimeoutSeconds = 10;
     /// <summary>Pacchetti in attesa di invio per sessione: se la coda si riempie il client è troppo lento e viene chiuso.</summary>

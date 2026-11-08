@@ -24,7 +24,7 @@ internal class Program
 
         Skills.Initialize();
 
-        var server = new RpgTcpServer(options.Host, options.Port);
+        var server = new RpgTcpServer(options.Host, options.Port, useTls: !options.NoTls);
         await server.StartAsync();
 
         return 0;
