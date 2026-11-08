@@ -1271,14 +1271,19 @@ public class RpgTcpClient(bool useTls = true)
 
             if (string.IsNullOrWhiteSpace(player_name))
             {
-                player_name = $"Punk_{Guid.NewGuid().ToString()[..4]}";
+                AnsiConsole.MarkupLine("[bold red][[!]]: Inserisci uno username.[/]");
+                continue;
             }
+
+            // Digitazione mascherata: la password non compare a schermo né resta nella cronologia.
+            string password = AnsiConsole.Prompt(new TextPrompt<string>("[bold yellow]Password:[/] ").Secret().AllowEmpty());
 
             _loginTcs = new TaskCompletionSource<LoginResponsePayload>(TaskCreationOptions.RunContinuationsAsynchronously);
 
             var loginPacket = NetworkPacket.Create(OpCode.C2S_Login, new LoginRequestPayload
             {
-                PlayerName = player_name.Trim()
+                PlayerName = player_name.Trim(),
+                Password = password
             });
 
             await _writer.WriteLineAsync(JsonSerializer.Serialize(loginPacket));

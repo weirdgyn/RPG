@@ -14,7 +14,7 @@ using System.Text.Json;
 
 namespace RPG.Server;
 
-public class RpgTcpServer(string ipAddress, int port, bool useTls = true)
+public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, bool useTls = true)
 {
     private readonly IPAddress _ipAddress = ipAddress == "0.0.0.0" ? IPAddress.Any : IPAddress.Parse(ipAddress);
     private readonly int _port = port;
@@ -79,6 +79,10 @@ public class RpgTcpServer(string ipAddress, int port, bool useTls = true)
         {
             Console.WriteLine($"[SERVER] Impossibile leggere {DenyListFileName}: {ex.Message}. Deny list vuota.");
         }
+
+        Console.WriteLine(accounts.Count == 0
+            ? "[SERVER] Nessun account: nessuno può accedere. Digita qui 'adduser <nome>' per crearne uno ('help' per i comandi)."
+            : $"[SERVER] Account caricati: {accounts.Count}. Console: 'users', 'adduser', 'passwd', 'deluser'.");
 
         Console.WriteLine($"[SERVER] In ascolto su {_ipAddress}:{_port}...");
 
@@ -434,13 +438,10 @@ public class RpgTcpServer(string ipAddress, int port, bool useTls = true)
 
         var loginReq = packet.DeserializePayload<LoginRequestPayload>();
         string userName = loginReq?.PlayerName?.Trim() ?? string.Empty;
-
-        if (string.IsNullOrWhiteSpace(userName))
-        {
-            userName = $"Punk_{client.IdShort}";
-        }
+        string password = loginReq?.Password ?? string.Empty;
 
         LoginResponsePayload? denial = null;
+        bool credentialFailure = false;
 
         if (userName.Length > InputLimits.MaxUsernameLength || InputLimits.HasControlChars(userName))
         {
@@ -451,6 +452,29 @@ public class RpgTcpServer(string ipAddress, int port, bool useTls = true)
                 PlayerName = string.Empty,
                 Message = $"Username non valido: massimo {InputLimits.MaxUsernameLength} caratteri e nessun carattere di controllo."
             };
+        }
+        else
+        {
+            // L'hash è costoso di proposito: lo calcolo fuori da _loginLock.
+            var auth = accounts.Verify(userName, password, DateTime.UtcNow, out var canonicalName);
+            if (auth == AuthResult.Ok)
+            {
+                userName = canonicalName!;
+            }
+            else
+            {
+                credentialFailure = true;
+                Console.WriteLine($"[LOGIN] RIFIUTATO: {(auth == AuthResult.LockedOut ? "account bloccato" : "credenziali errate")} per '{userName}' da [{client.IdShort}].");
+                denial = new LoginResponsePayload
+                {
+                    Success = false,
+                    PlayerId = string.Empty,
+                    PlayerName = string.Empty,
+                    Message = auth == AuthResult.LockedOut
+                        ? "Troppi tentativi falliti per questo account: riprova tra qualche minuto."
+                        : "Username o password errati."
+                };
+            }
         }
 
         lock (_loginLock)
@@ -485,6 +509,13 @@ public class RpgTcpServer(string ipAddress, int port, bool useTls = true)
         if (denial != null)
         {
             await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_LoginResponse, denial));
+
+            // Credenziali sbagliate = strike per l'indirizzo: raggiunta la soglia scatta il ban e la connessione è chiusa.
+            if (credentialFailure && client.RemoteAddress is { } badAddress && _guard.ReportStrike(badAddress, DateTime.UtcNow))
+            {
+                Console.WriteLine($"[GUARD] {badAddress} bannato per {ConnectionGuard.DefaultBanDuration.TotalMinutes:0} minuti: troppi login falliti.");
+                client.Abort();
+            }
             return;
         }
 

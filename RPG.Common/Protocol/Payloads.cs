@@ -16,6 +16,8 @@ public class ChatPayload
 public class LoginRequestPayload
 {
     public string PlayerName { get; set; } = string.Empty;
+    /// <summary>Password dell'account (viaggia solo dentro il canale TLS; il server non la scrive mai nei log).</summary>
+    public string Password { get; set; } = string.Empty;
 }
 
 public class LoginResponsePayload

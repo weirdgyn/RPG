@@ -1,7 +1,8 @@
 Sicurezza:
 	[fatto] limiti per IP (connessioni simultanee, frequenza), primo pacchetto obbligatorio = Login, ban temporaneo automatico
 	[fatto] deny list da file non pubblicato server.denylist.txt (IP singoli e CIDR, letto all'avvio)
-	implementare autenticazione (account con password, hash salato, lockout, ruolo master protetto)
+	[fatto] autenticazione: account con password (PBKDF2 con sale, accounts.json), creati solo dalla console del server (adduser/passwd/deluser/users), blocco account dopo 5 tentativi falliti, ban IP sui login falliti
+	(master: nessuna distinzione per scelta; hashing/lockout da rivedere solo se serve)
 	[fatto] TLS (SslStream, certificato autofirmato server.pfx, impronta memorizzata dal client alla prima connessione), opzione --no-tls
 
 

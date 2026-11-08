@@ -24,7 +24,10 @@ internal class Program
 
         Skills.Initialize();
 
-        var server = new RpgTcpServer(options.Host, options.Port, useTls: !options.NoTls);
+        var accounts = AccountStore.Load(AccountStore.ResolvePath());
+        _ = Task.Run(() => ServerConsole.Run(accounts));
+
+        var server = new RpgTcpServer(options.Host, options.Port, accounts, useTls: !options.NoTls);
         await server.StartAsync();
 
         return 0;

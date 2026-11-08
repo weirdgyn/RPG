@@ -436,4 +436,6 @@ client.settings.json
 server.denylist.txt
 # Server TLS certificate with private key (do not commit)
 server.pfx
+# Player accounts with password hashes (do not commit)
+accounts.json
 /RPG.Client/Properties/launchSettings.json

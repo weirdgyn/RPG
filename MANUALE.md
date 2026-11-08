@@ -23,11 +23,11 @@ Altre opzioni: `-i` (mostra la sequenza intro), `-f <font>` (font del banner).
 
 ### 1.2 Login
 
-All'avvio il client chiede lo **username**. Se lo lasci vuoto ne viene generato uno (`Punk_xxxx`). Lo username è unico: se è già in uso sul server il login viene rifiutato e puoi riprovare.
+All'avvio il client chiede **username** e **password** (la digitazione è nascosta). Lo username è unico: se è già in uso sul server il login viene rifiutato e puoi riprovare. Se non hai un account, chiedilo a chi gestisce il server.
 
 > **Connessione:** se non completi il login entro **30 secondi** dalla connessione il server la chiude; un client che per più di **10 secondi** non legge i messaggi del server viene disconnesso. Una volta fatto il login non c'è un timeout di inattività.
 
-> **Nota:** la connessione è cifrata con TLS, ma il login non richiede ancora password. Il server usa un certificato autofirmato (`server.pfx`, creato al primo avvio): alla prima connessione il client ne memorizza l'impronta SHA-256 in `known_servers.json` (cartella ApplicationData, sottocartella `RPG`) e la confronta a ogni collegamento successivo; se cambia, rifiuta la connessione. Per prove in rete locale server e client possono essere avviati entrambi con `--no-tls` (traffico in chiaro).
+> **Nota:** la connessione è cifrata con TLS e il login richiede username e password: gli account li crea solo l'amministratore dal server (console del server: `adduser <nome>`, `passwd <nome>`, `deluser <nome>`, `users`). Dopo 5 tentativi falliti l'account è bloccato per 5 minuti. Il server usa un certificato autofirmato (`server.pfx`, creato al primo avvio): alla prima connessione il client ne memorizza l'impronta SHA-256 in `known_servers.json` (cartella ApplicationData, sottocartella `RPG`) e la confronta a ogni collegamento successivo; se cambia, rifiuta la connessione. Per prove in rete locale server e client possono essere avviati entrambi con `--no-tls` (traffico in chiaro).
 
 ### 1.3 Il percorso tipico
 
