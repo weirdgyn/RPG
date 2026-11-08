@@ -711,7 +711,7 @@ public class RpgTcpClient(bool useTls = true)
                         if (whoResp.HasCharacter)
                         {
                             grid.AddRow(new Markup($"Personaggio: [bold yellow]{Markup.Escape(whoResp.CharacterHandle)}[/]  HP [bold]{whoResp.Health}/{whoResp.MaxHealth}[/] [grey]({Markup.Escape(whoResp.WoundStatus)})[/]"));
-                            grid.AddRow(new Markup($"Posizione: ({whoResp.Position.X}, {whoResp.Position.Y}, {whoResp.Position.Z})  MA: {whoResp.MA}m"));
+                            grid.AddRow(new Markup($"Posizione: ({whoResp.Position.X}, {whoResp.Position.Y}, {whoResp.Position.Z})  MA: {whoResp.MA}m{(whoResp.MAEffective >= 0 && whoResp.MAEffective != whoResp.MA ? $" [yellow](con effetti {whoResp.MAEffective}m)[/]" : "")}"));
                             if (whoResp.WeaponName.Length > 0)
                             {
                                 string ammo = whoResp.AmmoCapacity > 0 ? $" - colpi {whoResp.AmmoLeft}/{whoResp.AmmoCapacity}" : "";

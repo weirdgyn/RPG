@@ -131,7 +131,7 @@ Gli NPC compaiono nell'elenco con il loro stato qualitativo (per esempio "Seria"
 
 - Ogni spostamento può essere lungo al massimo **MA metri** (la tua statistica Movimento), in distanza 3D dalla posizione attuale.
 - La destinazione deve stare dentro la mappa e non può essere un ostacolo.
-- Durante un combattimento MA è il totale del turno: più `/move` si sommano (vedi 5.1).
+- Durante un combattimento MA è il totale del turno: più `/move` si sommano (vedi 5.1). Gli effetti attivi con chiave `MOVE` o `STAT:MA` (e i bonus cyberware con la stessa chiave) cambiano l'MA disponibile, mai sotto zero; il valore con gli effetti compare nei messaggi di movimento, nel turno, in `/game` e in `/whoami`.
 - Se ometti la `Z`, l'azione resta sulla **quota corrente** del personaggio (non va a 0): da `(0,0,2)` un `/move 2 1` porta a `(2,1,2)`. Vale anche per `/throw` e per `/as <npc> move` / `/as <npc> throw` (che usano la quota corrente dell'NPC).
 
 

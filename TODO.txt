@@ -54,7 +54,7 @@ Effetti (bonus/malus) - infrastruttura comune di /bonus e /activate:
 	Durata: manual | combat | r<N> (round) | u<N> (usi) | d<N> (giorni, solo con /day). Un effetto a N round scade all'inizio del round N+1 dall'applicazione.
 	Ogni termine compare nei pannelli di calcolo con la sua etichetta (es. "+3 Sandevistan", "-1 master").
 	Prima versione: gli effetti STAT valgono solo nei tiri (abilità, colpire, lancio, iniziativa), non in BTM, salvezza contro la morte e stordimento.
-	Fasi: 1) modello e regole pure in RPG.Common (FATTO)  2) uso nei tiri, cyberware passivi nello stesso sistema (2a colpire/danno/lancio/iniziativa FATTO; 2b prove di abilità, check, stabilizzazione e pannello FATTO; 2c MOVE/MA e /skills)  3) /bonus  4) oggetti ad attivazione e /activate
+	Fasi: 1) modello e regole pure in RPG.Common (FATTO)  2) uso nei tiri, cyberware passivi nello stesso sistema (2a colpire/danno/lancio/iniziativa FATTO; 2b prove di abilità, check, stabilizzazione e pannello FATTO; 2c MOVE/MA in /move, residuo di turno e stato FATTO; resta il pool di /skills)  3) /bonus  4) oggetti ad attivazione e /activate
 
 	/bonus [clear|list] <chiave> <±N> [durata] <bersagli> -> (master only) applica un bonus di circostanza; es. /bonus REF +2 r3 morgan molly, /bonus INIT -2 combat party
 	/activate item|drug -> attiva un oggetto (non un'arma) che produce effetti. Scheda di attivazione dell'oggetto:

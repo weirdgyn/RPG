@@ -651,6 +651,13 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     private static List<EffectTerm> CollectEffectTerms(Game game, Character character, EffectContext ctx) =>
         EffectRules.CollectTerms(game.Effects, character, ctx, SkillExists);
 
+    // Movimento per turno con gli effetti (MOVE, STAT:MA). Va chiamata sotto Game.SyncRoot.
+    private static int EffectiveMA(Game game, Character character) =>
+        EffectRules.MovementAllowance(game.Effects, character, SkillExists);
+
+    private static string MaText(int baseMa, int effective) =>
+        effective == baseMa ? $"MA {baseMa}" : $"MA {baseMa}, con effetti {effective}";
+
     // Aggiunge i termini a un calcolo da mostrare con FormatSum: ognuno con la sua etichetta
     private static void AddTermParts(List<(string, int, string?)> parts, IEnumerable<EffectTerm> terms)
     {
@@ -874,14 +881,14 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             if (error != null) return new MoveOutcome(error, GameMap.MovementResult.Success);
 
             double distance = CombatRules.CalculateDistance(actor.Position, requested);
-            int allowance = Math.Max(0, actor.Stats.MA);
+            int allowance = EffectiveMA(game, actor);
             double available = game.CombatActive ? Math.Max(0, allowance - game.TurnMoveUsed) : allowance;
 
             if (distance > available + 1e-9)
             {
                 return new MoveOutcome(game.CombatActive
-                    ? $"Troppo lontano: a {actor.Handle} restano {available:F1}m di movimento in questo turno (MA {allowance}), la destinazione dista {distance:F1}m."
-                    : $"Troppo lontano: {actor.Handle} può muoversi al massimo di {allowance}m per volta (MA {allowance}), la destinazione dista {distance:F1}m.",
+                    ? $"Troppo lontano: a {actor.Handle} restano {available:F1}m di movimento in questo turno ({MaText(actor.Stats.MA, allowance)}), la destinazione dista {distance:F1}m."
+                    : $"Troppo lontano: {actor.Handle} può muoversi al massimo di {allowance}m per volta ({MaText(actor.Stats.MA, allowance)}), la destinazione dista {distance:F1}m.",
                     GameMap.MovementResult.Success);
             }
 
@@ -1017,7 +1024,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         string current = game.CurrentTurnHandle ?? "nessuno";
         var combatant = game.CurrentTurnHandle != null ? FindCombatantInGame(game, game.CurrentTurnHandle) : null;
         string budget = combatant != null
-            ? $" Movimento: {Math.Max(0, combatant.Character.Stats.MA - game.TurnMoveUsed):F1}/{combatant.Character.Stats.MA}m, azione: {(game.TurnActionUsed ? "usata" : "disponibile")}."
+            ? $" Movimento: {Math.Max(0, EffectiveMA(game, combatant.Character) - game.TurnMoveUsed):F1}/{EffectiveMA(game, combatant.Character)}m, azione: {(game.TurnActionUsed ? "usata" : "disponibile")}."
             : string.Empty;
         return $"Round {game.Round} - tocca a {current}.{budget}";
     }
@@ -1189,6 +1196,11 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             payload.MaxHealth = c.Health.MaxHealth;
             payload.WoundStatus = c.Health.GetWoundStatusDescription();
             payload.MA = c.Stats.MA;
+            var maGame = FindGameOf(c);
+            if (maGame != null)
+            {
+                lock (maGame.SyncRoot) payload.MAEffective = EffectiveMA(maGame, c);
+            }
             payload.Position = c.Position;
             var w = c.EquippedWeapon;
             if (w != null)
@@ -1265,7 +1277,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                     payload.CurrentTurn = game.CurrentTurnHandle ?? string.Empty;
                     payload.ActionUsed = game.TurnActionUsed;
                     var cur = game.CurrentTurnHandle != null ? FindCombatantInGame(game, game.CurrentTurnHandle) : null;
-                    if (cur != null) payload.MoveLeft = Math.Max(0, cur.Character.Stats.MA - game.TurnMoveUsed);
+                    if (cur != null) payload.MoveLeft = Math.Max(0, EffectiveMA(game, cur.Character) - game.TurnMoveUsed);
                 }
                 payload.TurnOrder = [.. game.TurnOrder.Select(t => t.Handle)];
 

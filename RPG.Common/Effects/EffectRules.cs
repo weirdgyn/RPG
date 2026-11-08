@@ -79,6 +79,17 @@ public static class EffectRules
         return terms;
     }
 
+    /// <summary>Contesto del movimento: gli effetti con chiave MOVE o STAT:MA intervengono sull'MA.</summary>
+    public static readonly EffectContext MoveContext = new(RollKind.Move, "MA");
+
+    /// <summary>
+    /// Movimento (MA) disponibile per turno: MA della scheda più i termini con chiave MOVE o STAT:MA
+    /// (cyberware ed effetti del game), mai sotto zero. Gli effetti "a usi" non si consumano muovendosi:
+    /// un bonus al movimento durerebbe un solo passo, che non ha senso.
+    /// </summary>
+    public static int MovementAllowance(IEnumerable<ActiveEffect> gameEffects, Character character, Func<string, bool>? skillExists = null) =>
+        Math.Max(0, character.Stats.MA + CollectTerms(gameEffects, character, MoveContext, skillExists).Sum(t => t.Value));
+
     /// <summary>Gli effetti del personaggio che intervengono nel tiro, nell'ordine in cui sono stati aggiunti.</summary>
     public static List<EffectTerm> Terms(IEnumerable<ActiveEffect> effects, string handle, EffectContext ctx) =>
         [.. effects

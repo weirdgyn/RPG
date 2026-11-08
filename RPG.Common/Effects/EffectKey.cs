@@ -20,7 +20,7 @@ public enum EffectScope
     Hit,
     Damage,
     Move,
-    Stat,    // una statistica: vale nei tiri che la usano
+    Stat,    // una statistica: vale nei tiri che la usano (STAT:MA vale anche per il movimento)
     Skill    // una singola abilità
 }
 
@@ -116,7 +116,7 @@ public readonly record struct EffectKey(EffectScope Scope, string Name = "")
             EffectScope.Hit => ctx.Kind == RollKind.Hit,
             EffectScope.Damage => ctx.Kind == RollKind.Damage,
             EffectScope.Move => ctx.Kind == RollKind.Move,
-            EffectScope.Stat => isCheck && string.Equals(ctx.Stat, Name, StringComparison.OrdinalIgnoreCase),
+            EffectScope.Stat => (isCheck || ctx.Kind == RollKind.Move) && string.Equals(ctx.Stat, Name, StringComparison.OrdinalIgnoreCase),
             EffectScope.Skill => ctx.Kind is RollKind.Skill or RollKind.Hit
                                  && string.Equals(ctx.Skill, Name, StringComparison.OrdinalIgnoreCase),
             _ => false

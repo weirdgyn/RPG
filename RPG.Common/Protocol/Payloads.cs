@@ -105,6 +105,8 @@ public class WhoAmIResponsePayload
     public int MaxHealth { get; set; }
     public string WoundStatus { get; set; } = string.Empty;
     public int MA { get; set; }
+    /// <summary>MA con gli effetti attivi del game; -1 se non applicabile (nessun game).</summary>
+    public int MAEffective { get; set; } = -1;
     public Position3D Position { get; set; } = new();
     public string WeaponName { get; set; } = string.Empty;
     public int AmmoLeft { get; set; }
