@@ -44,6 +44,8 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     private readonly ConnectionGuard _guard = new();
     // Indirizzi esclusi a mano (file server.denylist.txt, non pubblicato): letto all'avvio.
     private IpDenyList _denyList = new();
+    // Ultimo log di un rifiuto per indirizzo bannato (per non ripeterlo a ogni tentativo).
+    private readonly ConcurrentDictionary<IPAddress, DateTime> _lastBanLog = new();
     // Certificato TLS (null con --no-tls: connessioni in chiaro, solo per prove in rete locale).
     private X509Certificate2? _certificate;
     public const string DenyListFileName = "server.denylist.txt";
@@ -110,9 +112,14 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                     var admit = _guard.TryAdmit(remote, DateTime.UtcNow);
                     if (admit != AdmitResult.Allowed)
                     {
-                        // Un indirizzo bannato non viene loggato: uno scanner insistente riempirebbe la console.
-                        if (admit != AdmitResult.Banned)
-                            Console.WriteLine($"[GUARD] Connessione da {ConnectionGuard.Normalize(remote)} rifiutata: {admit}.");
+                        // Un indirizzo bannato si logga al massimo una volta al minuto: uno scanner insistente riempirebbe la console.
+                        var rejected = ConnectionGuard.Normalize(remote);
+                        var now = DateTime.UtcNow;
+                        if (admit != AdmitResult.Banned || !_lastBanLog.TryGetValue(rejected, out var last) || now - last >= TimeSpan.FromMinutes(1))
+                        {
+                            if (admit == AdmitResult.Banned) _lastBanLog[rejected] = now;
+                            Console.WriteLine($"[GUARD] Connessione da {rejected} rifiutata: {admit}.");
+                        }
                         tcpClient.Close();
                         continue;
                     }
@@ -152,8 +159,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                 stream = ssl;
             }
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            Console.WriteLine($"[SERVER] Handshake TLS non completato da {remote}: {ex.GetType().Name}: {ex.Message}");
             try { tcpClient.Close(); } catch { /* già chiuso */ }
             if (remote != null) FinishGuard(remote, strike: true);
             return;
