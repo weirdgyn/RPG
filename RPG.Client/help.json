@@ -55,6 +55,11 @@
     "description": "Master: sposta personaggi/NPC nel punto indicato (non è un'azione)."
   },
   {
+    "command": "/bonus",
+    "parameters": "<chiave> <±N> [durata] <bersagli> | clear <bersagli> | list [bersagli]",
+    "description": "Master: applica un bonus/malus (es. /bonus REF +2 r3 morgan molly, /bonus INIT -2 combat party), lo toglie o li elenca."
+  },
+  {
     "command": "/archetypes",
     "parameters": "-",
     "description": "Elenca gli archetipi disponibili per /create."

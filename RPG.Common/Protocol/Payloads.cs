@@ -48,6 +48,12 @@ public class TeleportRequestPayload
     public List<string> Targets { get; set; } = [];
 }
 
+public class BonusRequestPayload
+{
+    /// <summary>Argomenti di /bonus così come digitati (dopo il comando): li interpreta il server con BonusRules.</summary>
+    public List<string> Args { get; set; } = [];
+}
+
 public class MoveResultPayload
 {
     public string PlayerHandle { get; set; } = string.Empty;
@@ -126,6 +132,8 @@ public class GameMemberInfo
     public int MaxHealth { get; set; } = -1;
     public string WoundStatus { get; set; } = string.Empty;
     public bool IsStunned { get; set; }
+    /// <summary>Effetti attivi (bonus/malus), già descritti. Gli NPC li mostrano solo al master.</summary>
+    public List<string> Effects { get; set; } = [];
     public Position3D Position { get; set; } = new();
 }
 

@@ -750,6 +750,8 @@ public class RpgTcpClient(bool useTls = true)
                         table.AddColumn(new TableColumn("[bold white]Utente / Ruolo[/]"));
                         table.AddColumn(new TableColumn("[bold white]Salute[/]"));
                         table.AddColumn(new TableColumn("[bold white]Posizione[/]").Centered());
+                        bool anyEffects = gs.Members.Any(x => x.Effects.Count > 0);
+                        if (anyEffects) table.AddColumn(new TableColumn("[bold white]Effetti[/]"));
                         foreach (var m in gs.Members)
                         {
                             string label = m.Handle.Length > 0 ? m.Handle : "[grey]-[/]";
@@ -759,8 +761,13 @@ public class RpgTcpClient(bool useTls = true)
                             string hp = m.Handle.Length == 0 ? "[grey]-[/]"
                                 : m.Health >= 0 ? $"{m.Health}/{m.MaxHealth} [grey]({Markup.Escape(m.WoundStatus)})[/]"
                                 : $"[grey]{Markup.Escape(m.WoundStatus)}[/]";
-                            table.AddRow(m.Handle.Length > 0 ? Markup.Escape(m.Handle) + turn : label, owner, hp,
-                                m.Handle.Length > 0 ? $"({m.Position.X}, {m.Position.Y}, {m.Position.Z})" : "-");
+                            var cells = new List<string>
+                            {
+                                m.Handle.Length > 0 ? Markup.Escape(m.Handle) + turn : label, owner, hp,
+                                m.Handle.Length > 0 ? $"({m.Position.X}, {m.Position.Y}, {m.Position.Z})" : "-"
+                            };
+                            if (anyEffects) cells.Add(m.Effects.Count == 0 ? "[grey]-[/]" : string.Join("\n", m.Effects.Select(Markup.Escape)));
+                            table.AddRow(cells.Select(c => new Markup(c)));
                         }
                         grid.AddRow(table);
 
@@ -1629,6 +1636,15 @@ public class RpgTcpClient(bool useTls = true)
                 {
                     AnsiConsole.MarkupLine("[bold red][[!]]: Uso:[/] [yellow]/teleport <X> <Y> <Z> <personaggio> [[altri personaggi]][/] (solo master)");
                 }
+                continue;
+            }
+
+            if (trimmedInput.Equals("/bonus", StringComparison.OrdinalIgnoreCase)
+                || trimmedInput.StartsWith("/bonus ", StringComparison.OrdinalIgnoreCase))
+            {
+                // Lo interpreta il server (BonusRules): qui si inviano gli argomenti così come sono.
+                var bonusArgs = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries).Skip(1).ToList();
+                await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_Bonus, new BonusRequestPayload { Args = bonusArgs })));
                 continue;
             }
 

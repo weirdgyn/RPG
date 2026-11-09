@@ -405,6 +405,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             case OpCode.C2S_Teleport:
                 await HandleTeleportAsync(client, packet);
                 break;
+            case OpCode.C2S_Bonus:
+                await HandleBonusAsync(client, packet);
+                break;
             case OpCode.C2S_GetArchetypes:
                 await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_ArchetypesResponse,
                     new ArchetypesResponsePayload { Archetypes = CharacterTemplateFactory.GetAvailableArchetypes() }));
@@ -655,6 +658,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     private static int EffectiveMA(Game game, Character character) =>
         EffectRules.MovementAllowance(game.Effects, character, SkillExists);
 
+    private static List<string> DescribeEffectsOf(Game game, string handle) =>
+        [.. game.Effects.Where(e => e.TargetHandle.Equals(handle, StringComparison.OrdinalIgnoreCase)).Select(e => e.Describe())];
+
     private static string MaText(int baseMa, int effective) =>
         effective == baseMa ? $"MA {baseMa}" : $"MA {baseMa}, con effetti {effective}";
 
@@ -667,6 +673,16 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     // Righe da aggiungere ai passaggi di un tiro quando un effetto a usi si esaurisce
     private static IEnumerable<string> DescribeExpired(IEnumerable<ActiveEffect> expired) =>
         expired.Select(e => $"Effetto esaurito: {e.Label} ({e.Key}) su {e.TargetHandle}");
+
+    private static IEnumerable<string> DescribeLapsed(IEnumerable<ActiveEffect> lapsed) =>
+        lapsed.Select(e => $"Effetto scaduto: {e.Label} ({e.Key}) su {e.TargetHandle}");
+
+    // Fine del combattimento: tolgono gli effetti "combat" e "a round". Sotto Game.SyncRoot. Restituisce il testo da annunciare ("" se nessuno).
+    private static string EndCombatEffectsLocked(Game game)
+    {
+        var removed = EffectRules.EndCombat(game.Effects);
+        return removed.Count == 0 ? string.Empty : " " + string.Join(". ", DescribeLapsed(removed)) + ".";
+    }
 
     // Pila di munizioni da cui provengono i colpi attualmente nel caricatore (null = standard)
     private static Ammo? FindLoadedAmmo(Character owner, Weapon weapon) =>
@@ -956,6 +972,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                 }
             }
 
+            if (raw / n > 0) notes.AddRange(DescribeLapsed(EffectRules.AdvanceRound(game.Effects)));
             game.Round += raw / n;
             game.TurnIndex = idx;
             game.TurnMoveUsed = 0;
@@ -968,6 +985,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         if (fallbackRaw >= 0)
         {
             notes.Add("Nessuno in grado di agire: il turno passa a un personaggio stordito (può solo passare con /next).");
+            if (fallbackRaw / n > 0) notes.AddRange(DescribeLapsed(EffectRules.AdvanceRound(game.Effects)));
             game.Round += fallbackRaw / n;
             game.TurnIndex = fallbackRaw % n;
             game.TurnMoveUsed = 0;
@@ -992,7 +1010,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         if (game.TurnOrder.Count == 0)
         {
             game.CombatActive = false;
-            return $"{handle} ha lasciato il combattimento: nessuno è rimasto nell'ordine, combattimento terminato.";
+            return $"{handle} ha lasciato il combattimento: nessuno è rimasto nell'ordine, combattimento terminato.{EndCombatEffectsLocked(game)}";
         }
         else if (i < game.TurnIndex)
         {
@@ -1009,7 +1027,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             {
                 game.CombatActive = false;
                 game.TurnIndex = 0;
-                return $"{handle} ha lasciato il combattimento: nessuno è in grado di agire, combattimento terminato.";
+                return $"{handle} ha lasciato il combattimento: nessuno è in grado di agire, combattimento terminato.{EndCombatEffectsLocked(game)}";
             }
 
             string noteText = notes.Count > 0 ? string.Join(" ", notes.Select(x => x + ".")) + " " : string.Empty;
@@ -1140,11 +1158,13 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             case "end":
                 {
                     bool was;
+                    string endedEffects = string.Empty;
                     lock (_gamesLock)
                     lock (game.SyncRoot)
                     {
                         was = game.CombatActive;
                         game.CombatActive = false;
+                        endedEffects = EndCombatEffectsLocked(game);
                         game.TurnMoveUsed = 0;
                         game.TurnActionUsed = false;
                         foreach (var m in game.Players.Select(pl => pl.Character).Concat(game.NPCs).OfType<Character>())
@@ -1157,7 +1177,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                     else
                     {
                         Console.WriteLine($"[TURN] {client.Player.Username} termina il combattimento in '{game.Name}'.");
-                        await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Il master ha terminato il combattimento: movimento e azioni tornano liberi." }));
+                        await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = $"Il master ha terminato il combattimento: movimento e azioni tornano liberi.{endedEffects}" }));
                     }
                     break;
                 }
@@ -1250,6 +1270,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                         member.WoundStatus = ch.Health.GetWoundStatusDescription();
                         member.IsStunned = ch.Health.IsStunned;
                         member.Position = ch.Position;
+                        member.Effects = DescribeEffectsOf(game, ch.Handle);
                     }
                     payload.Members.Add(member);
                 }
@@ -1266,6 +1287,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                         MaxHealth = viewerIsMaster ? npc.Health.MaxHealth : -1,
                         WoundStatus = npc.Health.GetWoundStatusDescription(),
                         IsStunned = npc.Health.IsStunned,
+                        Effects = viewerIsMaster ? DescribeEffectsOf(game, npc.Handle) : [],
                         Position = npc.Position
                     });
                 }
@@ -1354,7 +1376,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                     else
                     {
                         game.CombatActive = false;
-                        announce = "Nessun personaggio in grado di agire: combattimento terminato.";
+                        announce = "Nessun personaggio in grado di agire: combattimento terminato." + EndCombatEffectsLocked(game);
                     }
                 }
             }
@@ -2552,6 +2574,128 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                 Message = $"Il master ti ha spostato a ({destination.X}, {destination.Y}, {destination.Z})."
             };
             await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_PlayerMoved, payload), includeOrigin: true);
+        }
+    }
+
+    // /bonus (solo master): applica, toglie o elenca bonus e malus di circostanza. Tutto o niente: se un bersaglio
+    // non esiste o un effetto non è valido, non cambia nulla.
+    private async Task HandleBonusAsync(ClientSession client, NetworkPacket packet)
+    {
+        async Task Fail(string message) =>
+            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = message }));
+
+        var req = packet.DeserializePayload<BonusRequestPayload>();
+        var args = (req?.Args ?? []).Take(40).Select(a => InputLimits.Clean(a, InputLimits.MaxNameFieldLength)).ToList();
+
+        if (client.Player.Role != Player.RoleType.master)
+        {
+            await Fail("Solo il master può usare /bonus.");
+            return;
+        }
+
+        if (!BonusRules.TryParse(args, SkillExists, out var parsed, out var parseError) || parsed == null)
+        {
+            await Fail(parseError);
+            return;
+        }
+
+        string? error = null;
+        string summary = string.Empty;
+        string? reply = null;
+        Game? game;
+
+        lock (_gamesLock)
+        {
+            game = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
+            if (game == null)
+            {
+                error = "Devi essere in un game per usare /bonus: usa /join <game>.";
+            }
+            else
+            lock (game.SyncRoot)
+            {
+                // Bersagli: handle, oppure party (PG), npc, all; senza doppioni.
+                var targets = new List<Character>();
+                void AddTarget(Character c)
+                {
+                    if (!targets.Any(t => t.Handle.Equals(c.Handle, StringComparison.OrdinalIgnoreCase))) targets.Add(c);
+                }
+
+                var wanted = parsed.Targets;
+                if (wanted.Count == 0 && parsed.Action == BonusAction.List) wanted = ["all"];
+
+                foreach (var name in wanted)
+                {
+                    if (name.Equals("party", StringComparison.OrdinalIgnoreCase) || name.Equals("all", StringComparison.OrdinalIgnoreCase))
+                        foreach (var p in game.Players) if (p.Character != null) AddTarget(p.Character);
+                    if (name.Equals("npc", StringComparison.OrdinalIgnoreCase) || name.Equals("all", StringComparison.OrdinalIgnoreCase))
+                        foreach (var n in game.NPCs) AddTarget(n);
+                    if (BonusRules.IsShortcut(name)) continue;
+
+                    var found = FindCombatantInGame(game, name)?.Character;
+                    if (found == null) { error = $"Personaggio '{name}' non trovato in questo game: nessun effetto modificato."; break; }
+                    AddTarget(found);
+                }
+
+                if (error == null && targets.Count == 0) error = "Nessun personaggio corrisponde ai bersagli indicati.";
+
+                if (error == null)
+                {
+                    string handles = string.Join(", ", targets.Select(t => t.Handle));
+                    switch (parsed.Action)
+                    {
+                        case BonusAction.Apply:
+                            {
+                                var scratch = new List<ActiveEffect>(game.Effects);
+                                foreach (var t in targets)
+                                {
+                                    var effect = ActiveEffect.Create(t.Handle, BonusRules.MasterSource, BonusRules.MasterSource, parsed.Key, parsed.Value, parsed.Duration);
+                                    error = EffectRules.Add(scratch, effect);
+                                    if (error != null) { error = $"{t.Handle}: {error} Nessun effetto modificato."; break; }
+                                }
+                                if (error == null)
+                                {
+                                    game.Effects.Clear();
+                                    game.Effects.AddRange(scratch);
+                                    var sample = ActiveEffect.Create(string.Empty, BonusRules.MasterSource, BonusRules.MasterSource, parsed.Key, parsed.Value, parsed.Duration);
+                                    summary = $"Il master applica {sample.Describe()} a {handles}.";
+                                }
+                                break;
+                            }
+                        case BonusAction.Clear:
+                            {
+                                var removed = EffectRules.Clear(game.Effects, targets.Select(t => t.Handle), BonusRules.MasterSource);
+                                summary = removed.Count == 0
+                                    ? string.Empty
+                                    : $"Il master toglie {removed.Count} bonus/malus a {string.Join(", ", removed.Select(r => r.TargetHandle).Distinct(StringComparer.OrdinalIgnoreCase))}.";
+                                if (removed.Count == 0) reply = $"Nessun bonus del master da togliere a {handles}.";
+                                break;
+                            }
+                        case BonusAction.List:
+                            {
+                                var lines = targets
+                                    .Select(t => (t.Handle, Effects: DescribeEffectsOf(game, t.Handle)))
+                                    .Where(x => x.Effects.Count > 0)
+                                    .Select(x => $"{x.Handle}: {string.Join("; ", x.Effects)}")
+                                    .ToList();
+                                reply = lines.Count == 0 ? "Nessun effetto attivo." : "Effetti attivi - " + string.Join(" | ", lines);
+                                break;
+                            }
+                    }
+                }
+            }
+        }
+
+        if (error != null) { await Fail(error); return; }
+
+        if (summary.Length > 0)
+        {
+            Console.WriteLine($"[BONUS] {client.Player.Username} (master): {summary}");
+            await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = summary }), includeOrigin: true);
+        }
+        else if (reply != null)
+        {
+            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = reply }));
         }
     }
 

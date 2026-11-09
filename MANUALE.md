@@ -159,6 +159,14 @@ Le regole del combattimento sono nella sezione 5.
 3. Con `/game` vedi in qualsiasi momento tutti i partecipanti, gli NPC (con i punti ferita numerici), il combattimento e i check aperti.
 4. Con `/heal <personaggio>` (giocatori o NPC) curi **completamente** il bersaglio e ne azzeri morte, stordimento e stabilizzazione. Con `/heal <personaggio> <caselle>` restituisci solo quel numero di caselle (da 1 a 1000): un morto riparte dal limite della pista (0 caselle, Mortale 6), e stordimento e stabilizzazione restano come sono. È gratuito, senza tiro e non conta come azione. Per far curare un NPC in gioco usa `/as <npc> heal <personaggio>` (stesse regole dei giocatori: tiro, 2,5 m, azione del turno).
 5. Con `/teleport <X> <Y> <Z> <personaggio> [altri...]` sposti istantaneamente personaggi o NPC del game nel punto indicato della mappa (destinazione valida e priva di ostacoli). Non conta come azione e non consuma movimento del turno.
+6. Con `/bonus` applichi **bonus e malus di circostanza** (effetti) ai personaggi del game:
+   - `/bonus <chiave> <±N> [durata] <bersagli>`: es. `/bonus REF +2 r3 morgan molly`, `/bonus INIT -2 combat party`, `/bonus Pronto Soccorso +3 u1 morgan` (anche le abilità con lo spazio si scrivono normalmente).
+   - **Chiave**: `ALL` (prove di abilità, colpire, iniziativa), `INIT`, `HIT`, `DAMAGE`, `MOVE` (movimento), `STAT:<stat>` (o solo `REF`, `TECH`...) oppure `SKILL:<abilità>` (o solo il nome dell'abilità). Valore intero da -10 a +10, diverso da 0.
+   - **Durata** (facoltativa, di default fino a rimozione): `manual`, `combat` (fino a fine combattimento), `r<N>` (N round: un effetto a 3 round applicato nel round 2 vale per i round 2, 3 e 4), `u<N>` (N usi: si consuma nei tiri in cui interviene), `d<N>` (giorni, per il futuro `/day`).
+   - **Bersagli**: handle di PG o NPC separati da spazi o virgole, oppure `party` (tutti i PG), `npc`, `all`. Tutto o niente: se un bersaglio non esiste non cambia nulla.
+   - Lo stesso effetto del master sullo stesso personaggio e sulla stessa chiave si **sostituisce**; effetti di origini diverse si sommano. Massimo 20 effetti per personaggio.
+   - `/bonus clear <bersagli>` toglie i bonus del master ai bersagli; `/bonus list [bersagli]` elenca gli effetti attivi (senza bersagli: tutti).
+   - Ogni termine compare nei pannelli di calcolo (es. "+2 master"). Gli effetti sono **stato della partita**: non finiscono nella scheda e si perdono quando il game si chiude. Gli effetti a round scadono all'inizio del round successivo all'ultimo e tutti quelli a round o `combat` cadono con la fine del combattimento (l'annuncio li elenca). Gli effetti attivi si vedono in `/game` (gli NPC solo al master).
 
 Se il master esce o si disconnette, il ruolo torna libero e i giocatori vengono avvisati. Un game senza partecipanti viene chiuso.
 
@@ -364,6 +372,7 @@ Il danno si accumula fino a riempire le 40 caselle: a **40 danni** il personaggi
 | `/init` | giocatore | iniziativa (master: come `/check init`) |
 | `/move <X> <Y> [Z]` | giocatore | muoviti (max MA) |
 | `/teleport <X> <Y> <Z> <pg> [altri]` | master | sposta personaggi/NPC, senza limite di movimento |
+| `/bonus <chiave> <±N> [durata] <bersagli>` | master | applica un bonus/malus; `/bonus clear <bersagli>` lo toglie, `/bonus list [bersagli]` li elenca |
 | `/attack <bersaglio> [arma]` | giocatore | attacca |
 | `/reload [munizioni] [arma]` | giocatore | ricarica |
 | `/throw <X> <Y> [Z] [arma]` | giocatore | lancia granata |
@@ -398,4 +407,4 @@ Regole previste ma non ancora implementate:
 - timeout delle connessioni **inattive dopo il login** (il timeout di login e la disconnessione dei client che non leggono sono già attivi).
 - **inventario, negozi e oggetti** (`/inventory`, `/buy`, `/pick`);
 - **caricamento e valutazione di schede esterne** (`/upload`, `/eval`), con un validatore delle schede;
-- **addestramento e ricompense** (`/train`, `/reward`), **bonus** di circostanza e ad attivazione (`/bonus`, `/activate`), **veicoli** (`/drive`) e cyberpsicosi.
+- **addestramento e ricompense** (`/train`, `/reward`), **bonus** ad attivazione da oggetti (`/activate`), **veicoli** (`/drive`) e cyberpsicosi.
