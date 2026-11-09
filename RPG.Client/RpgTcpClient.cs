@@ -132,11 +132,15 @@ public class RpgTcpClient(bool useTls = true)
     {
         TrustResult? result = null;
         string seen = string.Empty;
+        string seenSubject = string.Empty;
+        string seenIssuer = string.Empty;
 
         var ssl = new SslStream(inner, leaveInnerStreamOpen: false, (_, cert, _, _) =>
         {
             if (cert == null) return false;
             seen = TrustStore.Fingerprint(cert.GetRawCertData());
+            seenSubject = cert.Subject;
+            seenIssuer = cert.Issuer;
             result = _trust.Check(host, port, seen);
             return result != TrustResult.Mismatch;
         });
@@ -155,6 +159,10 @@ public class RpgTcpClient(bool useTls = true)
             AnsiConsole.MarkupLine("[bold red][[!]] ATTENZIONE: il certificato di questo server è cambiato.[/]");
             AnsiConsole.MarkupLine($"[red]Memorizzata:[/] {_trust.Get(host, port)}");
             AnsiConsole.MarkupLine($"[red]Ricevuta:   [/] {seen}");
+            AnsiConsole.MarkupLine($"[red]Soggetto:   [/] {Markup.Escape(seenSubject)}");
+            AnsiConsole.MarkupLine($"[red]Emesso da:  [/] {Markup.Escape(seenIssuer)}");
+            AnsiConsole.MarkupLine("[grey]Il certificato del server RPG ha soggetto ed emittente 'CN=RPG Server'. Se qui compare altro (antivirus, proxy, firewall), " +
+                "qualcosa sul percorso sta ispezionando il TLS.[/]");
             AnsiConsole.MarkupLine("[grey]Potrebbe essere un'intercettazione. Se il server è stato reinstallato e l'impronta è quella attesa, " +
                 $"rimuovi la voce '{Markup.Escape(TrustStore.Key(host, port))}' dal file known_servers.json (cartella ApplicationData, sottocartella RPG) e riconnettiti.[/]");
             throw new InvalidOperationException("connessione rifiutata: certificato del server diverso da quello memorizzato.", ex);
