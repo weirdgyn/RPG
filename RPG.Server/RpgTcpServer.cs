@@ -52,9 +52,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     {
         if (useTls)
         {
-            string certPath = File.Exists(DataPaths.Resolve(ServerCertificate.FileName))
-                ? DataPaths.Resolve(ServerCertificate.FileName)
-                : Path.GetFullPath(ServerCertificate.FileName);
+            string certPath = ServerPaths.Resolve(ServerCertificate.FileName);
             _certificate = ServerCertificate.LoadOrCreate(certPath, out bool created);
             Console.WriteLine($"[SERVER] TLS attivo. Certificato {(created ? "creato" : "caricato")}: {certPath}");
             Console.WriteLine($"[SERVER] Impronta SHA-256: {TrustStore.Fingerprint(_certificate.RawData)}");

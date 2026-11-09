@@ -24,7 +24,9 @@ internal class Program
 
         Skills.Initialize();
 
-        var accounts = AccountStore.Load(AccountStore.ResolvePath());
+        string accountsPath = AccountStore.ResolvePath();
+        Console.WriteLine($"[SERVER] Account: {accountsPath}");
+        var accounts = AccountStore.Load(accountsPath);
         _ = Task.Run(() => ServerConsole.Run(accounts));
 
         var server = new RpgTcpServer(options.Host, options.Port, accounts, useTls: !options.NoTls);

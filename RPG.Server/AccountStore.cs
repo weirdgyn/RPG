@@ -58,12 +58,8 @@ public sealed class AccountStore
         _iterations = iterations;
     }
 
-    /// <summary>Percorso di accounts.json: quello esistente (cartella corrente o dell'eseguibile), altrimenti la cartella corrente.</summary>
-    public static string ResolvePath()
-    {
-        string found = RPG.Common.Utils.DataPaths.Resolve(FileName);
-        return File.Exists(found) ? found : Path.GetFullPath(FileName);
-    }
+    /// <summary>Percorso di accounts.json nella cartella dati fissa del server (vedi <see cref="ServerPaths"/>).</summary>
+    public static string ResolvePath() => ServerPaths.Resolve(FileName);
 
     public static AccountStore Load(string path, int iterations = DefaultIterations)
     {
