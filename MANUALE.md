@@ -42,6 +42,8 @@ login all'avvio  →  /create (oppure /link)  →  /join  →  gioca
 
 Con `/help` si vede in ogni momento l'elenco dei comandi.
 
+Il **prompt** ti dice dove sei: `NC-NET >` fuori da un game; dopo `/join` diventa `NC-NET::TestGame[master] >` se sei il master, oppure `NC-NET::TestGame[Razor] >` con il nome del tuo personaggio se giochi. Torna semplice con `/leave` e quando la connessione cade (nomi di game lunghi sono accorciati a 16 caratteri).
+
 ---
 
 ## 2. Concetti base

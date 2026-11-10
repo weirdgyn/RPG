@@ -34,6 +34,11 @@ public class RpgTcpClient(bool useTls = true)
     // dai messaggi asincroni del server.
     private static readonly object _consoleLock = new();
     private bool _promptPending;
+    // Game in cui si trova il giocatore (per il prompt); null fuori da un game e dopo ogni (ri)connessione.
+    private string? _currentGame;
+    // Nome mostrato nel prompt: "NC-NET" oppure, più corto, "NC".
+    private const string PromptName = "NC-NET";
+    private const int PromptGameMaxLength = 16;
 
     // True solo quando il loop dei comandi è attivo: prima (es. durante il login)
     // i messaggi del server vengono stampati senza ripristinare il prompt.
@@ -68,6 +73,28 @@ public class RpgTcpClient(bool useTls = true)
     }
 
     /// <summary>
+    /// Prompt: <c>NC-NET &gt;</c> fuori da un game, <c>NC-NET::Game[master] &gt;</c> o <c>NC-NET::Game[personaggio] &gt;</c>
+    /// dentro (il master o il nome del personaggio collegato).
+    /// </summary>
+    private string BuildPrompt()
+    {
+        string text = $"[bold yellow]{PromptName}[/]";
+
+        if (!string.IsNullOrEmpty(_currentGame))
+        {
+            string game = _currentGame.Length > PromptGameMaxLength ? _currentGame[..PromptGameMaxLength] + "…" : _currentGame;
+            text += $"[grey]::[/][bold green]{Markup.Escape(game)}[/]";
+
+            string who = _player?.Role == Player.RoleType.master
+                ? "[bold yellow]master[/]"
+                : $"[cyan]{Markup.Escape(string.IsNullOrEmpty(_player?.Handle) ? "player" : _player.Handle)}[/]";
+            text += $"[grey][[[/]{who}[grey]]][/]";
+        }
+
+        return text + " [bold cyan]>[/] ";
+    }
+
+    /// <summary>
     /// Mostra il prompt solo se non è già visibile (evita prompt duplicati
     /// quando il listener ha già ripristinato il prompt dopo un messaggio).
     /// </summary>
@@ -76,7 +103,7 @@ public class RpgTcpClient(bool useTls = true)
         lock (_consoleLock)
         {
             if (_promptPending) return;
-            AnsiConsole.Markup("[bold yellow]NC-NET[/] [bold cyan]>[/] ");
+            AnsiConsole.Markup(BuildPrompt());
             _promptPending = true;
         }
     }
@@ -93,7 +120,7 @@ public class RpgTcpClient(bool useTls = true)
             render();
             if (_commandLoopActive)
             {
-                AnsiConsole.Markup("[bold yellow]NC-NET[/] [bold cyan]>[/] ");
+                AnsiConsole.Markup(BuildPrompt());
                 _promptPending = true;
             }
         }
@@ -212,6 +239,7 @@ public class RpgTcpClient(bool useTls = true)
         if (_isRunning)
         {
             _isRunning = false;
+            _currentGame = null; // senza connessione non si è più in nessun game: il prompt torna semplice
             PrintServerOutput(() => AnsiConsole.MarkupLine("[bold red][[!]]: Connessione al server persa. Usa[/] [yellow]/connect [[host]] [[porta]][/] [bold red]per riconnetterti o[/] [yellow]/exit[/] [bold red]per uscire.[/]"));
         }
     }
@@ -516,6 +544,7 @@ public class RpgTcpClient(bool useTls = true)
                         {
                             _player.Role = joinResp.Role;
                         }
+                        _currentGame = joinResp.GameName;
                     }
                     else
                     {
@@ -573,6 +602,7 @@ public class RpgTcpClient(bool useTls = true)
                         {
                             _player.Role = leaveResp.Role;
                         }
+                        _currentGame = null;
                     }
                     else
                     {
@@ -1267,6 +1297,7 @@ public class RpgTcpClient(bool useTls = true)
         if (!await ConnectAsync(host, port)) return;
 
         _player = null;
+        _currentGame = null;
         _commandLoopActive = false;   // durante il login il prompt dei comandi non va ripristinato
         _ = Task.Run(() => ListenToServerAsync());
 
