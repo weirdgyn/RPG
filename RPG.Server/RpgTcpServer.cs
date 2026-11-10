@@ -3454,7 +3454,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
 
     // Comandi che il master può dare a un NPC con /as (gli stessi dei giocatori, con l'NPC come attore)
     private static readonly HashSet<OpCode> NpcAllowedCommands =
-        [OpCode.C2S_Attack, OpCode.C2S_SkillCheck, OpCode.C2S_Move, OpCode.C2S_Init, OpCode.C2S_Reload, OpCode.C2S_Throw, OpCode.C2S_Heal];
+        [OpCode.C2S_Attack, OpCode.C2S_SkillCheck, OpCode.C2S_Move, OpCode.C2S_Init, OpCode.C2S_Reload, OpCode.C2S_Throw, OpCode.C2S_Heal, OpCode.C2S_Activate];
 
     private static Task SendNpcResponseAsync(ClientSession client, NpcResponsePayload payload)
         => client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_NpcResponse, payload));
@@ -3743,7 +3743,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
 
         if (!NpcAllowedCommands.Contains(req.InnerOpCode))
         {
-            await Fail("Con /as si possono usare solo: attack, skill, move, init, reload, throw, heal.");
+            await Fail("Con /as si possono usare solo: attack, skill, move, init, reload, throw, heal, activate.");
             return;
         }
 
