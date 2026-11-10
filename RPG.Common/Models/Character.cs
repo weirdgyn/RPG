@@ -43,6 +43,8 @@ public class Character
         public CyberType Type { get; set; } = CyberType.Neuralware;
         public BonusType Bonus { get; set; } = new();
         public string Description { get; set; } = string.Empty;
+        /// <summary>Scheda di attivazione (null = come prima: il Bonus è sempre attivo). Vedi <see cref="ActivationSpec"/>.</summary>
+        public ActivationSpec? Activation { get; set; }
     }
     public string Handle { get; set; } = "StreetPunk"; // Nome di strada del personaggio
     // Versione dello schema della scheda salvata. 0 = scheda precedente al versioning.

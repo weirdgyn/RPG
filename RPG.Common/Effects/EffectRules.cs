@@ -75,6 +75,16 @@ public static class EffectRules
             terms.Add(new EffectTerm(string.IsNullOrWhiteSpace(cw.ID) ? "cyberware" : cw.ID, cw.Bonus.Value));
         }
 
+        // Oggetti Passive con scheda di attivazione: i loro effetti valgono sempre, come il Bonus.
+        foreach (var cw in character.Cyberware)
+        {
+            if (cw.Activation is not { Mode: ActivationMode.Passive } spec) continue;
+            foreach (var (key, value) in ActivationRules.ParsedEffects(spec, skillExists))
+            {
+                if (key.Matches(ctx)) terms.Add(new EffectTerm(string.IsNullOrWhiteSpace(cw.ID) ? "cyberware" : cw.ID, value));
+            }
+        }
+
         terms.AddRange(Terms(gameEffects, character.Handle, ctx));
         return terms;
     }
