@@ -539,12 +539,13 @@ public class RpgTcpClient(bool useTls = true)
                 {
                     if (joinResp.Success)
                     {
-                        PrintServerOutput(() => AnsiConsole.MarkupLine($"[bold green][[JOIN]][/] Sei entrato nel game [bold yellow]'{Markup.Escape(joinResp.GameName)}'[/] come [cyan]'{joinResp.Role}'[/]."));
+                        // Lo stato va aggiornato PRIMA di stampare: PrintServerOutput ridisegna subito il prompt.
                         if (_player != null)
                         {
                             _player.Role = joinResp.Role;
                         }
                         _currentGame = joinResp.GameName;
+                        PrintServerOutput(() => AnsiConsole.MarkupLine($"[bold green][[JOIN]][/] Sei entrato nel game [bold yellow]'{Markup.Escape(joinResp.GameName)}'[/] come [cyan]'{joinResp.Role}'[/]."));
                     }
                     else
                     {
@@ -597,12 +598,12 @@ public class RpgTcpClient(bool useTls = true)
                 {
                     if (leaveResp.Success)
                     {
-                        PrintServerOutput(() => AnsiConsole.MarkupLine($"[bold green][[LEAVE]][/] [white]{Markup.Escape(leaveResp.Message)}[/]"));
                         if (_player != null)
                         {
                             _player.Role = leaveResp.Role;
                         }
                         _currentGame = null;
+                        PrintServerOutput(() => AnsiConsole.MarkupLine($"[bold green][[LEAVE]][/] [white]{Markup.Escape(leaveResp.Message)}[/]"));
                     }
                     else
                     {
