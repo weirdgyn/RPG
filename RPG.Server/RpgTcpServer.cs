@@ -898,7 +898,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
 
     // Movimento atomico: turno, budget di MA rimasto e aggiornamento della posizione (con TurnMoveUsed in
     // combattimento, oppure il contatore delle azioni libere fuori) avvengono nella stessa sezione critica.
-    private MoveOutcome TryMove(Game game, GameMap map, Character actor, Position3D requested)
+    private static MoveOutcome TryMove(Game game, GameMap map, Character actor, Position3D requested)
     {
         lock (game.SyncRoot)
         {
@@ -936,7 +936,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     // Registra un'azione libera (fuori dal combattimento) nel game: alimenta FreeActionsCounter, che
     // misura quanto il gruppo ha agito fuori dai round. Da chiamare solo per azioni eseguite
     // (/skill, /roll, /attack risolto; il /move è contato direttamente dentro TryMove).
-    private void CountFreeAction(Game game)
+    private static void CountFreeAction(Game game)
     {
         lock (game.SyncRoot)
         {
@@ -1490,7 +1490,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     }
 
     // Regole del lancio/esplosione, sincrone e sotto Game.SyncRoot. Nessun I/O di rete qui dentro.
-    private ThrowOutcome ResolveThrowRules(Game game, Character thrower, Position3D aimed, string? weaponKey, List<Character> everyone, bool combatActive)
+    private static ThrowOutcome ResolveThrowRules(Game game, Character thrower, Position3D aimed, string? weaponKey, List<Character> everyone, bool combatActive)
     {
         static ThrowOutcome Error(string message) => new(message, null, null, []);
 
@@ -1832,7 +1832,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     }
 
     // Regole dell'attacco, sincrone e sotto Game.SyncRoot. Nessun I/O di rete qui dentro.
-    private AttackOutcome ResolveAttackRules(Game game, Character attacker, Character target, string? weaponKey, bool combatActive)
+    private static AttackOutcome ResolveAttackRules(Game game, Character attacker, Character target, string? weaponKey, bool combatActive)
     {
         lock (game.SyncRoot)
         {
@@ -2337,8 +2337,8 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         int skillLvl = actor.Skills.TryGetValue(skillName, out int lvl) ? lvl : 0;
         int penalty = actor.Health.GetWoundPenalty();
         var ctx = new EffectContext(RollKind.Skill, statName, skillName);
-        var terms = EffectRules.CollectTerms(game?.Effects ?? new List<ActiveEffect>(), actor, ctx, SkillExists);
-        var expired = game != null ? EffectRules.ConsumeUses(game.Effects, actor.Handle, ctx) : new List<ActiveEffect>();
+        var terms = EffectRules.CollectTerms(game?.Effects ?? [], actor, ctx, SkillExists);
+        var expired = game != null ? EffectRules.ConsumeUses(game.Effects, actor.Handle, ctx) : [];
         var dice = GameDice.RollExplodingD10Detailed();
         return new SkillRollResult(statName, statVal, skillLvl, penalty, dice, terms, expired,
             statVal + skillLvl + penalty + terms.Sum(t => t.Value) + dice.Total);
@@ -3275,7 +3275,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                         int? durationRoll = null;
                         var duration = ActivationRules.Resolve(durSpec, expr =>
                         {
-                            durationRoll = GameDice.Roll(expr).Total;
+                            durationRoll = (int)GameDice.Roll(expr).Total;
                             return durationRoll.Value;
                         });
 

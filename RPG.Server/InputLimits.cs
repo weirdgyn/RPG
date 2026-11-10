@@ -4,7 +4,7 @@ namespace RPG.Server;
 /// Limiti sull'input che arriva dai client (non fidato): lunghezza massima della riga di protocollo e dei
 /// testi liberi, più la pulizia dei caratteri di controllo (che permetterebbero righe finte nel log).
 /// </summary>
-internal static class InputLimits
+public static class InputLimits
 {
     /// <summary>Lunghezza massima di un pacchetto (una riga JSON). Il pacchetto più grande lato client è una chat.</summary>
     public const int MaxLineLength = 16 * 1024;
