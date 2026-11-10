@@ -48,6 +48,12 @@ public class TeleportRequestPayload
     public List<string> Targets { get; set; } = [];
 }
 
+public class ActivateRequestPayload
+{
+    /// <summary>ID (o parte dell'ID) dell'oggetto da attivare; vuoto se ce n'è uno solo.</summary>
+    public string ItemKey { get; set; } = string.Empty;
+}
+
 public class BonusRequestPayload
 {
     /// <summary>Argomenti di /bonus così come digitati (dopo il comando): li interpreta il server con BonusRules.</summary>

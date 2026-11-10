@@ -122,6 +122,15 @@ Gli NPC compaiono nell'elenco con il loro stato qualitativo (per esempio "Seria"
 | `/skill <abilità> [TN]` | Prova di abilità. Il TN predefinito è 15. L'abilità deve esistere (vedi `/skills`). |
 | `/roll <espressione> [motivo]` | Tiro di dadi libero, visibile a tutto il game. Esempi: `/roll 2d6+3 Danno`, `/roll 3d6!` (con `!` i dadi esplodono). |
 | `/init` | Tiro di iniziativa: REF + CombatSense (solo per i Solo) + bonus cyberware + d10. |
+| `/activate [oggetto]` | Attiva un oggetto con scheda di attivazione (oggi il cyberware): vedi sotto. Senza nome va bene solo se ne hai uno. |
+
+**Oggetti ad attivazione.** Un cyberware può essere *Passive* (sempre attivo, nessun comando) oppure *Active*: i suoi effetti partono solo con `/activate`. Per ogni oggetto la scheda dice:
+- **costo**: 0 (attivazione gratuita) o 1 (consuma l'azione del turno). In combattimento si attiva solo **nel proprio turno** (anche se gratuita); fuori dal combattimento sempre;
+- **prova** (facoltativa): un'abilità e una difficoltà (15 se non indicata), indipendenti dal costo. Se la prova fallisce gli effetti non partono, ma l'azione, se richiesta, è comunque spesa;
+- **durata**: come per `/bonus` (`manual`, `combat`, `r<N>`, `u<N>`, `d<N>`), anche con i dadi (es. `r1d6`: i round si tirano all'attivazione);
+- **effetti**: elenco di chiavi e valori, come `/bonus` (es. `INIT +3`).
+
+L'attivazione è un annuncio per tutto il game con il pannello di calcolo (prova, durata tirata, effetti). Riattivare un oggetto già attivo ne **rinnova** gli effetti. Gli effetti sono dello stato della partita (vedi `/game`) e servono quindi un game aperto. I limiti d'uso (es. una volta al giorno) arriveranno con il tempo di gioco (`/day`).
 
 **Quando il master ha aperto un check** (vedi 4.3) il tuo `/skill` o `/init` corrispondente viene registrato per lo spoglio: ricevi solo la conferma *"tiro registrato"* e i risultati escono tutti insieme quando hanno tirato tutti. Vale il **primo** tiro. Il TN non ti viene rivelato.
 
@@ -192,6 +201,7 @@ Comandi consentiti con `/as`:
 /as <npc> reload [munizioni] [arma]
 /as <npc> throw <X> <Y> [Z] [arma]
 /as <npc> heal <personaggio>
+/as <npc> activate [oggetto]
 ```
 
 > Per `/as move` e `/as throw` la `Z` è la **quota corrente dell'NPC** se la ometti: indicala solo quando vuoi cambiare piano.
@@ -370,6 +380,7 @@ Il danno si accumula fino a riempire le 40 caselle: a **40 danni** il personaggi
 | `/skill <abilità> [TN]` | giocatore | prova di abilità |
 | `/roll <espr> [motivo]` | tutti | tiro di dadi libero |
 | `/init` | giocatore | iniziativa (master: come `/check init`) |
+| `/activate [oggetto]` | giocatore | attiva un oggetto (cyberware Active) |
 | `/move <X> <Y> [Z]` | giocatore | muoviti (max MA) |
 | `/teleport <X> <Y> <Z> <pg> [altri]` | master | sposta personaggi/NPC, senza limite di movimento |
 | `/bonus <chiave> <±N> [durata] <bersagli>` | master | applica un bonus/malus; `/bonus clear <bersagli>` lo toglie, `/bonus list [bersagli]` li elenca |

@@ -88,6 +88,49 @@ public static partial class ActivationRules
         }
     }
 
+    /// <summary>Gli oggetti che si possono attivare (modalità Active).</summary>
+    public static List<Character.CyberWare> Activable(IEnumerable<Character.CyberWare> items) =>
+        [.. items.Where(c => c.Activation is { Mode: ActivationMode.Active })];
+
+    /// <summary>
+    /// Sceglie l'oggetto da attivare. Senza chiave va bene solo se ce n'è uno solo; con la chiave vale l'ID esatto,
+    /// poi una parte dell'ID (senza distinguere maiuscole).
+    /// </summary>
+    public static bool TryFindActivable(IEnumerable<Character.CyberWare> items, string? key, out Character.CyberWare? item, out string error)
+    {
+        item = null;
+        error = string.Empty;
+        var list = Activable(items);
+        string names = string.Join(", ", list.Select(c => c.ID));
+
+        if (list.Count == 0)
+        {
+            error = "Non hai oggetti da attivare.";
+            return false;
+        }
+
+        string k = (key ?? string.Empty).Trim();
+        if (k.Length == 0)
+        {
+            if (list.Count == 1)
+            {
+                item = list[0];
+                return true;
+            }
+            error = $"Quale oggetto vuoi attivare? Disponibili: {names}.";
+            return false;
+        }
+
+        item = list.FirstOrDefault(c => c.ID.Equals(k, StringComparison.OrdinalIgnoreCase))
+               ?? list.FirstOrDefault(c => c.ID.Contains(k, StringComparison.OrdinalIgnoreCase));
+        if (item == null)
+        {
+            error = $"Nessun oggetto attivabile '{k}'. Disponibili: {names}.";
+            return false;
+        }
+        return true;
+    }
+
     /// <summary>Controlla la scheda di attivazione di un oggetto. Restituisce il problema trovato, null se è valida (o se non c'è scheda).</summary>
     public static string? Validate(Character.CyberWare item, Func<string, bool>? skillExists)
     {

@@ -32,6 +32,7 @@ public enum OpCode
     C2S_Unlink = 102,       // Scollega la sessione dal personaggio corrente (solo fuori da un game)
     C2S_GetArchetypes = 104, // Elenco degli archetipi disponibili per /create
     C2S_Teleport = 105,      // Il master sposta personaggi/NPC in un punto della mappa (non è un'azione)
+    C2S_Activate = 107,      // Attiva un oggetto (cyberware) con scheda di attivazione
     C2S_Bonus = 106,         // Il master applica/toglie/elenca bonus e malus (effetti) ai personaggi del game
     C2S_Heal = 103,         // Stabilizza/cura un personaggio (Pronto Soccorso/Tecnomedicina, o master free)
     // Server -> Client (S2C)

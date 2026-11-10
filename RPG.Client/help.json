@@ -60,6 +60,11 @@
     "description": "Master: applica un bonus/malus (es. /bonus REF +2 r3 morgan molly, /bonus INIT -2 combat party), lo toglie o li elenca."
   },
   {
+    "command": "/activate",
+    "parameters": "[oggetto]",
+    "description": "Attiva un oggetto con scheda di attivazione (cyberware): prova, costo in azioni e durata secondo la scheda. Per un NPC: /as <npc> activate [oggetto]."
+  },
+  {
     "command": "/archetypes",
     "parameters": "-",
     "description": "Elenca gli archetipi disponibili per /create."
@@ -81,7 +86,7 @@
   },
   {
     "command": "/as",
-    "parameters": "<npc> attack|skill|move|init|reload|throw ...",
+    "parameters": "<npc> attack|skill|move|init|reload|throw|heal|activate ...",
     "description": "Master: esegue il comando per conto di un NPC."
   },
   {

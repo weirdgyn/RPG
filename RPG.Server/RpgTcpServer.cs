@@ -414,6 +414,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             case OpCode.C2S_Bonus:
                 await HandleBonusAsync(client, packet);
                 break;
+            case OpCode.C2S_Activate:
+                await HandleActivateAsync(client, packet);
+                break;
             case OpCode.C2S_GetArchetypes:
                 await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_ArchetypesResponse,
                     new ArchetypesResponsePayload { Archetypes = CharacterTemplateFactory.GetAvailableArchetypes() }));
@@ -3184,6 +3187,144 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         await ReplyHealAsync(reporter, true, message, target.Handle);
     }
 
+    private async Task HandleActivateAsync(ClientSession client, NetworkPacket packet)
+    {
+        var req = packet.DeserializePayload<ActivateRequestPayload>();
+        if (!await EnsureCharacterLinkedAsync(client)) return;
+        if (!await EnsureAliveAsync(client, client.Player.Character!)) return;
+
+        await ResolveActivateAsync(client, client.Player.Character!, req?.ItemKey);
+    }
+
+    /// <summary>
+    /// Attiva un oggetto con scheda di attivazione (oggi il cyberware Active) di <paramref name="actor"/> (giocatore o NPC).
+    /// Turno e costo in azioni, prova di attivazione (se c'è un'abilità), durata (anche con i dadi) ed effetti avvengono
+    /// nella stessa sezione critica. Gli effetti vivono nel game, quindi serve essere in un game.
+    /// </summary>
+    private async Task ResolveActivateAsync(ClientSession reporter, Character actor, string? itemKeyRaw)
+    {
+        string itemKey = InputLimits.Clean(itemKeyRaw, InputLimits.MaxNameFieldLength) ?? string.Empty;
+
+        Game? game;
+        lock (_gamesLock)
+        {
+            game = _games.FirstOrDefault(g => g.Players.Contains(reporter.Player));
+        }
+
+        if (game == null)
+        {
+            await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new
+            {
+                Message = "Devi essere in un game per attivare un oggetto: gli effetti vivono nella partita (usa /join <game>)."
+            }));
+            return;
+        }
+
+        string? error = null;
+        string? message = null;
+        string? publicMessage = null;
+
+        lock (game.SyncRoot)
+        {
+            if (!ActivationRules.TryFindActivable(actor.Cyberware, itemKey, out var item, out var findError))
+            {
+                error = findError;
+            }
+            else
+            {
+                var spec = item!.Activation!;
+                error = ActivationRules.Validate(item, SkillExists);
+                if (error != null) error = $"Scheda di attivazione non valida: {error}";
+
+                error ??= CheckActorLocked(game, actor);
+                error ??= CheckTurnLocked(game, actor, needsAction: spec.ActionCost == 1);
+
+                if (error == null)
+                {
+                    string calc = string.Empty;
+                    bool passed = true;
+                    string checkText = string.Empty;
+
+                    if (!string.IsNullOrWhiteSpace(spec.ActivationSkill))
+                    {
+                        string skill = spec.ActivationSkill.Trim();
+                        var rolled = RollSkill(game, actor, skill)!;
+                        var parts = new List<(string, int, string?)>
+                        {
+                            ("d10", rolled.Dice.Total, DiceExtra(rolled.Dice)), (rolled.StatName, rolled.StatValue, null), (skill, rolled.SkillLevel, null)
+                        };
+                        if (rolled.Penalty != 0) parts.Add(("ferite", rolled.Penalty, null));
+                        AddTermParts(parts, rolled.Terms);
+                        calc = FormatSum(parts);
+                        foreach (var note in DescribeExpired(rolled.Expired)) calc += $" [{note}]";
+
+                        passed = !rolled.Dice.IsFumble && rolled.Total >= spec.ActivationTN;
+                        checkText = $"prova di {skill}: {calc} = {rolled.Total} contro TN {spec.ActivationTN}{(rolled.Dice.IsFumble ? " (fallimento critico)" : "")}";
+                    }
+
+                    if (!passed)
+                    {
+                        // Un tentativo fallito costa comunque l'azione (se l'attivazione ne richiede una): niente rimborso.
+                        message = $"{actor.Handle} tenta di attivare {item.ID} ma fallisce: {checkText}.";
+                        Console.WriteLine($"[ACTIVATE] {message}");
+                        if (!game.CombatActive) game.FreeActionsCounter++;
+                    }
+                    else
+                    {
+                        ActivationRules.TryParseDuration(spec.Duration, out var durSpec, out _);
+                        int? durationRoll = null;
+                        var duration = ActivationRules.Resolve(durSpec, expr =>
+                        {
+                            durationRoll = GameDice.Roll(expr).Total;
+                            return durationRoll.Value;
+                        });
+
+                        // Tutto o niente: se un effetto non entra (limite per personaggio) non cambia nulla e l'azione è restituita.
+                        var scratch = new List<ActiveEffect>(game.Effects);
+                        bool renewed = scratch.Any(e => e.TargetHandle.Equals(actor.Handle, StringComparison.OrdinalIgnoreCase)
+                                                        && e.Source.Equals(item.ID, StringComparison.OrdinalIgnoreCase));
+                        var applied = new List<ActiveEffect>();
+                        foreach (var (key, value) in ActivationRules.ParsedEffects(spec, SkillExists))
+                        {
+                            var effect = ActiveEffect.Create(actor.Handle, item.ID, item.ID, key, value, duration);
+                            string? addError = EffectRules.Add(scratch, effect);
+                            if (addError != null) { error = $"{actor.Handle}: {addError}"; break; }
+                            applied.Add(effect);
+                        }
+
+                        if (error != null)
+                        {
+                            if (spec.ActionCost == 1) RefundActionLocked(game);
+                        }
+                        else
+                        {
+                            game.Effects.Clear();
+                            game.Effects.AddRange(scratch);
+                            if (!game.CombatActive) game.FreeActionsCounter++;
+
+                            string effects = string.Join(", ", applied.Select(e => $"{e.Value:+#;-#;0} {e.Key}"));
+                            string durText = durationRoll != null
+                                ? $"{duration} (durata {durSpec.Amount}: {durationRoll})"
+                                : duration.ToString();
+                            string check = checkText.Length > 0 ? $" ({checkText})" : string.Empty;
+                            message = $"{actor.Handle} {(renewed ? "rinnova" : "attiva")} {item.ID}{check}: {effects} per {durText}.";
+                            Console.WriteLine($"[ACTIVATE] {message}");
+                        }
+                    }
+                }
+            }
+        }
+
+        if (error != null)
+        {
+            await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = error }));
+            return;
+        }
+
+        publicMessage = message;
+        await BroadcastToGameAsync(reporter, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = publicMessage }), includeOrigin: true);
+    }
+
     private async Task HandleCreateCharacterAsync(ClientSession client, NetworkPacket packet)
     {
         var createReq = packet.DeserializePayload<CreateCharacterRequestPayload>();
@@ -3659,6 +3800,13 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
 
                         throwReq.WeaponKey = InputLimits.Clean(throwReq.WeaponKey, InputLimits.MaxNameFieldLength);
                         await ResolveThrowAsync(client, npc, throwReq);
+                        break;
+                    }
+
+                case OpCode.C2S_Activate:
+                    {
+                        var activateReq = JsonSerializer.Deserialize<ActivateRequestPayload>(req.InnerPayload);
+                        await ResolveActivateAsync(client, npc, activateReq?.ItemKey);
                         break;
                     }
 

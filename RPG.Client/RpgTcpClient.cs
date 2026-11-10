@@ -1043,6 +1043,11 @@ public class RpgTcpClient(bool useTls = true)
                     break;
                 }
 
+            case "activate":
+                innerOp = OpCode.C2S_Activate;
+                innerJson = JsonSerializer.Serialize(new ActivateRequestPayload { ItemKey = string.Join(' ', args) });
+                break;
+
             case "init":
                 innerOp = OpCode.C2S_Init;
                 innerJson = JsonSerializer.Serialize(new InitRequest());
@@ -1492,7 +1497,7 @@ public class RpgTcpClient(bool useTls = true)
 
                 if (asPacket == null)
                 {
-                    AnsiConsole.MarkupLine("[bold red][[!]]: Uso:[/] [yellow]/as <npc> attack <bersaglio> [[arma|skill]][/] | [yellow]/as <npc> skill <abilità> [[TN]][/] | [yellow]/as <npc> move <X> <Y> [[Z]][/] | [yellow]/as <npc> init[/] | [yellow]/as <npc> reload [[munizioni]] [[arma]][/] | [yellow]/as <npc> throw <X> <Y> [[Z]] [[arma]][/] | [yellow]/as <npc> heal <personaggio>[/]");
+                    AnsiConsole.MarkupLine("[bold red][[!]]: Uso:[/] [yellow]/as <npc> attack <bersaglio> [[arma|skill]][/] | [yellow]/as <npc> skill <abilità> [[TN]][/] | [yellow]/as <npc> move <X> <Y> [[Z]][/] | [yellow]/as <npc> init[/] | [yellow]/as <npc> reload [[munizioni]] [[arma]][/] | [yellow]/as <npc> throw <X> <Y> [[Z]] [[arma]][/] | [yellow]/as <npc> heal <personaggio>[/] | [yellow]/as <npc> activate [[oggetto]][/]");
                     continue;
                 }
 
@@ -1644,6 +1649,14 @@ public class RpgTcpClient(bool useTls = true)
                 {
                     AnsiConsole.MarkupLine("[bold red][[!]]: Uso:[/] [yellow]/teleport <X> <Y> <Z> <personaggio> [[altri personaggi]][/] (solo master)");
                 }
+                continue;
+            }
+
+            if (trimmedInput.Equals("/activate", StringComparison.OrdinalIgnoreCase)
+                || trimmedInput.StartsWith("/activate ", StringComparison.OrdinalIgnoreCase))
+            {
+                string itemKey = trimmedInput.Length > 9 ? trimmedInput[9..].Trim() : string.Empty;
+                await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_Activate, new ActivateRequestPayload { ItemKey = itemKey })));
                 continue;
             }
 

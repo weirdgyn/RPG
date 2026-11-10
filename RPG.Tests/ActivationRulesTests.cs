@@ -166,3 +166,49 @@ public class ActivationRulesTests
         Assert.Null(legacy.Activation);
     }
 }
+
+public class ActivationLookupTests
+{
+    private static Character.CyberWare Item(string id, ActivationMode mode = ActivationMode.Active) =>
+        new() { ID = id, Activation = new ActivationSpec { Mode = mode, Effects = [new ActivationEffect { Key = "INIT", Value = 1 }] } };
+
+    [Fact]
+    public void SingleActivableItemNeedsNoKey()
+    {
+        Assert.True(ActivationRules.TryFindActivable([Item("sandevistan")], null, out var item, out _));
+        Assert.Equal("sandevistan", item!.ID);
+    }
+
+    [Fact]
+    public void SeveralItemsRequireAKey_AndMatchIsExactThenPartial()
+    {
+        var items = new[] { Item("sandevistan"), Item("sandevistan_mk2"), Item("lame") };
+
+        Assert.False(ActivationRules.TryFindActivable(items, "", out _, out var error));
+        Assert.Contains("lame", error);
+
+        Assert.True(ActivationRules.TryFindActivable(items, "SANDEVISTAN", out var exact, out _));
+        Assert.Equal("sandevistan", exact!.ID);
+
+        Assert.True(ActivationRules.TryFindActivable(items, "mk2", out var partial, out _));
+        Assert.Equal("sandevistan_mk2", partial!.ID);
+    }
+
+    [Fact]
+    public void PassiveAndPlainItemsAreNotActivable()
+    {
+        var items = new[] { Item("occhio", ActivationMode.Passive), new Character.CyberWare { ID = "braccio" } };
+
+        Assert.False(ActivationRules.TryFindActivable(items, null, out _, out var error));
+        Assert.Contains("Non hai oggetti", error);
+        Assert.Empty(ActivationRules.Activable(items));
+    }
+
+    [Fact]
+    public void UnknownKeyListsTheAvailableItems()
+    {
+        Assert.False(ActivationRules.TryFindActivable([Item("lame")], "boh", out var item, out var error));
+        Assert.Null(item);
+        Assert.Contains("lame", error);
+    }
+}
