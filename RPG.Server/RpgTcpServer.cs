@@ -490,51 +490,6 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
 
     private sealed record AttackOutcome(string? Error, AttackResponsePayload? Result, string? LogLine, bool AttackerChanged = false);
 
-    // Tiro di stordimento dopo un colpo che ha inflitto danno (solo in combattimento): d10 sotto la soglia
-    // BODY - modificatore di stato. Se fallisce il personaggio è stordito. Restituisce la riga di calcolo
-    // (null se non applicabile). Da chiamare dopo aver tolto i punti ferita.
-    private static string? RollStunSave(Character target)
-    {
-        if (target.Health.IsDead || target.Health.IsStunned) return null;
-
-        int mod = target.Health.GetStunSaveModifier();
-        int threshold = Math.Max(0, target.Stats.BODY - mod);
-        int roll = (int)GameDice.Roll("1d10").Total;
-        bool resisted = roll < threshold;
-        if (!resisted) target.Health.IsStunned = true;
-
-        return $"Tiro di stordimento: d10 {roll} contro meno di {threshold} (BODY {target.Stats.BODY} - stato {mod}): "
-            + (resisted ? "resiste" : "STORDITO (non può agire né muoversi finché non si riprende)");
-    }
-
-    // Tiro di recupero all'inizio del turno di un personaggio stordito: stessa soglia dello stordimento
-    private static string RollStunRecovery(Character c)
-    {
-        int mod = c.Health.GetStunSaveModifier();
-        int threshold = Math.Max(0, c.Stats.BODY - mod);
-        int roll = (int)GameDice.Roll("1d10").Total;
-        bool recovered = roll < threshold;
-        if (recovered) c.Health.IsStunned = false;
-
-        return $"{c.Handle} tenta di riprendersi: d10 {roll} contro meno di {threshold} (BODY {c.Stats.BODY} - stato {mod}): "
-            + (recovered ? "si riprende" : "è ancora stordito");
-    }
-
-    // Tiro salvezza contro la morte (a inizio turno, chi è in Mortale): d10 inferiore a BODY meno il livello
-    // Mortale per sopravvivere. In caso di fallimento segna il personaggio come morto. Restituisce la riga di calcolo.
-    private static string RollDeathSave(Character c)
-    {
-        int body = c.Stats.BODY;
-        int level = Math.Max(0, c.Health.MortalLevel);
-        int threshold = CombatRules.GetDeathSaveThreshold(body, level);
-        int die = (int)GameDice.Roll("1d10").Total;
-        bool survives = CombatRules.DeathSaveSurvives(die, body, level);
-        if (!survives) c.Health.Kill();
-
-        return $"Salvezza contro la morte di {c.Handle} (Mortale {level}): d10 {die} contro meno di {threshold} (BODY {body} - livello {level}): "
-            + (survives ? "sopravvive" : "MUORE");
-    }
-
     // Pila di munizioni da cui provengono i colpi attualmente nel caricatore (null = standard)
     private static Ammo? FindLoadedAmmo(Character owner, Weapon weapon) =>
         string.IsNullOrEmpty(weapon.LoadedAmmoId)
@@ -690,7 +645,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             // Salvezza contro la morte: a inizio turno, chi è in Mortale e non stabilizzato tira 1d10 ≤ BODY.
             if (combatant.Character.Health.NeedsDeathSave)
             {
-                notes.Add(RollDeathSave(combatant.Character));
+                notes.Add(RollService.RollDeathSave(combatant.Character));
                 if (combatant.Character.Health.IsDead)
                 {
                     newlyDead.Add(combatant.Character);
@@ -701,7 +656,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             // Chi è stordito tenta di riprendersi all'inizio del suo turno; se non ci riesce il turno salta
             if (combatant.Character.Health.IsStunned)
             {
-                notes.Add(RollStunRecovery(combatant.Character));
+                notes.Add(RollService.RollStunRecovery(combatant.Character));
                 if (combatant.Character.Health.IsStunned)
                 {
                     if (fallbackRaw < 0) fallbackRaw = raw;
@@ -1376,7 +1331,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                 victimSteps.Add($"Salute: {healthBefore} -> {target.Health.RemainingBoxes}/{target.Health.MaxHealth} ({target.Health.GetWoundStatusDescription()})");
                 if (combatActive && afterBtm > 0)
                 {
-                    var stunLine = RollStunSave(target);
+                    var stunLine = RollService.RollStunSave(target);
                     if (stunLine != null) victimSteps.Add(stunLine);
                 }
 
@@ -1761,7 +1716,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
 
                 if (combatActive && damageDealt > 0)
                 {
-                    var stunLine = RollStunSave(target);
+                    var stunLine = RollService.RollStunSave(target);
                     if (stunLine != null) steps.Add(stunLine);
                 }
             }
@@ -2075,31 +2030,6 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         await ResolveSkillCheckAsync(client, client.Player.Character!, skillReq);
     }
 
-    private sealed record SkillRollResult(string StatName, int StatValue, int SkillLevel, int Penalty, GameDice.D10Roll Dice,
-        IReadOnlyList<EffectTerm> Terms, IReadOnlyList<ActiveEffect> Expired, int Total);
-
-    // Testo per il log del server: " +2 master -1 stordito"
-    private static string LogTerms(IEnumerable<EffectTerm> terms) =>
-        string.Concat(terms.Select(t => $" {t.Value:+#;-#;0} {t.Label}"));
-
-    // Tiro di abilità (d10 esplosivo + stat + livello + penalità ferite + effetti); null se l'abilità non esiste.
-    // Con un game va chiamata sotto Game.SyncRoot (legge e consuma gli effetti); senza game (fuori partita)
-    // valgono solo i bonus del cyberware.
-    private static SkillRollResult? RollSkill(Game? game, Character actor, string skillName)
-    {
-        if (!Skills.TryGetStatForSkill(skillName, out string statName)) return null;
-
-        int statVal = actor.Stats.GetStatValue(statName);
-        int skillLvl = actor.Skills.TryGetValue(skillName, out int lvl) ? lvl : 0;
-        int penalty = actor.Health.GetWoundPenalty();
-        var ctx = new EffectContext(RollKind.Skill, statName, skillName);
-        var terms = EffectRules.CollectTerms(game?.Effects ?? [], actor, ctx, EffectService.SkillExists);
-        var expired = game != null ? EffectRules.ConsumeUses(game.Effects, actor.Handle, ctx) : [];
-        var dice = GameDice.RollExplodingD10Detailed();
-        return new SkillRollResult(statName, statVal, skillLvl, penalty, dice, terms, expired,
-            statVal + skillLvl + penalty + terms.Sum(t => t.Value) + dice.Total);
-    }
-
     private async Task ResolveSkillCheckAsync(ClientSession reporter, Character actor, SkillCheckRequestPayload skillReq)
     {
         string skillName = InputLimits.Clean(skillReq.SkillName, InputLimits.MaxNameFieldLength);
@@ -2110,10 +2040,10 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             checkGame = _registry.FindGameOfPlayer(reporter.Player);
         }
 
-        SkillRollResult? rolled;
+        RollService.SkillRollResult? rolled;
         lock (checkGame?.SyncRoot ?? _registry.NoGameSync)
         {
-            rolled = RollSkill(checkGame, actor, skillName);
+            rolled = RollService.RollSkill(checkGame, actor, skillName);
         }
 
         if (rolled == null)
@@ -2149,7 +2079,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
 
             if (reg != CheckRegistration.NotInCheck)
             {
-                Console.WriteLine($"[CHECK] {actor.Handle} tira '{skillName}' ({statName}:{statVal} + Lvl:{skillLvl} + d10:{diceVal}{(roll.Exploded ? " esploso" : "")} - Pen:{Math.Abs(penalty)}{LogTerms(rolled.Terms)}) = {totalResult} ({reg})");
+                Console.WriteLine($"[CHECK] {actor.Handle} tira '{skillName}' ({statName}:{statVal} + Lvl:{skillLvl} + d10:{diceVal}{(roll.Exploded ? " esploso" : "")} - Pen:{Math.Abs(penalty)}{RollService.LogTerms(rolled.Terms)}) = {totalResult} ({reg})");
                 await ReplyCheckRegistrationAsync(reporter, actor, reg, $"prova di {skillName}");
                 if (completed != null) await FinalizeCheckAsync(checkGame, completed, forced: false);
                 return;
@@ -2159,7 +2089,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         bool isSuccess = !isFumble && totalResult >= skillReq.Difficulty;
 
         string outcome = isFumble ? "FALLIMENTO CRITICO" : isSuccess ? "SUCCESSO" : "FALLIMENTO";
-        Console.WriteLine($"[SKILL] {actor.Handle} prova '{skillName}' ({statName}:{statVal} + Lvl:{skillLvl} + d10:{diceVal}{(roll.Exploded ? " esploso" : "")} - Pen:{Math.Abs(penalty)}{LogTerms(rolled.Terms)}) = {totalResult} vs TN {skillReq.Difficulty} -> {outcome}");
+        Console.WriteLine($"[SKILL] {actor.Handle} prova '{skillName}' ({statName}:{statVal} + Lvl:{skillLvl} + d10:{diceVal}{(roll.Exploded ? " esploso" : "")} - Pen:{Math.Abs(penalty)}{RollService.LogTerms(rolled.Terms)}) = {totalResult} vs TN {skillReq.Difficulty} -> {outcome}");
 
         var respPayload = new SkillCheckResponsePayload
         {
@@ -2755,7 +2685,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             if (!string.IsNullOrWhiteSpace(spec.ActivationSkill))
             {
                 string skill = spec.ActivationSkill.Trim();
-                var rolled = RollSkill(game, actor, skill)!;
+                var rolled = RollService.RollSkill(game, actor, skill)!;
                 var parts = new List<(string, int, string?)>
                 {
                     ("d10", rolled.Dice.Total, RollFormatter.DiceExtra(rolled.Dice)), (rolled.StatName, rolled.StatValue, null), (skill, rolled.SkillLevel, null)
@@ -3931,10 +3861,10 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             bool fumble = false;
             if (isSkill)
             {
-                SkillRollResult? r;
+                RollService.SkillRollResult? r;
                 lock (game.SyncRoot)
                 {
-                    r = RollSkill(game, c.Character, skillName);
+                    r = RollService.RollSkill(game, c.Character, skillName);
                 }
 
                 if (r == null) continue;
@@ -3945,7 +3875,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             {
                 lock (game.SyncRoot)
                 {
-                    total = RollInitiative(game, c.Character).Total;
+                    total = RollService.RollInitiative(game, c.Character).Total;
                 }
             }
 
@@ -4055,42 +3985,6 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         }
     }
 
-    private sealed record InitiativeRollResult(int Ref, int CombatSense, IReadOnlyList<EffectTerm> Terms, IReadOnlyList<ActiveEffect> Expired, int Dice, int Total)
-    {
-        public int Effects => Terms.Sum(t => t.Value);
-    }
-
-    // Calcolo dell'iniziativa con tutti i passaggi: REF + CombatSense + effetti (con etichetta) + d10
-    private static string DescribeInitiative(InitiativeRollResult init)
-    {
-        var parts = new List<(string, int, string?)> { ("REF", init.Ref, null), ("CombatSense", init.CombatSense, null) };
-        EffectService.AddTermParts(parts, init.Terms);
-        parts.Add(("d10", init.Dice, null));
-        string text = RollFormatter.FormatSum(parts);
-        foreach (var note in EffectService.DescribeExpired(init.Expired)) text += $" [{note}]";
-        return text;
-    }
-
-    // Iniziativa: REF + CombatSense (solo i Solo) + effetti (cyberware INIT, bonus del master) + d10
-    // Va chiamata sotto Game.SyncRoot (legge e consuma gli effetti del game)
-    private static InitiativeRollResult RollInitiative(Game game, Character actor)
-    {
-        int refStat = actor.Stats.REF;
-
-        int combatSense = 0;
-        if (actor.Role == Character.RoleType.Solo)
-        {
-            combatSense = actor.Skills.TryGetValue("CombatSense", out int csLvl) ? csLvl : 0;
-        }
-
-        var initCtx = new EffectContext(RollKind.Init, "REF", "CombatSense");
-        var terms = EffectService.CollectTerms(game, actor, initCtx);
-        var expired = EffectRules.ConsumeUses(game.Effects, actor.Handle, initCtx);
-
-        int dice = (int)GameDice.Roll("1d10").Total;
-        return new InitiativeRollResult(refStat, combatSense, terms, expired, dice, refStat + combatSense + terms.Sum(t => t.Value) + dice);
-    }
-
     /// <summary>
     /// Tiro di iniziativa di <paramref name="actor"/> nel game di <paramref name="reporter"/> (la sessione che ha
     /// dato il comando: il giocatore stesso, o il master che tira per un NPC). Con un check di iniziativa aperto il tiro va
@@ -4113,14 +4007,14 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             return;
         }
 
-        InitiativeRollResult init;
+        RollService.InitiativeRollResult init;
         lock (game.SyncRoot)
         {
-            init = RollInitiative(game, actor);
+            init = RollService.RollInitiative(game, actor);
         }
 
         int total = init.Total;
-        string initCalc = DescribeInitiative(init);
+        string initCalc = RollService.DescribeInitiative(init);
 
         CheckRegistration reg;
         Game.Check? completed;
