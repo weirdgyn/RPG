@@ -535,35 +535,6 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             + (survives ? "sopravvive" : "MUORE");
     }
 
-    // "d10 6 + REF 7 - ferite 2 = 11": ogni addendo con il suo nome, così il calcolo si legge senza ricostruirlo.
-    // Extra è un testo opzionale accanto al valore (es. " (10+4)" per un dado esploso).
-    private static string FormatSum(IReadOnlyList<(string Label, int Value, string? Extra)> parts)
-    {
-        var chunks = new List<string>();
-        int total = 0;
-        for (int i = 0; i < parts.Count; i++)
-        {
-            var (label, value, extra) = parts[i];
-            total += value;
-            if (i == 0) chunks.Add($"{label} {value}{extra}");
-            else if (value >= 0) chunks.Add($"+ {label} {value}{extra}");
-            else chunks.Add($"- {label} {-value}{extra}");
-        }
-        return $"{string.Join(" ", chunks)} = {total}";
-    }
-
-    // "2d6 => 4 + 3 => 7" (testo della libreria) -> "4 + 3 = 7": i dadi tirati e la somma, senza ripetere l'espressione
-    private static string FormatDiceDetail(DiceRollResult roll)
-    {
-        var parts = roll.Details.Split("=>", StringSplitOptions.TrimEntries);
-        return parts.Length == 3 && parts[1].Length > 0
-            ? $"{parts[1]} = {(int)roll.Total}"
-            : $"{(int)roll.Total} ({roll.Details})";
-    }
-
-    private static string DiceExtra(GameDice.D10Roll roll) =>
-        roll.Exploded ? $" ({string.Join("+", roll.Rolls)}, esploso)" : string.Empty;
-
     // Pila di munizioni da cui provengono i colpi attualmente nel caricatore (null = standard)
     private static Ammo? FindLoadedAmmo(Character owner, Weapon weapon) =>
         string.IsNullOrEmpty(weapon.LoadedAmmoId)
@@ -1306,13 +1277,13 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             var throwSteps = new List<string>();
             var throwParts = new List<(string, int, string?)>
             {
-                ("d10", roll.Total, DiceExtra(roll)),
+                ("d10", roll.Total, RollFormatter.DiceExtra(roll)),
                 (statName, statVal, null),
                 (weapon.ScatterSkillName, skillLvl, null)
             };
             if (penalty != 0) throwParts.Add(("ferite", penalty, null));
             EffectService.AddTermParts(throwParts, throwTerms);
-            throwSteps.Add($"Tiro di lancio: {FormatSum(throwParts)}");
+            throwSteps.Add($"Tiro di lancio: {RollFormatter.FormatSum(throwParts)}");
             throwSteps.AddRange(EffectService.DescribeExpired(expiredOnThrow));
             throwSteps.Add($"Difficoltà: TN {throwTn} (distanza {distance:F1} m, gittata di lancio {throwRange:F0} m)");
             throwSteps.Add(roll.IsFumble
@@ -1368,7 +1339,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                 if (!bandRolls.TryGetValue(bandKey, out var bandRoll))
                 {
                     var dmgRoll = GameDice.Roll(dice);
-                    bandRoll = (Math.Max(0, (int)dmgRoll.Total), $"Dadi di danno ({dice}): {FormatDiceDetail(dmgRoll)}");
+                    bandRoll = (Math.Max(0, (int)dmgRoll.Total), $"Dadi di danno ({dice}): {RollFormatter.FormatDiceDetail(dmgRoll)}");
                     bandRolls[bandKey] = bandRoll;
                     victimSteps.Add(bandRoll.Text);
                 }
@@ -1685,7 +1656,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                 attackTypeDesc = $"In Mischia con {weaponToUse.Name} -> Difesa Bersaglio (REF {targetRef} + Schivare {targetDodge}): TN {targetNumber}";
                 var tnParts = new List<(string, int, string?)> { ("base", 10, null), ("REF", targetRef, null), ("Schivare", targetDodge, null) };
                 if (targetPenalty != 0) tnParts.Add(("ferite", targetPenalty, null));
-                tnText = $"difesa di {target.Handle}: {FormatSum(tnParts)} (distanza {distance:F1} m)";
+                tnText = $"difesa di {target.Handle}: {RollFormatter.FormatSum(tnParts)} (distanza {distance:F1} m)";
             }
 
             var attackRoll = GameDice.RollExplodingD10Detailed();
@@ -1701,14 +1672,14 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             var steps = new List<string>();
             var hitParts = new List<(string, int, string?)>
             {
-                ("d10", diceVal, DiceExtra(attackRoll)),
+                ("d10", diceVal, RollFormatter.DiceExtra(attackRoll)),
                 (statName, attackerStat, null),
                 (skillName, attackerSkillLvl, null)
             };
             if (weaponModifier != 0) hitParts.Add(("arma", weaponModifier, null));
             if (attackerPenalty != 0) hitParts.Add(("ferite", attackerPenalty, null));
             EffectService.AddTermParts(hitParts, hitTerms);
-            steps.Add($"Tiro per colpire: {FormatSum(hitParts)}");
+            steps.Add($"Tiro per colpire: {RollFormatter.FormatSum(hitParts)}");
             steps.AddRange(EffectService.DescribeExpired(expiredOnHit));
             steps.Add($"Difficoltà: {tnText}");
 
@@ -1744,13 +1715,13 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                 hitMultiplier = loc.DamageMultiplier;
                 steps.Add($"Locazione: d10 {locRoll} -> {loc.Name}{(loc.DamageMultiplier > 1 ? $" (danno x{loc.DamageMultiplier} dopo l'armatura)" : "")}");
 
-                steps.Add($"Dadi di danno ({weaponToUse.DamageDice}): {FormatDiceDetail(damageRoll)}");
+                steps.Add($"Dadi di danno ({weaponToUse.DamageDice}): {RollFormatter.FormatDiceDetail(damageRoll)}");
                 if (ammoDamage != 0 || damageTerms.Count > 0)
                 {
                     var dmgParts = new List<(string, int, string?)> { ("dadi", diceDamage, null) };
                     if (ammoDamage != 0) dmgParts.Add(("munizioni", ammoDamage, null));
                     EffectService.AddTermParts(dmgParts, damageTerms);
-                    steps.Add($"Bonus al danno: {FormatSum(dmgParts)}");
+                    steps.Add($"Bonus al danno: {RollFormatter.FormatSum(dmgParts)}");
                     steps.AddRange(EffectService.DescribeExpired(expiredOnDamage));
                 }
 
@@ -2620,20 +2591,12 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         }));
     }
 
-    // Abilità mediche valide per la stabilizzazione: vale il punteggio migliore fra Pronto Soccorso e
-    // Tecnomedicina ("MedicalTech" è l'alias inglese storico della stessa abilità).
-    private static readonly string[] HealSkills = ["Pronto Soccorso", "Tecnomedicina", "MedicalTech"];
-
-    private static int HealSkillLevel(Character c) => MedicalRules.BestSkillLevel(c.Skills, HealSkills);
-
     /// <summary>
     /// /heal &lt;personaggio&gt;. Un giocatore tenta la <b>stabilizzazione</b> (Pronto Soccorso/Tecnomedicina,
     /// TN = ferite subite dal bersaglio): ferma i tiri salvezza contro la morte. Il <b>master</b> invece cura
     /// completamente e azzera morte e stordimento. La guarigione off-combat (0.5/1 casella al giorno) è fuori
     /// da questo comando.
     /// </summary>
-    private const int MaxHealAmount = 1000;
-
     private static Task ReplyHealAsync(ClientSession reporter, bool success, string message, string target = "") =>
         reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_HealResponse, new HealResponsePayload
         {
@@ -2689,58 +2652,17 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     // stabilizzazione; con <amount> restituisce solo quelle caselle.
     private async Task MasterHealAsync(ClientSession client, Game game, string targetHandle, int? amount)
     {
-        if (amount is <= 0 or > MaxHealAmount)
+        // Ricerca, cura e segnalazione della scheda da salvare nella stessa sezione critica
+        var outcome = GameExecutionContext.Execute(game, scope => MedicalService.MasterHeal(scope, targetHandle, amount), SaveCharacter);
+        if (outcome.Error != null)
         {
-            await ReplyHealAsync(client, false, $"Le caselle da restituire devono essere tra 1 e {MaxHealAmount}.");
+            await ReplyHealAsync(client, false, outcome.Error);
             return;
         }
 
-        Character? target;
-        lock (_registry.GamesLock)
-        {
-            target = FindCombatantInGame(game, targetHandle)?.Character;
-        }
-
-        if (target == null)
-        {
-            await ReplyHealAsync(client, false, $"Personaggio '{targetHandle}' non trovato in questo game.");
-            return;
-        }
-
-        // La salute si modifica sotto il lock del game, come negli attacchi
-        var ctx = new GameExecutionContext(game, SaveCharacter);
-        string text = ctx.Execute(scope =>
-        {
-            if (!scope.IsInGame(target))
-            {
-                return string.Empty;
-            }
-
-            string res;
-            if (amount == null)
-            {
-                target.Health.FullHeal();
-                res = $"Il master cura completamente {target.Handle}: salute {target.Health.RemainingBoxes}/{target.Health.MaxHealth}.";
-            }
-            else
-            {
-                target.Health.Heal(amount.Value);
-                res = $"Il master restituisce {amount} caselle a {target.Handle}: salute {target.Health.RemainingBoxes}/{target.Health.MaxHealth} ({target.Health.GetWoundStatusDescription()}).";
-            }
-
-            scope.MarkDirty(target);
-            return res;
-        });
-
-        if (text.Length == 0)
-        {
-            await ReplyHealAsync(client, false, $"{target.Handle} non è più in questo game.");
-            return;
-        }
-
-        Console.WriteLine($"[HEAL] {client.Player.Username} (master) cura {target.Handle}{(amount != null ? $" di {amount}" : " completamente")}.");
-        await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = text }), includeOrigin: false);
-        await ReplyHealAsync(client, true, text, target.Handle);
+        Console.WriteLine($"[HEAL] {client.Player.Username} (master) cura {targetHandle}{(amount != null ? $" di {amount}" : " completamente")}.");
+        await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = outcome.Message }), includeOrigin: false);
+        await ReplyHealAsync(client, true, outcome.Message, targetHandle);
     }
 
     /// <summary>
@@ -2750,112 +2672,28 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     /// </summary>
     private async Task ResolveStabilizeAsync(ClientSession reporter, Game game, Character healer, string targetHandle)
     {
-        Character? target;
-        lock (_registry.GamesLock)
-        {
-            target = FindCombatantInGame(game, targetHandle)?.Character;
-        }
-
-        if (target == null)
-        {
-            await ReplyHealAsync(reporter, false, $"Personaggio '{targetHandle}' non trovato in questo game.");
-            return;
-        }
-
         // Controlli, consumo dell'azione, tiro ed effetto nella stessa sezione critica: il ferito non può morire,
         // allontanarsi o essere stabilizzato da altri tra il controllo e l'esito.
-        string? error = null;
-        bool success = false;
-        int total = 0, tn = 0;
-        bool fumble = false;
-        string calc = string.Empty;
+        var outcome = GameExecutionContext.Execute(game, scope => MedicalService.Stabilize(scope, healer, targetHandle), SaveCharacter);
 
-        var ctx = new GameExecutionContext(game, SaveCharacter);
-        (error, success, total, tn, fumble, calc) = ctx.Execute<(string?, bool, int, int, bool, string)>(scope =>
+        if (outcome.Error != null)
         {
-            string? err = scope.CheckActor(healer);
-            if (err == null && !scope.IsInGame(target)) err = $"{target.Handle} non è più in questo game.";
-
-            if (err == null)
-            {
-                var block = MedicalRules.GetStabilizeBlock(target.Health);
-                if (block != MedicalRules.StabilizeBlock.None)
-                {
-                    err = block switch
-                    {
-                        MedicalRules.StabilizeBlock.Dead => $"{target.Handle} è morto: solo il master può rianimarlo.",
-                        MedicalRules.StabilizeBlock.NotMortal => $"{target.Handle} non è in Mortale ({target.Health.GetWoundStatusDescription()}): non c'è nulla da stabilizzare.",
-                        _ => $"{target.Handle} è già stabilizzato."
-                    };
-                }
-            }
-
-            if (err == null)
-            {
-                double distance = CombatRules.CalculateDistance(healer.Position, target.Position);
-                if (distance > MedicalRules.HealRangeMeters)
-                {
-                    err = $"{target.Handle} è troppo lontano per essere curato da {healer.Handle}: {distance:F1} m, serve essere a {MedicalRules.HealRangeMeters} m o meno.";
-                }
-            }
-
-            err ??= scope.CheckTurn(healer, needsAction: true);
-
-            if (err != null)
-            {
-                return (err, false, 0, 0, false, string.Empty);
-            }
-
-            scope.CountFreeAction();
-
-            int skillLvl = HealSkillLevel(healer);
-            string healSkill = HealSkills.OrderByDescending(n => healer.Skills.TryGetValue(n, out int l) ? l : 0).First();
-            int tech = healer.Stats.GetStatValue("TECH");
-            int penalty = healer.Health.GetWoundPenalty();
-
-            // Una cura è una prova di abilità: valgono ALL, STAT:TECH e SKILL:<abilità usata>
-            var healCtx = new EffectContext(RollKind.Skill, "TECH", healSkill);
-            var healTerms = EffectService.CollectTerms(game, healer, healCtx);
-            var healExpired = EffectRules.ConsumeUses(game.Effects, healer.Handle, healCtx);
-            var roll = GameDice.RollExplodingD10Detailed();
-            var stab = MedicalRules.ResolveStabilization(roll, tech, skillLvl, penalty + healTerms.Sum(t => t.Value), target.Health.DamageTaken);
-
-            var calcParts = new List<(string, int, string?)>
-            {
-                ("d10", roll.Total, DiceExtra(roll)), ("TECH", tech, null), (healSkill, skillLvl, null)
-            };
-            if (penalty != 0) calcParts.Add(("ferite", penalty, null));
-            EffectService.AddTermParts(calcParts, healTerms);
-            string formattedCalc = FormatSum(calcParts);
-            foreach (var note in EffectService.DescribeExpired(healExpired)) formattedCalc += $" [{note}]";
-
-            Console.WriteLine($"[HEAL] {healer.Handle} tenta di stabilizzare {target.Handle}: {formattedCalc} vs TN {stab.TargetNumber} -> {(stab.Success ? "OK" : "FALLITO")}");
-
-            if (stab.Success)
-            {
-                target.Health.IsStabilized = true;
-                scope.MarkDirty(target);
-            }
-
-            return (null, stab.Success, stab.Total, stab.TargetNumber, stab.IsFumble, formattedCalc);
-        });
-
-        if (error != null)
-        {
-            await ReplyHealAsync(reporter, false, error);
+            await ReplyHealAsync(reporter, false, outcome.Error);
             return;
         }
 
+        var target = outcome.Target!;
+
         // Un tentativo fallito costa comunque l'azione del turno: niente rimborso (il rimborso è solo per errori).
-        if (!success)
+        if (!outcome.Success)
         {
-            string failMessage = $"{healer.Handle} tenta di stabilizzare {target.Handle} ma fallisce: {calc} contro TN {tn}{(fumble ? " (fallimento critico)" : "")}.";
+            string failMessage = $"{healer.Handle} tenta di stabilizzare {target.Handle} ma fallisce: {outcome.Calc} contro TN {outcome.TargetNumber}{(outcome.IsFumble ? " (fallimento critico)" : "")}.";
             await BroadcastToGameAsync(reporter, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = failMessage }), includeOrigin: false);
             await ReplyHealAsync(reporter, false, failMessage, target.Handle);
             return;
         }
 
-        string message = $"{healer.Handle} stabilizza {target.Handle}: {calc} contro TN {tn}. Non tira più il salvezza contro la morte.";
+        string message = $"{healer.Handle} stabilizza {target.Handle}: {outcome.Calc} contro TN {outcome.TargetNumber}. Non tira più il salvezza contro la morte.";
         await BroadcastToGameAsync(reporter, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = message }), includeOrigin: false);
         await ReplyHealAsync(reporter, true, message, target.Handle);
     }
@@ -2920,11 +2758,11 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                 var rolled = RollSkill(game, actor, skill)!;
                 var parts = new List<(string, int, string?)>
                 {
-                    ("d10", rolled.Dice.Total, DiceExtra(rolled.Dice)), (rolled.StatName, rolled.StatValue, null), (skill, rolled.SkillLevel, null)
+                    ("d10", rolled.Dice.Total, RollFormatter.DiceExtra(rolled.Dice)), (rolled.StatName, rolled.StatValue, null), (skill, rolled.SkillLevel, null)
                 };
                 if (rolled.Penalty != 0) parts.Add(("ferite", rolled.Penalty, null));
                 EffectService.AddTermParts(parts, rolled.Terms);
-                calc = FormatSum(parts);
+                calc = RollFormatter.FormatSum(parts);
                 foreach (var note in EffectService.DescribeExpired(rolled.Expired)) calc += $" [{note}]";
 
                 passed = !rolled.Dice.IsFumble && rolled.Total >= spec.ActivationTN;
@@ -4228,7 +4066,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         var parts = new List<(string, int, string?)> { ("REF", init.Ref, null), ("CombatSense", init.CombatSense, null) };
         EffectService.AddTermParts(parts, init.Terms);
         parts.Add(("d10", init.Dice, null));
-        string text = FormatSum(parts);
+        string text = RollFormatter.FormatSum(parts);
         foreach (var note in EffectService.DescribeExpired(init.Expired)) text += $" [{note}]";
         return text;
     }
