@@ -45,6 +45,29 @@ public class GameExecutionContextTests
     }
 
     [Fact]
+    public void Execute_FailingSave_DoesNotBlockOthersNorThrow()
+    {
+        var game = new Game();
+        var a = new Character { Handle = "A" };
+        var b = new Character { Handle = "B" };
+        var saved = new List<string>();
+
+        var result = GameExecutionContext.Execute(game, scope =>
+        {
+            scope.MarkDirty(a);
+            scope.MarkDirty(b);
+            return 42;
+        }, c =>
+        {
+            if (c.Handle == "A") throw new IOException("disco pieno");
+            saved.Add(c.Handle);
+        });
+
+        Assert.Equal(42, result);
+        Assert.Equal(["B"], saved);
+    }
+
+    [Fact]
     public void Execute_DeduplicatesDirtyCharacters()
     {
         var game = new Game();

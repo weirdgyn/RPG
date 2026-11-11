@@ -826,41 +826,16 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     // Combattimento a turni
     // ---------------------------------------------------------------------------------------------
 
-    // Da chiamare sotto Game.SyncRoot. La composizione del game (Players, NPCs) cambia solo con entrambi i lock
-    // (_gamesLock e SyncRoot), quindi chi tiene il SyncRoot la vede stabile.
-    private static bool IsInGameLocked(Game game, Character character) =>
-        new GameExecutionScope(game).IsInGame(character);
-
-    // Da chiamare sotto Game.SyncRoot: tutti i personaggi del game (giocatori e NPC), senza doppioni.
-    private static List<Character> ParticipantsLocked(Game game) =>
-        new GameExecutionScope(game).GetParticipants();
-
-    // Da chiamare sotto Game.SyncRoot, nella stessa sezione critica di un CheckTurnLocked(needsAction: true) andato
-    // a buon fine, se la risoluzione fallisce: restituisce l'azione (il turno non può essere cambiato nel frattempo).
-    private static void RefundActionLocked(Game game) =>
-        new GameExecutionScope(game).RefundAction();
-
-    // Controlli comuni a chi agisce (attacco, lancio, ricarica, cura): in partita e vivo. Sotto SyncRoot.
-    private static string? CheckActorLocked(Game game, Character actor) =>
-        new GameExecutionScope(game).CheckActor(actor);
-
-    // Da chiamare sotto Game.SyncRoot. Verifica che l'attore possa agire adesso e, se needsAction e siamo in
-    // combattimento, consuma l'azione nella stessa sezione critica: tra il controllo e il consumo non può
-    // infilarsi un /next. Restituisce null se l'azione è consentita.
-    private static string? CheckTurnLocked(Game game, Character actor, bool needsAction) =>
-        new GameExecutionScope(game).CheckTurn(actor, needsAction);
-
     // Esito di un movimento atomico: se Error è null, Result è la posizione raggiunta (o il motivo del
     // blocco); se Error è valorizzato, Result va ignorato.
     private readonly record struct MoveOutcome(string? Error, GameMap.MovementResult Result);
 
     // Movimento atomico: turno, budget di MA rimasto e aggiornamento della posizione (con TurnMoveUsed in
     // combattimento, oppure il contatore delle azioni libere fuori) avvengono nella stessa sezione critica.
-    private static MoveOutcome TryMove(Game game, GameMap map, Character actor, Position3D requested)
-    {
-        lock (game.SyncRoot)
+    private static MoveOutcome TryMove(Game game, GameMap map, Character actor, Position3D requested) =>
+        GameExecutionContext.Execute(game, scope =>
         {
-            string? error = CheckTurnLocked(game, actor, needsAction: false);
+            string? error = scope.CheckTurn(actor, needsAction: false);
             if (error != null) return new MoveOutcome(error, GameMap.MovementResult.Success);
 
             double distance = CombatRules.CalculateDistance(actor.Position, requested);
@@ -880,27 +855,15 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             {
                 actor.Position = requested;
                 if (game.CombatActive) game.TurnMoveUsed += distance;
-                else game.FreeActionsCounter++;
+                else scope.CountFreeAction();
             }
 
             return new MoveOutcome(null, result);
-        }
-    }
+        });
 
     // In un round di combattimento un personaggio può fare movimento + azione: 2 comandi contati.
     // Serve solo alla stima mostrata nel game status, non è un limite di gioco.
     private const int MaxActionsPerRound = 2;
-
-    // Registra un'azione libera (fuori dal combattimento) nel game: alimenta FreeActionsCounter, che
-    // misura quanto il gruppo ha agito fuori dai round. Da chiamare solo per azioni eseguite
-    // (/skill, /roll, /attack risolto; il /move è contato direttamente dentro TryMove).
-    private static void CountFreeAction(Game game)
-    {
-        lock (game.SyncRoot)
-        {
-            if (!game.CombatActive) game.FreeActionsCounter++;
-        }
-    }
 
     // Da chiamare sotto _gamesLock. Passa al prossimo personaggio valido dell'ordine (ancora nel game e non morto),
     // incrementando il round al giro completo, e azzera movimento e azione. False se non c'è più nessuno.
@@ -2077,7 +2040,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         {
             rollGame = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
         }
-        if (rollGame != null && client.Player.Role != Player.RoleType.master) CountFreeAction(rollGame);
+        if (rollGame != null && client.Player.Role != Player.RoleType.master) GameExecutionContext.Execute(rollGame, scope => scope.CountFreeAction());
 
         var resp = new RollResponsePayload
         {
@@ -2368,7 +2331,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         // (il TN è quello del check) e non viene mostrato agli altri finché non hanno tirato tutti.
         if (checkGame != null)
         {
-            CountFreeAction(checkGame);
+            GameExecutionContext.Execute(checkGame, scope => scope.CountFreeAction());
 
             CheckRegistration reg;
             Game.Check? completed;
@@ -4064,7 +4027,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             if (success && game != null)
             {
                 // Difesa in profondità: una sessione non deve comparire due volte nello stesso game.
-                // La composizione del game cambia sotto entrambi i lock (vedi IsInGameLocked)
+                // La composizione del game cambia sotto entrambi i lock (vedi GameExecutionScope.IsInGame)
                 lock (game.SyncRoot)
                 {
                     if (!game.Players.Contains(client.Player)) game.Players.Add(client.Player);

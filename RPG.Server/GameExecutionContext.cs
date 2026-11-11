@@ -181,9 +181,17 @@ public sealed class GameExecutionContext
 
         if (saveCharacter != null)
         {
+            // Un salvataggio fallito non deve impedire gli altri né far fallire un'operazione già applicata in memoria.
             foreach (var character in toSave)
             {
-                saveCharacter(character);
+                try
+                {
+                    saveCharacter(character);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[SAVE] Salvataggio di '{character.Handle}' fallito: {ex.Message}");
+                }
             }
         }
 
