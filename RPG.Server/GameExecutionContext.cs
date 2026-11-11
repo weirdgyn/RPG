@@ -7,23 +7,18 @@ namespace RPG.Server;
 /// Fornisce metodi standardizzati di validazione per attori e turni, e raccoglie i personaggi
 /// modificati per cui è necessaria la persistenza write-through al termine della sezione critica.
 /// </summary>
-public sealed class GameExecutionScope
+public sealed class GameExecutionScope(Game game)
 {
     private readonly HashSet<Character> _dirtyCharacters = [];
     private readonly List<Character> _newlyDead = [];
 
-    public Game Game { get; }
+    public Game Game { get; } = game ?? throw new ArgumentNullException(nameof(game));
 
     /// <summary>Personaggi modificati durante l'operazione da salvare su disco al termine del lock.</summary>
     public IReadOnlyCollection<Character> DirtyCharacters => _dirtyCharacters;
 
     /// <summary>Personaggi morti durante l'operazione (inclusi anche in <see cref="DirtyCharacters"/>).</summary>
     public IReadOnlyList<Character> NewlyDead => _newlyDead;
-
-    public GameExecutionScope(Game game)
-    {
-        Game = game ?? throw new ArgumentNullException(nameof(game));
-    }
 
     /// <summary>Segna un personaggio come modificato da persistere al rilascio del lock.</summary>
     public void MarkDirty(Character? character)
@@ -139,16 +134,10 @@ public sealed class GameExecutionScope
 ///    come modificati (<see cref="GameExecutionScope.DirtyCharacters"/>). Questo previene lock-inversion con
 ///    <c>CharacterRepository._saveLock</c>.
 /// </summary>
-public sealed class GameExecutionContext
+public sealed class GameExecutionContext(Game game, Action<Character>? saveCharacter = null)
 {
-    public Game Game { get; }
-    private readonly Action<Character>? _saveCharacter;
-
-    public GameExecutionContext(Game game, Action<Character>? saveCharacter = null)
-    {
-        Game = game ?? throw new ArgumentNullException(nameof(game));
-        _saveCharacter = saveCharacter;
-    }
+    public Game Game { get; } = game ?? throw new ArgumentNullException(nameof(game));
+    private readonly Action<Character>? _saveCharacter = saveCharacter;
 
     /// <summary>
     /// Esegue un'operazione atomica sotto <see cref="Game.SyncRoot"/> e persiste i personaggi modificati al rilascio del lock.

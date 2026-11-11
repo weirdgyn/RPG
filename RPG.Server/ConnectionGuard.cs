@@ -18,7 +18,13 @@ public enum AdmitResult
 /// L'orologio è passato dal chiamante per poter testare la logica senza attese.
 /// Thread-safe: tutti gli stati sono protetti da un unico lock (le operazioni sono brevissime).
 /// </summary>
-public sealed class ConnectionGuard
+public sealed class ConnectionGuard(
+    int maxPerAddress = ConnectionGuard.DefaultMaxPerAddress,
+    int maxNewPerWindow = ConnectionGuard.DefaultMaxNewPerWindow,
+    TimeSpan? rateWindow = null,
+    int maxStrikes = ConnectionGuard.DefaultMaxStrikes,
+    TimeSpan? strikeWindow = null,
+    TimeSpan? banDuration = null)
 {
     public const int DefaultMaxPerAddress = 5;
     public const int DefaultMaxNewPerWindow = 10;
@@ -36,30 +42,14 @@ public sealed class ConnectionGuard
     }
 
     private readonly object _lock = new();
-    private readonly Dictionary<IPAddress, Entry> _entries = new();
+    private readonly Dictionary<IPAddress, Entry> _entries = [];
 
-    private readonly int _maxPerAddress;
-    private readonly int _maxNewPerWindow;
-    private readonly TimeSpan _rateWindow;
-    private readonly int _maxStrikes;
-    private readonly TimeSpan _strikeWindow;
-    private readonly TimeSpan _banDuration;
-
-    public ConnectionGuard(
-        int maxPerAddress = DefaultMaxPerAddress,
-        int maxNewPerWindow = DefaultMaxNewPerWindow,
-        TimeSpan? rateWindow = null,
-        int maxStrikes = DefaultMaxStrikes,
-        TimeSpan? strikeWindow = null,
-        TimeSpan? banDuration = null)
-    {
-        _maxPerAddress = maxPerAddress;
-        _maxNewPerWindow = maxNewPerWindow;
-        _rateWindow = rateWindow ?? DefaultRateWindow;
-        _maxStrikes = maxStrikes;
-        _strikeWindow = strikeWindow ?? DefaultStrikeWindow;
-        _banDuration = banDuration ?? DefaultBanDuration;
-    }
+    private readonly int _maxPerAddress = maxPerAddress;
+    private readonly int _maxNewPerWindow = maxNewPerWindow;
+    private readonly TimeSpan _rateWindow = rateWindow ?? DefaultRateWindow;
+    private readonly int _maxStrikes = maxStrikes;
+    private readonly TimeSpan _strikeWindow = strikeWindow ?? DefaultStrikeWindow;
+    private readonly TimeSpan _banDuration = banDuration ?? DefaultBanDuration;
 
     /// <summary>IPv4 mappato su IPv6 e IPv4 sono lo stesso indirizzo.</summary>
     public static IPAddress Normalize(IPAddress address) => address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;

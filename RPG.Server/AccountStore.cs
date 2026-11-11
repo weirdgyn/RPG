@@ -19,7 +19,7 @@ public enum AuthResult
 /// stesso username l'account è bloccato per qualche minuto, da qualunque IP arrivino i tentativi.
 /// L'orologio è passato dal chiamante per poter testare il blocco senza attese.
 /// </summary>
-public sealed class AccountStore
+public sealed class AccountStore(string? path = null, int iterations = AccountStore.DefaultIterations)
 {
     public const string FileName = "accounts.json";
     public const int DefaultIterations = 600_000;
@@ -47,16 +47,10 @@ public sealed class AccountStore
     private readonly object _lock = new();
     private readonly Dictionary<string, AccountRecord> _accounts = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Attempts> _attempts = new(StringComparer.OrdinalIgnoreCase);
-    private readonly string? _path;
-    private readonly int _iterations;
+    private readonly string? _path = path;
+    private readonly int _iterations = iterations;
     // Hash di un account inesistente: verificare contro questo rende uguale il tempo di risposta.
     private readonly byte[] _dummySalt = RandomNumberGenerator.GetBytes(16);
-
-    public AccountStore(string? path = null, int iterations = DefaultIterations)
-    {
-        _path = path;
-        _iterations = iterations;
-    }
 
     /// <summary>Percorso di accounts.json nella cartella dati fissa del server (vedi <see cref="ServerPaths"/>).</summary>
     public static string ResolvePath() => ServerPaths.Resolve(FileName);

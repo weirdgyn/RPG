@@ -19,13 +19,11 @@ public enum TrustResult
 /// Il server usa un certificato autofirmato: la fiducia non viene da una CA ma dal fatto che l'impronta
 /// resti la stessa a ogni connessione.
 /// </summary>
-public sealed class TrustStore
+public sealed class TrustStore(string? path = null)
 {
     private readonly Dictionary<string, string> _pins = new(StringComparer.OrdinalIgnoreCase);
-    private readonly string? _path;
+    private readonly string? _path = path;
     private readonly object _lock = new();
-
-    public TrustStore(string? path = null) => _path = path;
 
     public static string Key(string host, int port) => $"{host.Trim().ToLowerInvariant()}:{port}";
 
