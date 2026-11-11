@@ -570,15 +570,8 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     private static List<EffectTerm> CollectEffectTerms(Game game, Character character, EffectContext ctx) =>
         EffectRules.CollectTerms(game.Effects, character, ctx, SkillExists);
 
-    // Movimento per turno con gli effetti (MOVE, STAT:MA). Va chiamata sotto Game.SyncRoot.
-    private static int EffectiveMA(Game game, Character character) =>
-        EffectRules.MovementAllowance(game.Effects, character, SkillExists);
-
     private static List<string> DescribeEffectsOf(Game game, string handle) =>
         [.. game.Effects.Where(e => e.TargetHandle.Equals(handle, StringComparison.OrdinalIgnoreCase)).Select(e => e.Describe())];
-
-    private static string MaText(int baseMa, int effective) =>
-        effective == baseMa ? $"MA {baseMa}" : $"MA {baseMa}, con effetti {effective}";
 
     // Aggiunge i termini a un calcolo da mostrare con FormatSum: ognuno con la sua etichetta
     private static void AddTermParts(List<(string, int, string?)> parts, IEnumerable<EffectTerm> terms)
@@ -733,41 +726,6 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     // Combattimento a turni
     // ---------------------------------------------------------------------------------------------
 
-    // Esito di un movimento atomico: se Error è null, Result è la posizione raggiunta (o il motivo del
-    // blocco); se Error è valorizzato, Result va ignorato.
-    private readonly record struct MoveOutcome(string? Error, GameMap.MovementResult Result);
-
-    // Movimento atomico: turno, budget di MA rimasto e aggiornamento della posizione (con TurnMoveUsed in
-    // combattimento, oppure il contatore delle azioni libere fuori) avvengono nella stessa sezione critica.
-    private static MoveOutcome TryMove(Game game, GameMap map, Character actor, Position3D requested) =>
-        GameExecutionContext.Execute(game, scope =>
-        {
-            string? error = scope.CheckTurn(actor, needsAction: false);
-            if (error != null) return new MoveOutcome(error, GameMap.MovementResult.Success);
-
-            double distance = CombatRules.CalculateDistance(actor.Position, requested);
-            int allowance = EffectiveMA(game, actor);
-            double available = game.CombatActive ? Math.Max(0, allowance - game.TurnMoveUsed) : allowance;
-
-            if (distance > available + 1e-9)
-            {
-                return new MoveOutcome(game.CombatActive
-                    ? $"Troppo lontano: a {actor.Handle} restano {available:F1}m di movimento in questo turno ({MaText(actor.Stats.MA, allowance)}), la destinazione dista {distance:F1}m."
-                    : $"Troppo lontano: {actor.Handle} può muoversi al massimo di {allowance}m per volta ({MaText(actor.Stats.MA, allowance)}), la destinazione dista {distance:F1}m.",
-                    GameMap.MovementResult.Success);
-            }
-
-            var result = map.GetMovementResult(requested);
-            if (result == GameMap.MovementResult.Success)
-            {
-                actor.Position = requested;
-                if (game.CombatActive) game.TurnMoveUsed += distance;
-                else scope.CountFreeAction();
-            }
-
-            return new MoveOutcome(null, result);
-        });
-
     // In un round di combattimento un personaggio può fare movimento + azione: 2 comandi contati.
     // Serve solo alla stima mostrata nel game status, non è un limite di gioco.
     private const int MaxActionsPerRound = 2;
@@ -879,7 +837,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         string current = game.CurrentTurnHandle ?? "nessuno";
         var combatant = game.CurrentTurnHandle != null ? FindCombatantInGame(game, game.CurrentTurnHandle) : null;
         string budget = combatant != null
-            ? $" Movimento: {Math.Max(0, EffectiveMA(game, combatant.Character) - game.TurnMoveUsed):F1}/{EffectiveMA(game, combatant.Character)}m, azione: {(game.TurnActionUsed ? "usata" : "disponibile")}."
+            ? $" Movimento: {Math.Max(0, MovementService.EffectiveMA(game, combatant.Character) - game.TurnMoveUsed):F1}/{MovementService.EffectiveMA(game, combatant.Character)}m, azione: {(game.TurnActionUsed ? "usata" : "disponibile")}."
             : string.Empty;
         return $"Round {game.Round} - tocca a {current}.{budget}";
     }
@@ -1056,7 +1014,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             var maGame = _registry.FindGameOf(c);
             if (maGame != null)
             {
-                lock (maGame.SyncRoot) payload.MAEffective = EffectiveMA(maGame, c);
+                lock (maGame.SyncRoot) payload.MAEffective = MovementService.EffectiveMA(maGame, c);
             }
             payload.Position = c.Position;
             var w = c.EquippedWeapon;
@@ -1136,7 +1094,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                     payload.CurrentTurn = game.CurrentTurnHandle ?? string.Empty;
                     payload.ActionUsed = game.TurnActionUsed;
                     var cur = game.CurrentTurnHandle != null ? FindCombatantInGame(game, game.CurrentTurnHandle) : null;
-                    if (cur != null) payload.MoveLeft = Math.Max(0, EffectiveMA(game, cur.Character) - game.TurnMoveUsed);
+                    if (cur != null) payload.MoveLeft = Math.Max(0, MovementService.EffectiveMA(game, cur.Character) - game.TurnMoveUsed);
                 }
                 payload.TurnOrder = [.. game.TurnOrder.Select(t => t.Handle)];
 
@@ -2108,7 +2066,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             if (game != null)
             {
                 payload.Effects = DescribeEffectsOf(game, character.Handle);
-                payload.MAEffective = EffectiveMA(game, character);
+                payload.MAEffective = MovementService.EffectiveMA(game, character);
             }
             packet = NetworkPacket.Create(OpCode.S2C_PlayerStateUpdate, payload);
         }
@@ -2315,16 +2273,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         var requested = WithCurrentZ(moveReq.Position, moveReq.ZProvided, actor);
 
         // Turno, budget di movimento e aggiornamento della posizione in un'unica operazione atomica
-        var ctx = new GameExecutionContext(game, SaveCharacter);
-        var move = ctx.Execute(scope =>
-        {
-            var res = TryMove(game, map, actor, requested);
-            if (res.Error == null && res.Result == GameMap.MovementResult.Success)
-            {
-                scope.MarkDirty(actor);
-            }
-            return res;
-        });
+        var move = GameExecutionContext.Execute(game, scope => MovementService.TryMove(scope, map, actor, requested), SaveCharacter);
 
         if (move.Error != null)
         {
@@ -2388,54 +2337,15 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         if (handles.Count > TeleportRules.MaxTargets) { await Fail($"Troppi personaggi: al massimo {TeleportRules.MaxTargets} per comando."); return; }
 
         var destination = new Position3D { X = req.Position.X, Y = req.Position.Y, Z = req.Position.Z };
-        var moved = new List<Character>();
-        string? error = null;
+        var game = _registry.FindGameOfPlayer(client.Player);
+        if (game?.Map == null) { await Fail("Devi essere in un game per usare /teleport: usa /join <game>."); return; }
 
-        lock (_registry.GamesLock)
+        // Ricerca, validazione e spostamento nella stessa sezione critica; le schede si salvano dopo il rilascio del lock.
+        var outcome = GameExecutionContext.Execute(game, scope => MovementService.TryTeleport(scope, handles, destination), SaveCharacter);
+        if (outcome.Error != null) { await Fail(outcome.Error); return; }
+
+        foreach (var character in outcome.Moved)
         {
-            var game = _registry.FindGameOfPlayer(client.Player);
-            if (game?.Map == null)
-            {
-                error = "Devi essere in un game per usare /teleport: usa /join <game>.";
-            }
-            else
-            lock (game.SyncRoot)
-            {
-                var found = new List<Character>();
-                foreach (var handle in handles)
-                {
-                    var character = FindCombatantInGame(game, handle)?.Character;
-                    if (character == null) { error = $"Personaggio '{handle}' non trovato in questo game: nessuno spostato."; break; }
-                    found.Add(character);
-                }
-
-                if (error == null)
-                {
-                    var result = game.Map.GetMovementResult(destination);
-                    if (result != GameMap.MovementResult.Success)
-                    {
-                        error = result == GameMap.MovementResult.OutOfBounds
-                            ? $"({destination.X}, {destination.Y}, {destination.Z}) è fuori dai confini della mappa: nessuno spostato."
-                            : $"C'è un ostacolo in ({destination.X}, {destination.Y}, {destination.Z}): nessuno spostato.";
-                    }
-                }
-
-                if (error == null)
-                {
-                    foreach (var character in found)
-                    {
-                        character.Position = new Position3D { X = destination.X, Y = destination.Y, Z = destination.Z };
-                        moved.Add(character);
-                    }
-                }
-            }
-        }
-
-        if (error != null) { await Fail(error); return; }
-
-        foreach (var character in moved)
-        {
-            SaveCharacter(character);
             Console.WriteLine($"[TELEPORT] {client.Player.Username} (master) sposta {character.Handle} a ({destination.X}, {destination.Y}, {destination.Z}).");
 
             var payload = new MoveResultPayload
@@ -3481,7 +3391,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                         if (npc != null)
                         {
                             npcStatus.Effects = DescribeEffectsOf(game, npc.Handle);
-                            npcStatus.MAEffective = EffectiveMA(game, npc);
+                            npcStatus.MAEffective = MovementService.EffectiveMA(game, npc);
                         }
                         npcPacket = NetworkPacket.Create(OpCode.S2C_NpcResponse, npcStatus);
                     }
