@@ -778,25 +778,32 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
 
         // Validazione, consumo dell'azione e risoluzione nella stessa sezione critica: tra un controllo e
         // l'altro non possono infilarsi /next, l'uscita del bersaglio o la sua morte.
-        AttackOutcome outcome;
-        lock (game.SyncRoot)
+        var ctx = new GameExecutionContext(game, SaveCharacter);
+        var outcome = ctx.Execute(scope =>
         {
-            string? denial = CheckActorLocked(game, attacker);
-            if (denial == null && !IsInGameLocked(game, target.Character)) denial = $"{target.Character.Handle} non è più in questo game.";
+            string? denial = scope.CheckActor(attacker);
+            if (denial == null && !scope.IsInGame(target.Character)) denial = $"{target.Character.Handle} non è più in questo game.";
             if (denial == null && target.Character.Health.IsDead) denial = $"{target.Character.Handle} è già morto.";
-            denial ??= CheckTurnLocked(game, attacker, needsAction: true);
+            denial ??= scope.CheckTurn(attacker, needsAction: true);
 
             if (denial != null)
             {
-                outcome = new AttackOutcome(denial, null, null);
+                return new AttackOutcome(denial, null, null);
+            }
+
+            var res = ResolveAttackRules(game, attacker, target.Character, attackReq.WeaponOrSkill, game.CombatActive);
+            if (res.Error != null)
+            {
+                scope.RefundAction();
             }
             else
             {
-                outcome = ResolveAttackRules(game, attacker, target.Character, attackReq.WeaponOrSkill, game.CombatActive);
-                if (outcome.Error != null) RefundActionLocked(game);
-                else if (!game.CombatActive) game.FreeActionsCounter++;
+                scope.CountFreeAction();
+                if (res.AttackerChanged) scope.MarkDirty(attacker);
+                if (res.Result!.IsHit) scope.MarkDirty(target.Character);
             }
-        }
+            return res;
+        });
 
         if (outcome.Error != null)
         {
@@ -804,18 +811,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             return;
         }
 
-        // Il colpo sparato consuma munizioni: la scheda dell'attaccante va salvata anche se ha mancato
-        if (outcome.AttackerChanged)
-        {
-            SaveCharacter(attacker);
-        }
-
         Console.WriteLine(outcome.LogLine);
-
-        if (outcome.Result!.IsHit)
-        {
-            SaveCharacter(target.Character);
-        }
 
         // Il risultato va a tutto il game (attaccante e bersaglio compresi), non agli altri game
         var attackPacket = NetworkPacket.Create(OpCode.S2C_AttackResult, outcome.Result);
@@ -833,64 +829,26 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     // Da chiamare sotto Game.SyncRoot. La composizione del game (Players, NPCs) cambia solo con entrambi i lock
     // (_gamesLock e SyncRoot), quindi chi tiene il SyncRoot la vede stabile.
     private static bool IsInGameLocked(Game game, Character character) =>
-        game.NPCs.Any(n => ReferenceEquals(n, character)) || game.Players.Any(p => ReferenceEquals(p.Character, character));
+        new GameExecutionScope(game).IsInGame(character);
 
     // Da chiamare sotto Game.SyncRoot: tutti i personaggi del game (giocatori e NPC), senza doppioni.
-    private static List<Character> ParticipantsLocked(Game game)
-    {
-        var all = new List<Character>();
-        foreach (var p in game.Players)
-        {
-            if (p.Character != null && !all.Contains(p.Character)) all.Add(p.Character);
-        }
-        foreach (var npc in game.NPCs)
-        {
-            if (!all.Contains(npc)) all.Add(npc);
-        }
-        return all;
-    }
+    private static List<Character> ParticipantsLocked(Game game) =>
+        new GameExecutionScope(game).GetParticipants();
 
     // Da chiamare sotto Game.SyncRoot, nella stessa sezione critica di un CheckTurnLocked(needsAction: true) andato
     // a buon fine, se la risoluzione fallisce: restituisce l'azione (il turno non può essere cambiato nel frattempo).
-    private static void RefundActionLocked(Game game)
-    {
-        if (game.CombatActive) game.TurnActionUsed = false;
-    }
+    private static void RefundActionLocked(Game game) =>
+        new GameExecutionScope(game).RefundAction();
 
     // Controlli comuni a chi agisce (attacco, lancio, ricarica, cura): in partita e vivo. Sotto SyncRoot.
-    private static string? CheckActorLocked(Game game, Character actor)
-    {
-        if (!IsInGameLocked(game, actor)) return $"{actor.Handle} non è più in questo game.";
-        if (actor.Health.IsDead) return $"{actor.Handle} è morto e non può agire.";
-        return null;
-    }
+    private static string? CheckActorLocked(Game game, Character actor) =>
+        new GameExecutionScope(game).CheckActor(actor);
 
     // Da chiamare sotto Game.SyncRoot. Verifica che l'attore possa agire adesso e, se needsAction e siamo in
     // combattimento, consuma l'azione nella stessa sezione critica: tra il controllo e il consumo non può
     // infilarsi un /next. Restituisce null se l'azione è consentita.
-    private static string? CheckTurnLocked(Game game, Character actor, bool needsAction)
-    {
-        if (!game.CombatActive) return null;
-
-        string? current = game.CurrentTurnHandle;
-        if (current == null || !current.Equals(actor.Handle, StringComparison.OrdinalIgnoreCase))
-        {
-            return $"Non è il turno di {actor.Handle}: tocca a {current ?? "nessuno"} (round {game.Round}).";
-        }
-
-        if (actor.Health.IsStunned)
-        {
-            return $"{actor.Handle} è stordito: non può agire né muoversi (a inizio turno tenta di riprendersi, nel frattempo può solo passare con /next).";
-        }
-
-        if (needsAction && game.TurnActionUsed)
-        {
-            return $"{actor.Handle} ha già usato l'azione di questo turno: termina il turno con /next.";
-        }
-
-        if (needsAction) game.TurnActionUsed = true;
-        return null;
-    }
+    private static string? CheckTurnLocked(Game game, Character actor, bool needsAction) =>
+        new GameExecutionScope(game).CheckTurn(actor, needsAction);
 
     // Esito di un movimento atomico: se Error è null, Result è la posizione raggiunta (o il motivo del
     // blocco); se Error è valorizzato, Result va ignorato.
@@ -1453,20 +1411,26 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
 
         // Validazione, consumo dell'azione e risoluzione nella stessa sezione critica; i bersagli dell'area
         // sono i partecipanti di quel momento, non una copia presa prima.
-        ThrowOutcome outcome;
-        lock (game.SyncRoot)
+        var ctx = new GameExecutionContext(game, SaveCharacter);
+        var outcome = ctx.Execute(scope =>
         {
-            string? denial = CheckActorLocked(game, thrower) ?? CheckTurnLocked(game, thrower, needsAction: true);
+            string? denial = scope.CheckActor(thrower) ?? scope.CheckTurn(thrower, needsAction: true);
             if (denial != null)
             {
-                outcome = new ThrowOutcome(denial, null, null, []);
+                return new ThrowOutcome(denial, null, null, []);
+            }
+
+            var res = ResolveThrowRules(game, thrower, target, throwReq.WeaponKey, scope.GetParticipants(), game.CombatActive);
+            if (res.Error != null)
+            {
+                scope.RefundAction();
             }
             else
             {
-                outcome = ResolveThrowRules(game, thrower, target, throwReq.WeaponKey, ParticipantsLocked(game), game.CombatActive);
-                if (outcome.Error != null) RefundActionLocked(game);
+                scope.MarkDirty(res.Changed);
             }
-        }
+            return res;
+        });
 
         if (outcome.Error != null)
         {
@@ -1475,11 +1439,6 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         }
 
         Console.WriteLine(outcome.LogLine);
-
-        foreach (var changed in outcome.Changed)
-        {
-            SaveCharacter(changed);
-        }
 
         var packet = NetworkPacket.Create(OpCode.S2C_AreaResult, outcome.Result);
         foreach (var session in audience)
@@ -1722,18 +1681,32 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
 
         string? error;
         string? message;
-        lock (game?.SyncRoot ?? _noGameSync)
+        if (game != null)
         {
-            string? denial = game != null ? CheckActorLocked(game, actor) ?? CheckTurnLocked(game, actor, needsAction: true) : null;
-            if (denial != null)
+            var ctx = new GameExecutionContext(game, SaveCharacter);
+            (error, message) = ctx.Execute<(string?, string?)>(scope =>
             {
-                (error, message) = (denial, null);
-            }
-            else
+                string? denial = scope.CheckActor(actor) ?? scope.CheckTurn(actor, needsAction: true);
+                if (denial != null) return (denial, null);
+
+                var (err, msg) = ReloadRules(actor, ammoKey, weaponKey);
+                if (err != null)
+                {
+                    scope.RefundAction();
+                    return (err, null);
+                }
+
+                scope.MarkDirty(actor);
+                return (null, msg);
+            });
+        }
+        else
+        {
+            lock (_noGameSync)
             {
                 (error, message) = ReloadRules(actor, ammoKey, weaponKey);
-                if (error != null && game != null) RefundActionLocked(game);
             }
+            if (error == null) SaveCharacter(actor);
         }
 
         if (error != null)
@@ -1742,7 +1715,6 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             return;
         }
 
-        SaveCharacter(actor);
         Console.WriteLine($"[COMBAT] {message}");
         await BroadcastToGameAsync(reporter, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = message }));
     }
@@ -2215,7 +2187,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         {
             int penalty = character.Health.GetWoundPenalty();
             var game = FindGameOf(character);
-            var gameEffects = game?.Effects ?? new List<ActiveEffect>();
+            var gameEffects = game?.Effects ?? [];
 
             var skillInfos = character.Skills
                 .OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
@@ -2473,7 +2445,17 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         var requested = WithCurrentZ(moveReq.Position, moveReq.ZProvided, actor);
 
         // Turno, budget di movimento e aggiornamento della posizione in un'unica operazione atomica
-        var move = TryMove(game, map, actor, requested);
+        var ctx = new GameExecutionContext(game, SaveCharacter);
+        var move = ctx.Execute(scope =>
+        {
+            var res = TryMove(game, map, actor, requested);
+            if (res.Error == null && res.Result == GameMap.MovementResult.Success)
+            {
+                scope.MarkDirty(actor);
+            }
+            return res;
+        });
+
         if (move.Error != null)
         {
             await reporter.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = move.Error }));
@@ -2483,8 +2465,6 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         string message;
         if (move.Result == GameMap.MovementResult.Success)
         {
-            SaveCharacter(actor);
-
             message = $"Posizione aggiornata a ({requested.X}, {requested.Y}, {requested.Z})";
             Console.WriteLine($"[MOVE] {actor.Handle} si è spostato a ({requested.X}, {requested.Y}, {requested.Z})");
         }
@@ -3056,32 +3036,35 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         }
 
         // La salute si modifica sotto il lock del game, come negli attacchi
-        string text;
-        lock (game.SyncRoot)
+        var ctx = new GameExecutionContext(game, SaveCharacter);
+        string text = ctx.Execute(scope =>
         {
-            if (!IsInGameLocked(game, target))
+            if (!scope.IsInGame(target))
             {
-                text = string.Empty;
+                return string.Empty;
             }
-            else if (amount == null)
+
+            string res;
+            if (amount == null)
             {
                 target.Health.FullHeal();
-                text = $"Il master cura completamente {target.Handle}: salute {target.Health.RemainingBoxes}/{target.Health.MaxHealth}.";
+                res = $"Il master cura completamente {target.Handle}: salute {target.Health.RemainingBoxes}/{target.Health.MaxHealth}.";
             }
             else
             {
                 target.Health.Heal(amount.Value);
-                text = $"Il master restituisce {amount} caselle a {target.Handle}: salute {target.Health.RemainingBoxes}/{target.Health.MaxHealth} ({target.Health.GetWoundStatusDescription()}).";
+                res = $"Il master restituisce {amount} caselle a {target.Handle}: salute {target.Health.RemainingBoxes}/{target.Health.MaxHealth} ({target.Health.GetWoundStatusDescription()}).";
             }
-        }
+
+            scope.MarkDirty(target);
+            return res;
+        });
 
         if (text.Length == 0)
         {
             await ReplyHealAsync(client, false, $"{target.Handle} non è più in questo game.");
             return;
         }
-
-        SaveCharacter(target);
 
         Console.WriteLine($"[HEAL] {client.Player.Username} (master) cura {target.Handle}{(amount != null ? $" di {amount}" : " completamente")}.");
         await BroadcastToGameAsync(client, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = text }), includeOrigin: false);
@@ -3115,17 +3098,18 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         bool fumble = false;
         string calc = string.Empty;
 
-        lock (game.SyncRoot)
+        var ctx = new GameExecutionContext(game, SaveCharacter);
+        (error, success, total, tn, fumble, calc) = ctx.Execute<(string?, bool, int, int, bool, string)>(scope =>
         {
-            error = CheckActorLocked(game, healer);
-            if (error == null && !IsInGameLocked(game, target)) error = $"{target.Handle} non è più in questo game.";
+            string? err = scope.CheckActor(healer);
+            if (err == null && !scope.IsInGame(target)) err = $"{target.Handle} non è più in questo game.";
 
-            if (error == null)
+            if (err == null)
             {
                 var block = MedicalRules.GetStabilizeBlock(target.Health);
                 if (block != MedicalRules.StabilizeBlock.None)
                 {
-                    error = block switch
+                    err = block switch
                     {
                         MedicalRules.StabilizeBlock.Dead => $"{target.Handle} è morto: solo il master può rianimarlo.",
                         MedicalRules.StabilizeBlock.NotMortal => $"{target.Handle} non è in Mortale ({target.Health.GetWoundStatusDescription()}): non c'è nulla da stabilizzare.",
@@ -3134,52 +3118,55 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                 }
             }
 
-            if (error == null)
+            if (err == null)
             {
                 double distance = CombatRules.CalculateDistance(healer.Position, target.Position);
                 if (distance > MedicalRules.HealRangeMeters)
                 {
-                    error = $"{target.Handle} è troppo lontano per essere curato da {healer.Handle}: {distance:F1} m, serve essere a {MedicalRules.HealRangeMeters} m o meno.";
+                    err = $"{target.Handle} è troppo lontano per essere curato da {healer.Handle}: {distance:F1} m, serve essere a {MedicalRules.HealRangeMeters} m o meno.";
                 }
             }
 
-            error ??= CheckTurnLocked(game, healer, needsAction: true);
+            err ??= scope.CheckTurn(healer, needsAction: true);
 
-            if (error == null)
+            if (err != null)
             {
-                if (!game.CombatActive) game.FreeActionsCounter++;
-
-                int skillLvl = HealSkillLevel(healer);
-                string healSkill = HealSkills.OrderByDescending(n => healer.Skills.TryGetValue(n, out int l) ? l : 0).First();
-                int tech = healer.Stats.GetStatValue("TECH");
-                int penalty = healer.Health.GetWoundPenalty();
-
-                // Una cura è una prova di abilità: valgono ALL, STAT:TECH e SKILL:<abilità usata>
-                var healCtx = new EffectContext(RollKind.Skill, "TECH", healSkill);
-                var healTerms = CollectEffectTerms(game, healer, healCtx);
-                var healExpired = EffectRules.ConsumeUses(game.Effects, healer.Handle, healCtx);
-                var roll = GameDice.RollExplodingD10Detailed();
-                var stab = MedicalRules.ResolveStabilization(roll, tech, skillLvl, penalty + healTerms.Sum(t => t.Value), target.Health.DamageTaken);
-
-                var calcParts = new List<(string, int, string?)>
-                {
-                    ("d10", roll.Total, DiceExtra(roll)), ("TECH", tech, null), (healSkill, skillLvl, null)
-                };
-                if (penalty != 0) calcParts.Add(("ferite", penalty, null));
-                AddTermParts(calcParts, healTerms);
-                calc = FormatSum(calcParts);
-                foreach (var note in DescribeExpired(healExpired)) calc += $" [{note}]";
-
-                total = stab.Total;
-                tn = stab.TargetNumber;
-                success = stab.Success;
-                fumble = stab.IsFumble;
-
-                Console.WriteLine($"[HEAL] {healer.Handle} tenta di stabilizzare {target.Handle}: {calc} vs TN {tn} -> {(success ? "OK" : "FALLITO")}");
-
-                if (success) target.Health.IsStabilized = true;
+                return (err, false, 0, 0, false, string.Empty);
             }
-        }
+
+            scope.CountFreeAction();
+
+            int skillLvl = HealSkillLevel(healer);
+            string healSkill = HealSkills.OrderByDescending(n => healer.Skills.TryGetValue(n, out int l) ? l : 0).First();
+            int tech = healer.Stats.GetStatValue("TECH");
+            int penalty = healer.Health.GetWoundPenalty();
+
+            // Una cura è una prova di abilità: valgono ALL, STAT:TECH e SKILL:<abilità usata>
+            var healCtx = new EffectContext(RollKind.Skill, "TECH", healSkill);
+            var healTerms = CollectEffectTerms(game, healer, healCtx);
+            var healExpired = EffectRules.ConsumeUses(game.Effects, healer.Handle, healCtx);
+            var roll = GameDice.RollExplodingD10Detailed();
+            var stab = MedicalRules.ResolveStabilization(roll, tech, skillLvl, penalty + healTerms.Sum(t => t.Value), target.Health.DamageTaken);
+
+            var calcParts = new List<(string, int, string?)>
+            {
+                ("d10", roll.Total, DiceExtra(roll)), ("TECH", tech, null), (healSkill, skillLvl, null)
+            };
+            if (penalty != 0) calcParts.Add(("ferite", penalty, null));
+            AddTermParts(calcParts, healTerms);
+            string formattedCalc = FormatSum(calcParts);
+            foreach (var note in DescribeExpired(healExpired)) formattedCalc += $" [{note}]";
+
+            Console.WriteLine($"[HEAL] {healer.Handle} tenta di stabilizzare {target.Handle}: {formattedCalc} vs TN {stab.TargetNumber} -> {(stab.Success ? "OK" : "FALLITO")}");
+
+            if (stab.Success)
+            {
+                target.Health.IsStabilized = true;
+                scope.MarkDirty(target);
+            }
+
+            return (null, stab.Success, stab.Total, stab.TargetNumber, stab.IsFumble, formattedCalc);
+        });
 
         if (error != null)
         {
@@ -3234,100 +3221,91 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             return;
         }
 
-        string? error = null;
-        string? message = null;
-        string? publicMessage = null;
-
-        lock (game.SyncRoot)
+        var ctx = new GameExecutionContext(game, SaveCharacter);
+        var (error, message) = ctx.Execute(scope =>
         {
             if (!ActivationRules.TryFindActivable(actor.Cyberware, itemKey, out var item, out var findError))
             {
-                error = findError;
+                return (findError, (string?)null);
             }
-            else
+
+            var spec = item!.Activation!;
+            string? err = ActivationRules.Validate(item, SkillExists);
+            if (err != null) err = $"Scheda di attivazione non valida: {err}";
+
+            err ??= scope.CheckActor(actor);
+            err ??= scope.CheckTurn(actor, needsAction: spec.ActionCost == 1);
+
+            if (err != null) return (err, (string?)null);
+
+            string calc = string.Empty;
+            bool passed = true;
+            string checkText = string.Empty;
+
+            if (!string.IsNullOrWhiteSpace(spec.ActivationSkill))
             {
-                var spec = item!.Activation!;
-                error = ActivationRules.Validate(item, SkillExists);
-                if (error != null) error = $"Scheda di attivazione non valida: {error}";
-
-                error ??= CheckActorLocked(game, actor);
-                error ??= CheckTurnLocked(game, actor, needsAction: spec.ActionCost == 1);
-
-                if (error == null)
+                string skill = spec.ActivationSkill.Trim();
+                var rolled = RollSkill(game, actor, skill)!;
+                var parts = new List<(string, int, string?)>
                 {
-                    string calc = string.Empty;
-                    bool passed = true;
-                    string checkText = string.Empty;
+                    ("d10", rolled.Dice.Total, DiceExtra(rolled.Dice)), (rolled.StatName, rolled.StatValue, null), (skill, rolled.SkillLevel, null)
+                };
+                if (rolled.Penalty != 0) parts.Add(("ferite", rolled.Penalty, null));
+                AddTermParts(parts, rolled.Terms);
+                calc = FormatSum(parts);
+                foreach (var note in DescribeExpired(rolled.Expired)) calc += $" [{note}]";
 
-                    if (!string.IsNullOrWhiteSpace(spec.ActivationSkill))
-                    {
-                        string skill = spec.ActivationSkill.Trim();
-                        var rolled = RollSkill(game, actor, skill)!;
-                        var parts = new List<(string, int, string?)>
-                        {
-                            ("d10", rolled.Dice.Total, DiceExtra(rolled.Dice)), (rolled.StatName, rolled.StatValue, null), (skill, rolled.SkillLevel, null)
-                        };
-                        if (rolled.Penalty != 0) parts.Add(("ferite", rolled.Penalty, null));
-                        AddTermParts(parts, rolled.Terms);
-                        calc = FormatSum(parts);
-                        foreach (var note in DescribeExpired(rolled.Expired)) calc += $" [{note}]";
-
-                        passed = !rolled.Dice.IsFumble && rolled.Total >= spec.ActivationTN;
-                        checkText = $"prova di {skill}: {calc} = {rolled.Total} contro TN {spec.ActivationTN}{(rolled.Dice.IsFumble ? " (fallimento critico)" : "")}";
-                    }
-
-                    if (!passed)
-                    {
-                        // Un tentativo fallito costa comunque l'azione (se l'attivazione ne richiede una): niente rimborso.
-                        message = $"{actor.Handle} tenta di attivare {item.ID} ma fallisce: {checkText}.";
-                        Console.WriteLine($"[ACTIVATE] {message}");
-                        if (!game.CombatActive) game.FreeActionsCounter++;
-                    }
-                    else
-                    {
-                        ActivationRules.TryParseDuration(spec.Duration, out var durSpec, out _);
-                        int? durationRoll = null;
-                        var duration = ActivationRules.Resolve(durSpec, expr =>
-                        {
-                            durationRoll = (int)GameDice.Roll(expr).Total;
-                            return durationRoll.Value;
-                        });
-
-                        // Tutto o niente: se un effetto non entra (limite per personaggio) non cambia nulla e l'azione è restituita.
-                        var scratch = new List<ActiveEffect>(game.Effects);
-                        bool renewed = scratch.Any(e => e.TargetHandle.Equals(actor.Handle, StringComparison.OrdinalIgnoreCase)
-                                                        && e.Source.Equals(item.ID, StringComparison.OrdinalIgnoreCase));
-                        var applied = new List<ActiveEffect>();
-                        foreach (var (key, value) in ActivationRules.ParsedEffects(spec, SkillExists))
-                        {
-                            var effect = ActiveEffect.Create(actor.Handle, item.ID, item.ID, key, value, duration);
-                            string? addError = EffectRules.Add(scratch, effect);
-                            if (addError != null) { error = $"{actor.Handle}: {addError}"; break; }
-                            applied.Add(effect);
-                        }
-
-                        if (error != null)
-                        {
-                            if (spec.ActionCost == 1) RefundActionLocked(game);
-                        }
-                        else
-                        {
-                            game.Effects.Clear();
-                            game.Effects.AddRange(scratch);
-                            if (!game.CombatActive) game.FreeActionsCounter++;
-
-                            string effects = string.Join(", ", applied.Select(e => $"{e.Value:+#;-#;0} {e.Key}"));
-                            string durText = durationRoll != null
-                                ? $"{duration} (durata {durSpec.Amount}: {durationRoll})"
-                                : duration.ToString();
-                            string check = checkText.Length > 0 ? $" ({checkText})" : string.Empty;
-                            message = $"{actor.Handle} {(renewed ? "rinnova" : "attiva")} {item.ID}{check}: {effects} per {durText}.";
-                            Console.WriteLine($"[ACTIVATE] {message}");
-                        }
-                    }
-                }
+                passed = !rolled.Dice.IsFumble && rolled.Total >= spec.ActivationTN;
+                checkText = $"prova di {skill}: {calc} = {rolled.Total} contro TN {spec.ActivationTN}{(rolled.Dice.IsFumble ? " (fallimento critico)" : "")}";
             }
-        }
+
+            if (!passed)
+            {
+                // Un tentativo fallito costa comunque l'azione (se l'attivazione ne richiede una): niente rimborso.
+                string failMsg = $"{actor.Handle} tenta di attivare {item.ID} ma fallisce: {checkText}.";
+                Console.WriteLine($"[ACTIVATE] {failMsg}");
+                scope.CountFreeAction();
+                return ((string?)null, failMsg);
+            }
+
+            ActivationRules.TryParseDuration(spec.Duration, out var durSpec, out _);
+            int? durationRoll = null;
+            var duration = ActivationRules.Resolve(durSpec, expr =>
+            {
+                durationRoll = (int)GameDice.Roll(expr).Total;
+                return durationRoll.Value;
+            });
+
+            // Tutto o niente: se un effetto non entra (limite per personaggio) non cambia nulla e l'azione è restituita.
+            var scratch = new List<ActiveEffect>(game.Effects);
+            bool renewed = scratch.Any(e => e.TargetHandle.Equals(actor.Handle, StringComparison.OrdinalIgnoreCase)
+                                            && e.Source.Equals(item.ID, StringComparison.OrdinalIgnoreCase));
+            var applied = new List<ActiveEffect>();
+            foreach (var (key, value) in ActivationRules.ParsedEffects(spec, SkillExists))
+            {
+                var effect = ActiveEffect.Create(actor.Handle, item.ID, item.ID, key, value, duration);
+                string? addError = EffectRules.Add(scratch, effect);
+                if (addError != null)
+                {
+                    if (spec.ActionCost == 1) scope.RefundAction();
+                    return ($"{actor.Handle}: {addError}", (string?)null);
+                }
+                applied.Add(effect);
+            }
+
+            game.Effects.Clear();
+            game.Effects.AddRange(scratch);
+            scope.CountFreeAction();
+
+            string effects = string.Join(", ", applied.Select(e => $"{e.Value:+#;-#;0} {e.Key}"));
+            string durText = durationRoll != null
+                ? $"{duration} (durata {durSpec.Amount}: {durationRoll})"
+                : duration.ToString();
+            string check = checkText.Length > 0 ? $" ({checkText})" : string.Empty;
+            string succMsg = $"{actor.Handle} {(renewed ? "rinnova" : "attiva")} {item.ID}{check}: {effects} per {durText}.";
+            Console.WriteLine($"[ACTIVATE] {succMsg}");
+            return ((string?)null, succMsg);
+        });
 
         if (error != null)
         {
@@ -3335,8 +3313,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             return;
         }
 
-        publicMessage = message;
-        await BroadcastToGameAsync(reporter, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = publicMessage }), includeOrigin: true);
+        await BroadcastToGameAsync(reporter, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = message }), includeOrigin: true);
     }
 
     private async Task HandleCreateCharacterAsync(ClientSession client, NetworkPacket packet)
