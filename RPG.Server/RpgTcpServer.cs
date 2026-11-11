@@ -2214,6 +2214,8 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         lock (SyncFor(character))
         {
             int penalty = character.Health.GetWoundPenalty();
+            var game = FindGameOf(character);
+            var gameEffects = game?.Effects ?? new List<ActiveEffect>();
 
             var skillInfos = character.Skills
                 .OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
@@ -2227,7 +2229,8 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                         Level = kv.Value,
                         Stat = statName,
                         StatValue = statVal,
-                        BasePool = statVal + kv.Value
+                        BasePool = statVal + kv.Value,
+                        EffectBonus = EffectRules.CollectTerms(gameEffects, character, new EffectContext(RollKind.Skill, statName, kv.Key), SkillExists).Sum(t => t.Value)
                     };
                 })
                 .ToList();

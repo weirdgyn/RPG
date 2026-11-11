@@ -417,11 +417,12 @@ public class RpgTcpClient(bool useTls = true)
 
                         foreach (var s in skillListResp.Skills)
                         {
-                            int effectivePool = Math.Max(0, s.BasePool + skillListResp.WoundPenalty);
+                            int effectivePool = Math.Max(0, s.BasePool + skillListResp.WoundPenalty + s.EffectBonus);
                             string statDisplay = $"{s.Stat} ({s.StatValue})";
-                            string effDisplay = skillListResp.WoundPenalty < 0
-                                ? $"[bold red]{effectivePool}[/]"
-                                : $"[bold green]{effectivePool}[/]";
+                            // Rosso se il pool è sotto la base, giallo se gli effetti lo alzano, verde altrimenti
+                            string effColor = effectivePool < s.BasePool ? "red" : effectivePool > s.BasePool ? "yellow" : "green";
+                            string effDisplay = $"[bold {effColor}]{effectivePool}[/]";
+                            if (s.EffectBonus != 0) effDisplay += $" [grey]({s.EffectBonus:+#;-#} eff.)[/]";
 
                             table.AddRow(
                                 Markup.Escape(s.Name),
@@ -1190,7 +1191,7 @@ public class RpgTcpClient(bool useTls = true)
             c.Stats.TECH.ToString(),
             c.Stats.COOL.ToString(),
             c.Stats.ATTR.ToString(),
-            maEffective >= 0 && maEffective != c.Stats.MA ? $"{c.Stats.MA} [yellow]→ {maEffective}[/]" : c.Stats.MA.ToString(),
+            maEffective >= 0 && maEffective != c.Stats.MA ? $"{c.Stats.MA} [yellow]> {maEffective}[/]" : c.Stats.MA.ToString(),
             c.Stats.BODY.ToString(),
             c.Stats.EMP.ToString()
         );

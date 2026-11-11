@@ -295,6 +295,8 @@ public class SkillInfoPayload
     public string Stat { get; set; } = string.Empty;
     public int StatValue { get; set; }
     public int BasePool { get; set; }
+    /// <summary>Somma dei bonus/malus (cyberware ed effetti del game) che intervengono nel tiro di questa abilità.</summary>
+    public int EffectBonus { get; set; }
 }
 
 public class SkillListResponsePayload
