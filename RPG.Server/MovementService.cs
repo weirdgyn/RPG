@@ -18,11 +18,9 @@ public static class MovementService
     /// <summary>Esito di un teletrasporto: se Error è null, Moved contiene i personaggi spostati.</summary>
     public sealed record TeleportOutcome(string? Error, IReadOnlyList<Character> Moved);
 
-    private static bool SkillExists(string name) => Skills.TryGetStatForSkill(name, out _);
-
     /// <summary>Movimento per turno con gli effetti (MOVE, STAT:MA). Da chiamare sotto Game.SyncRoot.</summary>
     public static int EffectiveMA(Game game, Character character) =>
-        EffectRules.MovementAllowance(game.Effects, character, SkillExists);
+        EffectRules.MovementAllowance(game.Effects, character, EffectService.SkillExists);
 
     /// <summary>"MA 7" oppure "MA 7, con effetti 10".</summary>
     public static string MaText(int baseMa, int effective) =>
@@ -75,7 +73,7 @@ public static class MovementService
         var found = new List<Character>();
         foreach (var handle in handles)
         {
-            var character = FindCharacter(game, handle);
+            var character = scope.FindCharacter(handle);
             if (character == null) return new TeleportOutcome($"Personaggio '{handle}' non trovato in questo game: nessuno spostato.", []);
             found.Add(character);
         }
@@ -96,9 +94,4 @@ public static class MovementService
 
         return new TeleportOutcome(null, found);
     }
-
-    // Prima i giocatori, poi gli NPC del game. Sotto Game.SyncRoot la composizione è stabile.
-    private static Character? FindCharacter(Game game, string handle) =>
-        game.Players.Select(p => p.Character).FirstOrDefault(c => c != null && c.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase))
-        ?? game.NPCs.FirstOrDefault(n => n.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase));
 }

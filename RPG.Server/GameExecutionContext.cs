@@ -59,6 +59,11 @@ public sealed class GameExecutionScope
                Game.Players.Any(p => ReferenceEquals(p.Character, character));
     }
 
+    /// <summary>Cerca un partecipante per handle (maiuscole indifferenti): prima i giocatori, poi gli NPC.</summary>
+    public Character? FindCharacter(string handle) =>
+        Game.Players.Select(p => p.Character).FirstOrDefault(c => c != null && c.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase))
+        ?? Game.NPCs.FirstOrDefault(n => n.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase));
+
     /// <summary>Restituisce tutti i partecipanti attuali al game (giocatori e NPC) senza duplicati.</summary>
     public List<Character> GetParticipants()
     {

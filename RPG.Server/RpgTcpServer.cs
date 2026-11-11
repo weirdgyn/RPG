@@ -564,35 +564,6 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     private static string DiceExtra(GameDice.D10Roll roll) =>
         roll.Exploded ? $" ({string.Join("+", roll.Rolls)}, esploso)" : string.Empty;
 
-    private static bool SkillExists(string name) => Skills.TryGetStatForSkill(name, out _);
-
-    // Termini (cyberware ed effetti del game) che intervengono in un tiro. Va chiamata sotto Game.SyncRoot.
-    private static List<EffectTerm> CollectEffectTerms(Game game, Character character, EffectContext ctx) =>
-        EffectRules.CollectTerms(game.Effects, character, ctx, SkillExists);
-
-    private static List<string> DescribeEffectsOf(Game game, string handle) =>
-        [.. game.Effects.Where(e => e.TargetHandle.Equals(handle, StringComparison.OrdinalIgnoreCase)).Select(e => e.Describe())];
-
-    // Aggiunge i termini a un calcolo da mostrare con FormatSum: ognuno con la sua etichetta
-    private static void AddTermParts(List<(string, int, string?)> parts, IEnumerable<EffectTerm> terms)
-    {
-        foreach (var t in terms) parts.Add((t.Label, t.Value, null));
-    }
-
-    // Righe da aggiungere ai passaggi di un tiro quando un effetto a usi si esaurisce
-    private static IEnumerable<string> DescribeExpired(IEnumerable<ActiveEffect> expired) =>
-        expired.Select(e => $"Effetto esaurito: {e.Label} ({e.Key}) su {e.TargetHandle}");
-
-    private static IEnumerable<string> DescribeLapsed(IEnumerable<ActiveEffect> lapsed) =>
-        lapsed.Select(e => $"Effetto scaduto: {e.Label} ({e.Key}) su {e.TargetHandle}");
-
-    // Fine del combattimento: tolgono gli effetti "combat" e "a round". Sotto Game.SyncRoot. Restituisce il testo da annunciare ("" se nessuno).
-    private static string EndCombatEffectsLocked(Game game)
-    {
-        var removed = EffectRules.EndCombat(game.Effects);
-        return removed.Count == 0 ? string.Empty : " " + string.Join(". ", DescribeLapsed(removed)) + ".";
-    }
-
     // Pila di munizioni da cui provengono i colpi attualmente nel caricatore (null = standard)
     private static Ammo? FindLoadedAmmo(Character owner, Weapon weapon) =>
         string.IsNullOrEmpty(weapon.LoadedAmmoId)
@@ -767,7 +738,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                 }
             }
 
-            if (raw / n > 0) notes.AddRange(DescribeLapsed(EffectRules.AdvanceRound(game.Effects)));
+            if (raw / n > 0) notes.AddRange(EffectService.DescribeLapsed(EffectRules.AdvanceRound(game.Effects)));
             game.Round += raw / n;
             game.TurnIndex = idx;
             game.TurnMoveUsed = 0;
@@ -780,7 +751,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         if (fallbackRaw >= 0)
         {
             notes.Add("Nessuno in grado di agire: il turno passa a un personaggio stordito (può solo passare con /next).");
-            if (fallbackRaw / n > 0) notes.AddRange(DescribeLapsed(EffectRules.AdvanceRound(game.Effects)));
+            if (fallbackRaw / n > 0) notes.AddRange(EffectService.DescribeLapsed(EffectRules.AdvanceRound(game.Effects)));
             game.Round += fallbackRaw / n;
             game.TurnIndex = fallbackRaw % n;
             game.TurnMoveUsed = 0;
@@ -805,7 +776,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         if (game.TurnOrder.Count == 0)
         {
             game.CombatActive = false;
-            return $"{handle} ha lasciato il combattimento: nessuno è rimasto nell'ordine, combattimento terminato.{EndCombatEffectsLocked(game)}";
+            return $"{handle} ha lasciato il combattimento: nessuno è rimasto nell'ordine, combattimento terminato.{EffectService.EndCombatEffects(game)}";
         }
         else if (i < game.TurnIndex)
         {
@@ -822,7 +793,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             {
                 game.CombatActive = false;
                 game.TurnIndex = 0;
-                return $"{handle} ha lasciato il combattimento: nessuno è in grado di agire, combattimento terminato.{EndCombatEffectsLocked(game)}";
+                return $"{handle} ha lasciato il combattimento: nessuno è in grado di agire, combattimento terminato.{EffectService.EndCombatEffects(game)}";
             }
 
             string noteText = notes.Count > 0 ? string.Join(" ", notes.Select(x => x + ".")) + " " : string.Empty;
@@ -959,7 +930,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                     {
                         was = game.CombatActive;
                         game.CombatActive = false;
-                        endedEffects = EndCombatEffectsLocked(game);
+                        endedEffects = EffectService.EndCombatEffects(game);
                         game.TurnMoveUsed = 0;
                         game.TurnActionUsed = false;
                         foreach (var m in game.Players.Select(pl => pl.Character).Concat(game.NPCs).OfType<Character>())
@@ -1065,7 +1036,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                         member.WoundStatus = ch.Health.GetWoundStatusDescription();
                         member.IsStunned = ch.Health.IsStunned;
                         member.Position = ch.Position;
-                        member.Effects = DescribeEffectsOf(game, ch.Handle);
+                        member.Effects = EffectService.DescribeEffectsOf(game, ch.Handle);
                     }
                     payload.Members.Add(member);
                 }
@@ -1082,7 +1053,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                         MaxHealth = viewerIsMaster ? npc.Health.MaxHealth : -1,
                         WoundStatus = npc.Health.GetWoundStatusDescription(),
                         IsStunned = npc.Health.IsStunned,
-                        Effects = viewerIsMaster ? DescribeEffectsOf(game, npc.Handle) : [],
+                        Effects = viewerIsMaster ? EffectService.DescribeEffectsOf(game, npc.Handle) : [],
                         Position = npc.Position
                     });
                 }
@@ -1171,7 +1142,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                     else
                     {
                         game.CombatActive = false;
-                        announce = "Nessun personaggio in grado di agire: combattimento terminato." + EndCombatEffectsLocked(game);
+                        announce = "Nessun personaggio in grado di agire: combattimento terminato." + EffectService.EndCombatEffects(game);
                     }
                 }
             }
@@ -1325,7 +1296,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             var roll = GameDice.RollExplodingD10Detailed();
             // Un lancio è una prova di abilità: valgono ALL, STAT e SKILL ma non HIT (che è del tiro per colpire)
             var throwCtx = new EffectContext(RollKind.Skill, statName, weapon.ScatterSkillName);
-            var throwTerms = CollectEffectTerms(game, thrower, throwCtx);
+            var throwTerms = EffectService.CollectTerms(game, thrower, throwCtx);
             var expiredOnThrow = EffectRules.ConsumeUses(game.Effects, thrower.Handle, throwCtx);
             int total = statVal + skillLvl + penalty + throwTerms.Sum(t => t.Value) + roll.Total;
 
@@ -1340,9 +1311,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                 (weapon.ScatterSkillName, skillLvl, null)
             };
             if (penalty != 0) throwParts.Add(("ferite", penalty, null));
-            AddTermParts(throwParts, throwTerms);
+            EffectService.AddTermParts(throwParts, throwTerms);
             throwSteps.Add($"Tiro di lancio: {FormatSum(throwParts)}");
-            throwSteps.AddRange(DescribeExpired(expiredOnThrow));
+            throwSteps.AddRange(EffectService.DescribeExpired(expiredOnThrow));
             throwSteps.Add($"Difficoltà: TN {throwTn} (distanza {distance:F1} m, gittata di lancio {throwRange:F0} m)");
             throwSteps.Add(roll.IsFumble
                 ? "Esito: FALLIMENTO CRITICO (1 naturale sul d10)"
@@ -1721,7 +1692,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             int diceVal = attackRoll.Total;
             int weaponModifier = weaponToUse.GetAttackModifier();
             var hitCtx = new EffectContext(RollKind.Hit, statName, skillName);
-            var hitTerms = CollectEffectTerms(game, attacker, hitCtx);
+            var hitTerms = EffectService.CollectTerms(game, attacker, hitCtx);
             int effectsHit = hitTerms.Sum(t => t.Value);
             var expiredOnHit = EffectRules.ConsumeUses(game.Effects, attacker.Handle, hitCtx);
             var toHit = CombatRules.ResolveToHit(attackRoll, attackerStat, attackerSkillLvl, attackerPenalty, weaponModifier, effectsHit, targetNumber);
@@ -1736,9 +1707,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             };
             if (weaponModifier != 0) hitParts.Add(("arma", weaponModifier, null));
             if (attackerPenalty != 0) hitParts.Add(("ferite", attackerPenalty, null));
-            AddTermParts(hitParts, hitTerms);
+            EffectService.AddTermParts(hitParts, hitTerms);
             steps.Add($"Tiro per colpire: {FormatSum(hitParts)}");
-            steps.AddRange(DescribeExpired(expiredOnHit));
+            steps.AddRange(EffectService.DescribeExpired(expiredOnHit));
             steps.Add($"Difficoltà: {tnText}");
 
             // Un 1 naturale sul primo dado è un fallimento critico: manca comunque (il colpo sparato è perso)
@@ -1761,7 +1732,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                 int diceDamage = (int)damageRoll.Total;
                 int ammoDamage = loadedAmmo?.DamageModifier ?? 0;
                 var damageCtx = new EffectContext(RollKind.Damage);
-                var damageTerms = CollectEffectTerms(game, attacker, damageCtx);
+                var damageTerms = EffectService.CollectTerms(game, attacker, damageCtx);
                 int effectsDamage = damageTerms.Sum(t => t.Value);
                 var expiredOnDamage = EffectRules.ConsumeUses(game.Effects, attacker.Handle, damageCtx);
                 int rawDamage = Math.Max(0, diceDamage + ammoDamage + effectsDamage);
@@ -1778,9 +1749,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                 {
                     var dmgParts = new List<(string, int, string?)> { ("dadi", diceDamage, null) };
                     if (ammoDamage != 0) dmgParts.Add(("munizioni", ammoDamage, null));
-                    AddTermParts(dmgParts, damageTerms);
+                    EffectService.AddTermParts(dmgParts, damageTerms);
                     steps.Add($"Bonus al danno: {FormatSum(dmgParts)}");
-                    steps.AddRange(DescribeExpired(expiredOnDamage));
+                    steps.AddRange(EffectService.DescribeExpired(expiredOnDamage));
                 }
 
                 var armorPiece = target.Armor.GetPiece(loc.ArmorLocation);
@@ -2030,7 +2001,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                         Stat = statName,
                         StatValue = statVal,
                         BasePool = statVal + kv.Value,
-                        EffectBonus = EffectRules.CollectTerms(gameEffects, character, new EffectContext(RollKind.Skill, statName, kv.Key), SkillExists).Sum(t => t.Value)
+                        EffectBonus = EffectRules.CollectTerms(gameEffects, character, new EffectContext(RollKind.Skill, statName, kv.Key), EffectService.SkillExists).Sum(t => t.Value)
                     };
                 })
                 .ToList();
@@ -2065,7 +2036,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             var payload = new CharacterStatePayload { Character = character };
             if (game != null)
             {
-                payload.Effects = DescribeEffectsOf(game, character.Handle);
+                payload.Effects = EffectService.DescribeEffectsOf(game, character.Handle);
                 payload.MAEffective = MovementService.EffectiveMA(game, character);
             }
             packet = NetworkPacket.Create(OpCode.S2C_PlayerStateUpdate, payload);
@@ -2151,7 +2122,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         int skillLvl = actor.Skills.TryGetValue(skillName, out int lvl) ? lvl : 0;
         int penalty = actor.Health.GetWoundPenalty();
         var ctx = new EffectContext(RollKind.Skill, statName, skillName);
-        var terms = EffectRules.CollectTerms(game?.Effects ?? [], actor, ctx, SkillExists);
+        var terms = EffectRules.CollectTerms(game?.Effects ?? [], actor, ctx, EffectService.SkillExists);
         var expired = game != null ? EffectRules.ConsumeUses(game.Effects, actor.Handle, ctx) : [];
         var dice = GameDice.RollExplodingD10Detailed();
         return new SkillRollResult(statName, statVal, skillLvl, penalty, dice, terms, expired,
@@ -2376,98 +2347,19 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             return;
         }
 
-        if (!BonusRules.TryParse(args, SkillExists, out var parsed, out var parseError) || parsed == null)
+        if (!BonusRules.TryParse(args, EffectService.SkillExists, out var parsed, out var parseError) || parsed == null)
         {
             await Fail(parseError);
             return;
         }
 
-        string? error = null;
-        string summary = string.Empty;
-        string? reply = null;
-        Game? game;
+        var game = _registry.FindGameOfPlayer(client.Player);
+        if (game == null) { await Fail("Devi essere in un game per usare /bonus: usa /join <game>."); return; }
 
-        lock (_registry.GamesLock)
-        {
-            game = _registry.FindGameOfPlayer(client.Player);
-            if (game == null)
-            {
-                error = "Devi essere in un game per usare /bonus: usa /join <game>.";
-            }
-            else
-            lock (game.SyncRoot)
-            {
-                // Bersagli: handle, oppure party (PG), npc, all; senza doppioni.
-                var targets = new List<Character>();
-                void AddTarget(Character c)
-                {
-                    if (!targets.Any(t => t.Handle.Equals(c.Handle, StringComparison.OrdinalIgnoreCase))) targets.Add(c);
-                }
-
-                var wanted = parsed.Targets;
-                if (wanted.Count == 0 && parsed.Action == BonusAction.List) wanted = ["all"];
-
-                foreach (var name in wanted)
-                {
-                    if (name.Equals("party", StringComparison.OrdinalIgnoreCase) || name.Equals("all", StringComparison.OrdinalIgnoreCase))
-                        foreach (var p in game.Players) if (p.Character != null) AddTarget(p.Character);
-                    if (name.Equals("npc", StringComparison.OrdinalIgnoreCase) || name.Equals("all", StringComparison.OrdinalIgnoreCase))
-                        foreach (var n in game.NPCs) AddTarget(n);
-                    if (BonusRules.IsShortcut(name)) continue;
-
-                    var found = FindCombatantInGame(game, name)?.Character;
-                    if (found == null) { error = $"Personaggio '{name}' non trovato in questo game: nessun effetto modificato."; break; }
-                    AddTarget(found);
-                }
-
-                if (error == null && targets.Count == 0) error = "Nessun personaggio corrisponde ai bersagli indicati.";
-
-                if (error == null)
-                {
-                    string handles = string.Join(", ", targets.Select(t => t.Handle));
-                    switch (parsed.Action)
-                    {
-                        case BonusAction.Apply:
-                            {
-                                var scratch = new List<ActiveEffect>(game.Effects);
-                                foreach (var t in targets)
-                                {
-                                    var effect = ActiveEffect.Create(t.Handle, BonusRules.MasterSource, BonusRules.MasterSource, parsed.Key, parsed.Value, parsed.Duration);
-                                    error = EffectRules.Add(scratch, effect);
-                                    if (error != null) { error = $"{t.Handle}: {error} Nessun effetto modificato."; break; }
-                                }
-                                if (error == null)
-                                {
-                                    game.Effects.Clear();
-                                    game.Effects.AddRange(scratch);
-                                    var sample = ActiveEffect.Create(string.Empty, BonusRules.MasterSource, BonusRules.MasterSource, parsed.Key, parsed.Value, parsed.Duration);
-                                    summary = $"Il master applica {sample.Describe()} a {handles}.";
-                                }
-                                break;
-                            }
-                        case BonusAction.Clear:
-                            {
-                                var removed = EffectRules.Clear(game.Effects, targets.Select(t => t.Handle), BonusRules.MasterSource);
-                                summary = removed.Count == 0
-                                    ? string.Empty
-                                    : $"Il master toglie {removed.Count} bonus/malus a {string.Join(", ", removed.Select(r => r.TargetHandle).Distinct(StringComparer.OrdinalIgnoreCase))}.";
-                                if (removed.Count == 0) reply = $"Nessun bonus del master da togliere a {handles}.";
-                                break;
-                            }
-                        case BonusAction.List:
-                            {
-                                var lines = targets
-                                    .Select(t => (t.Handle, Effects: DescribeEffectsOf(game, t.Handle)))
-                                    .Where(x => x.Effects.Count > 0)
-                                    .Select(x => $"{x.Handle}: {string.Join("; ", x.Effects)}")
-                                    .ToList();
-                                reply = lines.Count == 0 ? "Nessun effetto attivo." : "Effetti attivi - " + string.Join(" | ", lines);
-                                break;
-                            }
-                    }
-                }
-            }
-        }
+        var outcome = GameExecutionContext.Execute(game, scope => EffectService.ApplyBonus(scope, parsed));
+        string? error = outcome.Error;
+        string summary = outcome.Summary;
+        string? reply = outcome.Reply;
 
         if (error != null) { await Fail(error); return; }
 
@@ -2923,7 +2815,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
 
             // Una cura è una prova di abilità: valgono ALL, STAT:TECH e SKILL:<abilità usata>
             var healCtx = new EffectContext(RollKind.Skill, "TECH", healSkill);
-            var healTerms = CollectEffectTerms(game, healer, healCtx);
+            var healTerms = EffectService.CollectTerms(game, healer, healCtx);
             var healExpired = EffectRules.ConsumeUses(game.Effects, healer.Handle, healCtx);
             var roll = GameDice.RollExplodingD10Detailed();
             var stab = MedicalRules.ResolveStabilization(roll, tech, skillLvl, penalty + healTerms.Sum(t => t.Value), target.Health.DamageTaken);
@@ -2933,9 +2825,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                 ("d10", roll.Total, DiceExtra(roll)), ("TECH", tech, null), (healSkill, skillLvl, null)
             };
             if (penalty != 0) calcParts.Add(("ferite", penalty, null));
-            AddTermParts(calcParts, healTerms);
+            EffectService.AddTermParts(calcParts, healTerms);
             string formattedCalc = FormatSum(calcParts);
-            foreach (var note in DescribeExpired(healExpired)) formattedCalc += $" [{note}]";
+            foreach (var note in EffectService.DescribeExpired(healExpired)) formattedCalc += $" [{note}]";
 
             Console.WriteLine($"[HEAL] {healer.Handle} tenta di stabilizzare {target.Handle}: {formattedCalc} vs TN {stab.TargetNumber} -> {(stab.Success ? "OK" : "FALLITO")}");
 
@@ -3010,7 +2902,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             }
 
             var spec = item!.Activation!;
-            string? err = ActivationRules.Validate(item, SkillExists);
+            string? err = ActivationRules.Validate(item, EffectService.SkillExists);
             if (err != null) err = $"Scheda di attivazione non valida: {err}";
 
             err ??= scope.CheckActor(actor);
@@ -3031,9 +2923,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                     ("d10", rolled.Dice.Total, DiceExtra(rolled.Dice)), (rolled.StatName, rolled.StatValue, null), (skill, rolled.SkillLevel, null)
                 };
                 if (rolled.Penalty != 0) parts.Add(("ferite", rolled.Penalty, null));
-                AddTermParts(parts, rolled.Terms);
+                EffectService.AddTermParts(parts, rolled.Terms);
                 calc = FormatSum(parts);
-                foreach (var note in DescribeExpired(rolled.Expired)) calc += $" [{note}]";
+                foreach (var note in EffectService.DescribeExpired(rolled.Expired)) calc += $" [{note}]";
 
                 passed = !rolled.Dice.IsFumble && rolled.Total >= spec.ActivationTN;
                 checkText = $"prova di {skill}: {calc} = {rolled.Total} contro TN {spec.ActivationTN}{(rolled.Dice.IsFumble ? " (fallimento critico)" : "")}";
@@ -3057,24 +2949,18 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             });
 
             // Tutto o niente: se un effetto non entra (limite per personaggio) non cambia nulla e l'azione è restituita.
-            var scratch = new List<ActiveEffect>(game.Effects);
-            bool renewed = scratch.Any(e => e.TargetHandle.Equals(actor.Handle, StringComparison.OrdinalIgnoreCase)
-                                            && e.Source.Equals(item.ID, StringComparison.OrdinalIgnoreCase));
-            var applied = new List<ActiveEffect>();
-            foreach (var (key, value) in ActivationRules.ParsedEffects(spec, SkillExists))
+            bool renewed = game.Effects.Any(e => e.TargetHandle.Equals(actor.Handle, StringComparison.OrdinalIgnoreCase)
+                                                 && e.Source.Equals(item.ID, StringComparison.OrdinalIgnoreCase));
+            var applied = ActivationRules.ParsedEffects(spec, EffectService.SkillExists)
+                .Select(ke => ActiveEffect.Create(actor.Handle, item.ID, item.ID, ke.Key, ke.Value, duration))
+                .ToList();
+            var added = EffectService.TryAddAll(game, applied);
+            if (added.Error != null)
             {
-                var effect = ActiveEffect.Create(actor.Handle, item.ID, item.ID, key, value, duration);
-                string? addError = EffectRules.Add(scratch, effect);
-                if (addError != null)
-                {
-                    if (spec.ActionCost == 1) scope.RefundAction();
-                    return ($"{actor.Handle}: {addError}", (string?)null);
-                }
-                applied.Add(effect);
+                if (spec.ActionCost == 1) scope.RefundAction();
+                return ($"{actor.Handle}: {added.Error}", (string?)null);
             }
 
-            game.Effects.Clear();
-            game.Effects.AddRange(scratch);
             scope.CountFreeAction();
 
             string effects = string.Join(", ", applied.Select(e => $"{e.Value:+#;-#;0} {e.Key}"));
@@ -3390,7 +3276,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                     {
                         if (npc != null)
                         {
-                            npcStatus.Effects = DescribeEffectsOf(game, npc.Handle);
+                            npcStatus.Effects = EffectService.DescribeEffectsOf(game, npc.Handle);
                             npcStatus.MAEffective = MovementService.EffectiveMA(game, npc);
                         }
                         npcPacket = NetworkPacket.Create(OpCode.S2C_NpcResponse, npcStatus);
@@ -4340,10 +4226,10 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     private static string DescribeInitiative(InitiativeRollResult init)
     {
         var parts = new List<(string, int, string?)> { ("REF", init.Ref, null), ("CombatSense", init.CombatSense, null) };
-        AddTermParts(parts, init.Terms);
+        EffectService.AddTermParts(parts, init.Terms);
         parts.Add(("d10", init.Dice, null));
         string text = FormatSum(parts);
-        foreach (var note in DescribeExpired(init.Expired)) text += $" [{note}]";
+        foreach (var note in EffectService.DescribeExpired(init.Expired)) text += $" [{note}]";
         return text;
     }
 
@@ -4360,7 +4246,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         }
 
         var initCtx = new EffectContext(RollKind.Init, "REF", "CombatSense");
-        var terms = CollectEffectTerms(game, actor, initCtx);
+        var terms = EffectService.CollectTerms(game, actor, initCtx);
         var expired = EffectRules.ConsumeUses(game.Effects, actor.Handle, initCtx);
 
         int dice = (int)GameDice.Roll("1d10").Total;
