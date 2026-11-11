@@ -190,6 +190,7 @@ Un NPC è una normale scheda personaggio che il master usa per un game. Si crea 
 | `/npc add <handle>` | Usa la scheda esistente come NPC del game. La scheda non deve essere collegata a un giocatore né essere NPC altrove. |
 | `/npc list` | Elenca gli NPC del game con salute e posizione. |
 | `/npc status <handle>` | Scheda dell'NPC. |
+| `/npc skills <handle>` | Abilità dell'NPC con il suo pool di tiro (ferite ed effetti compresi). |
 | `/npc remove <handle>` | Toglie l'NPC dal game e dagli eventuali check aperti (la scheda torna libera). |
 | `/as <npc> <comando> ...` | Esegue un comando **per conto** di un NPC. |
 
@@ -393,7 +394,7 @@ Il danno si accumula fino a riempire le 40 caselle: a **40 danni** il personaggi
 | `/next` (`/endturn`) | turno/master | termina il turno |
 | `/combat start\|end\|status` | master (status: tutti) | combattimento a turni |
 | `/check skill\|init\|status\|close\|cancel` | master | prove collettive |
-| `/npc add\|list\|remove\|status` | master | gestione NPC |
+| `/npc add\|list\|remove\|status\|skills` | master | gestione NPC |
 | `/as <npc> …` | master | comando per conto di un NPC |
 
 ---

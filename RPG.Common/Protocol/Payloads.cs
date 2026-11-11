@@ -358,7 +358,7 @@ public class LeaveResponsePayload
 
 public class NpcRequestPayload
 {
-    // add | list | remove | status
+    // add | list | remove | status | skills
     public string Action { get; set; } = string.Empty;
     public string Handle { get; set; } = string.Empty;
 }

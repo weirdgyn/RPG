@@ -3489,7 +3489,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             await SendNpcResponseAsync(client, new NpcResponsePayload
             {
                 Success = false,
-                Message = "Uso: /npc add <handle> | /npc list | /npc remove <handle> | /npc status <handle>"
+                Message = "Uso: /npc add <handle> | /npc list | /npc remove <handle> | /npc status <handle> | /npc skills <handle>"
             });
             return;
         }
@@ -3585,6 +3585,29 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                         Action = action,
                         Message = removed ? $"NPC '{handle}' rimosso." : $"NPC '{handle}' non trovato in questo game."
                     });
+                    break;
+                }
+
+            case "skills":
+                {
+                    Character? skillsNpc;
+                    lock (_gamesLock)
+                    {
+                        skillsNpc = game.NPCs.FirstOrDefault(n => n.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase));
+                    }
+
+                    if (skillsNpc == null)
+                    {
+                        await SendNpcResponseAsync(client, new NpcResponsePayload
+                        {
+                            Success = false,
+                            Action = action,
+                            Message = $"NPC '{handle}' non trovato in questo game."
+                        });
+                        break;
+                    }
+
+                    await SendSkillsAsync(client, skillsNpc);
                     break;
                 }
 

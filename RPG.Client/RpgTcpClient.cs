@@ -1508,14 +1508,14 @@ public class RpgTcpClient(bool useTls = true)
 
                 bool valid = action switch
                 {
-                    "add" or "remove" or "status" => parts.Length >= 3,
+                    "add" or "remove" or "status" or "skills" => parts.Length >= 3,
                     "list" => true,
                     _ => false
                 };
 
                 if (!valid)
                 {
-                    AnsiConsole.MarkupLine("[bold red][[!]]: Uso:[/] [yellow]/npc add <handle>[/] | [yellow]/npc list[/] | [yellow]/npc remove <handle>[/] | [yellow]/npc status <handle>[/]");
+                    AnsiConsole.MarkupLine("[bold red][[!]]: Uso:[/] [yellow]/npc add <handle>[/] | [yellow]/npc list[/] | [yellow]/npc remove <handle>[/] | [yellow]/npc status <handle>[/] | [yellow]/npc skills <handle>[/]");
                     continue;
                 }
 

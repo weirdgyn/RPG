@@ -81,7 +81,7 @@
   },
   {
     "command": "/npc",
-    "parameters": "add <h> | list | remove <h> | status <h>",
+    "parameters": "add <h> | list | remove <h> | status <h> | skills <h>",
     "description": "Master: usa una scheda esistente come NPC del game."
   },
   {
