@@ -379,6 +379,9 @@ public class NpcResponsePayload
     public List<NpcInfoPayload> Npcs { get; set; } = [];
     // Valorizzato solo da "status": la scheda dell'NPC
     public Character? Character { get; set; }
+    // Come per CharacterStatePayload: effetti attivi dell'NPC e MA con gli effetti (-1 = non applicabile)
+    public List<string> Effects { get; set; } = [];
+    public int MAEffective { get; set; } = -1;
 }
 
 // Comando eseguito dal master per conto di un NPC: l'opcode e il payload sono quelli del comando "normale"

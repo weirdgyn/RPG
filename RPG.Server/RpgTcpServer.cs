@@ -3605,6 +3605,11 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                     NetworkPacket npcPacket;
                     lock (game.SyncRoot)
                     {
+                        if (npc != null)
+                        {
+                            npcStatus.Effects = DescribeEffectsOf(game, npc.Handle);
+                            npcStatus.MAEffective = EffectiveMA(game, npc);
+                        }
                         npcPacket = NetworkPacket.Create(OpCode.S2C_NpcResponse, npcStatus);
                     }
                     await client.SendPacketAsync(npcPacket);

@@ -586,7 +586,7 @@ public class RpgTcpClient(bool useTls = true)
                         // La scheda di un NPC non sostituisce quella del proprio personaggio (_player.Character)
                         if (npcResp.Character != null)
                         {
-                            PrintCharacterStatus(npcResp.Character);
+                            PrintCharacterStatus(npcResp.Character, npcResp.Effects, npcResp.MAEffective);
                         }
                     });
                 }
