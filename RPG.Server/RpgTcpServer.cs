@@ -47,6 +47,8 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
 
     public async Task StartAsync()
     {
+        _dispatcher = BuildDispatcher();
+
         if (useTls)
         {
             string certPath = ServerPaths.Resolve(ServerCertificate.FileName);
@@ -246,7 +248,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
 
                 try
                 {
-                    await ProcessPacketAsync(client, packet);
+                    await _dispatcher.DispatchAsync(client, packet);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException && client.TcpClient.Connected)
                 {
@@ -309,118 +311,46 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         }
     }
 
-    private async Task ProcessPacketAsync(ClientSession client, NetworkPacket packet)
-    {
-        if (packet.OpCode != OpCode.C2S_Login && packet.OpCode != OpCode.C2S_Ping && !client.IsAuthenticated)
-        {
-            await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = "Devi effettuare il login prima di poter usare i comandi." }));
-            return;
-        }
+    // Tabella OpCode -> handler. Si costruisce all'avvio (i metodi sono di istanza).
+    private PacketDispatcher _dispatcher = new();
 
-        switch (packet.OpCode)
-        {
-            case OpCode.C2S_Ping:
-                await HandlePingAsync(client);
-                break;
-            case OpCode.C2S_Login:
-                await HandleLoginAsync(client, packet);
-                break;
-            case OpCode.C2S_Attack:
-                await HandleAttackAsync(client, packet);
-                break;
-            case OpCode.C2S_Reload:
-                await HandleReloadAsync(client, packet);
-                break;
-            case OpCode.C2S_Check:
-                await HandleCheckAsync(client, packet);
-                break;
-            case OpCode.C2S_Throw:
-                await HandleThrowAsync(client, packet);
-                break;
-            case OpCode.C2S_Combat:
-                await HandleCombatAsync(client, packet);
-                break;
-            case OpCode.C2S_Next:
-                await HandleNextAsync(client);
-                break;
-            case OpCode.C2S_WhoAmI:
-                await HandleWhoAmIAsync(client);
-                break;
-            case OpCode.C2S_GameStatus:
-                await HandleGameStatusAsync(client);
-                break;
-            case OpCode.C2S_Roll:
-                await HandleRollAsync(client, packet);
-                break;
-            case OpCode.C2S_Chat:
-                await HandleChatAsync(client, packet);
-                break;
-            case OpCode.C2S_GetSkills:
-                await HandleGetSkillsAsync(client);
-                break;
-            case OpCode.C2S_GetStatus:
-                await HandleGetStatusAsync(client);
-                break;
-            case OpCode.C2S_GetPlayers:
-                await HandleGetPlayersAsync(client, packet);
-                break;
-            case OpCode.C2S_CreateCharacter:
-                await HandleCreateCharacterAsync(client, packet);
-                break;
-            case OpCode.C2S_SkillCheck:
-                await HandleSkillCheckAsync(client, packet);
-                break;
-            case OpCode.C2S_Move:
-                await HandleMoveAsync(client, packet);
-                break;
-            case OpCode.C2S_Link:
-                await HandleLinkAsync(client, packet);
-                break;
-            case OpCode.C2S_Unlink:
-                await HandleUnlinkAsync(client);
-                break;
-            case OpCode.C2S_Heal:
-                await HandleHealAsync(client, packet);
-                break;
-            case OpCode.C2S_Join:
-                await HandleJoinAsync(client, packet);
-                break;
-            case OpCode.C2S_Leave:
-                await HandleLeaveAsync(client);
-                break;
-            case OpCode.C2S_Npc:
-                await HandleNpcAsync(client, packet);
-                break;
-            case OpCode.C2S_As:
-                await HandleAsAsync(client, packet);
-                break;
-            case OpCode.C2S_Init:
-                await HandleInitAsync(client, packet);
-                break;
-            case OpCode.C2S_GetCharacters:
-                await HandleGetCharactersAsync(client);
-                break;
-            case OpCode.C2S_GetGames:
-                await HandleGetGamesAsync(client);
-                break;
-            case OpCode.C2S_Teleport:
-                await HandleTeleportAsync(client, packet);
-                break;
-            case OpCode.C2S_Bonus:
-                await HandleBonusAsync(client, packet);
-                break;
-            case OpCode.C2S_Activate:
-                await HandleActivateAsync(client, packet);
-                break;
-            case OpCode.C2S_GetArchetypes:
-                await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_ArchetypesResponse,
-                    new ArchetypesResponsePayload { Archetypes = CharacterTemplateFactory.GetAvailableArchetypes() }));
-                break;
-            default:
-                Console.WriteLine($"[SERVER] OpCode sconosciuto ricevuto: {packet.OpCode}");
-                break;
-        }
-    }
+    private PacketDispatcher BuildDispatcher() => new PacketDispatcher()
+        .Register(OpCode.C2S_Ping, (c, _) => HandlePingAsync(c))
+        .Register(OpCode.C2S_Login, HandleLoginAsync)
+        .Register(OpCode.C2S_Attack, HandleAttackAsync)
+        .Register(OpCode.C2S_Reload, HandleReloadAsync)
+        .Register(OpCode.C2S_Check, HandleCheckAsync)
+        .Register(OpCode.C2S_Throw, HandleThrowAsync)
+        .Register(OpCode.C2S_Combat, HandleCombatAsync)
+        .Register(OpCode.C2S_Next, (c, _) => HandleNextAsync(c))
+        .Register(OpCode.C2S_WhoAmI, (c, _) => HandleWhoAmIAsync(c))
+        .Register(OpCode.C2S_GameStatus, (c, _) => HandleGameStatusAsync(c))
+        .Register(OpCode.C2S_Roll, HandleRollAsync)
+        .Register(OpCode.C2S_Chat, HandleChatAsync)
+        .Register(OpCode.C2S_GetSkills, (c, _) => HandleGetSkillsAsync(c))
+        .Register(OpCode.C2S_GetStatus, (c, _) => HandleGetStatusAsync(c))
+        .Register(OpCode.C2S_GetPlayers, HandleGetPlayersAsync)
+        .Register(OpCode.C2S_CreateCharacter, HandleCreateCharacterAsync)
+        .Register(OpCode.C2S_SkillCheck, HandleSkillCheckAsync)
+        .Register(OpCode.C2S_Move, HandleMoveAsync)
+        .Register(OpCode.C2S_Link, HandleLinkAsync)
+        .Register(OpCode.C2S_Unlink, (c, _) => HandleUnlinkAsync(c))
+        .Register(OpCode.C2S_Heal, HandleHealAsync)
+        .Register(OpCode.C2S_Join, HandleJoinAsync)
+        .Register(OpCode.C2S_Leave, (c, _) => HandleLeaveAsync(c))
+        .Register(OpCode.C2S_Npc, HandleNpcAsync)
+        .Register(OpCode.C2S_As, HandleAsAsync)
+        .Register(OpCode.C2S_Init, HandleInitAsync)
+        .Register(OpCode.C2S_GetCharacters, (c, _) => HandleGetCharactersAsync(c))
+        .Register(OpCode.C2S_GetGames, (c, _) => HandleGetGamesAsync(c))
+        .Register(OpCode.C2S_Teleport, HandleTeleportAsync)
+        .Register(OpCode.C2S_Bonus, HandleBonusAsync)
+        .Register(OpCode.C2S_Activate, HandleActivateAsync)
+        .Register(OpCode.C2S_GetArchetypes, (c, _) => HandleGetArchetypesAsync(c));
+
+    private static Task HandleGetArchetypesAsync(ClientSession client)
+        => client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_ArchetypesResponse,
+            new ArchetypesResponsePayload { Archetypes = CharacterTemplateFactory.GetAvailableArchetypes() }));
 
     private static async Task HandlePingAsync(ClientSession client)
     {
