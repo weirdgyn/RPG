@@ -20,17 +20,12 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     private readonly int _port = port;
     private TcpListener? _listener;
     private readonly ConcurrentDictionary<Guid, ClientSession> _connectedClients = new();
-    private readonly List<Game> _games = [];
-    // Protegge _games e Game.Players: vengono modificati da più task (join, disconnessioni).
-    // Gli await non sono ammessi dentro il lock: si copia ciò che serve e si invia fuori.
-    // Gerarchia dei lock (si prendono sempre in quest'ordine, mai al contrario):
-    //   _linkLock -> _gamesLock -> Game.SyncRoot
-    // Game.SyncRoot protegge lo stato di gioco di UN game: turni, movimento, azioni, salute, munizioni e
-    // posizione dei suoi personaggi. Chi tiene un Game.SyncRoot non deve prendere _gamesLock né il SyncRoot
-    // di un altro game.
+    private readonly GameRegistry _registry = new();
+    // Elenco dei game, GamesLock e Game.SyncRoot: vedi GameRegistry (gerarchia dei lock:
+    //   _linkLock -> _registry.GamesLock -> Game.SyncRoot, mai al contrario).
+    // Gli await non sono ammessi dentro i lock: si copia ciò che serve e si invia fuori.
     // Salvataggio schede: SaveCharacter() prende CharacterRepository._saveLock e poi il SyncRoot del game del
     // personaggio per serializzare la scheda; va chiamato senza tenere alcun lock di gioco.
-    private readonly object _gamesLock = new();
     // Serializza le operazioni di login per rendere atomico il controllo sull'unicità dell'handle
     private readonly object _loginLock = new();
     // Rende atomico "personaggio già in uso? / carica / associa alla sessione" in /link
@@ -545,34 +540,16 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         await BroadcastPacketAsync(joinNotify, excludeClientId: client.Id);
     }
 
-    // Fuori da un game (es. /reload di un personaggio non in partita) non c'è un Game.SyncRoot: nessun altro
-    // può toccare quella scheda, ma il lock evita comunque di avere un ramo senza protezione.
-    private readonly object _noGameSync = new();
-
-    // Il game che contiene il personaggio (come giocatore o NPC), o null se è fuori da ogni game.
-    // Prende _gamesLock e lo rilascia prima di restituire: non va chiamato da chi tiene un Game.SyncRoot.
-    private Game? FindGameOf(Character character)
-    {
-        lock (_gamesLock)
-        {
-            return _games.FirstOrDefault(g =>
-                g.NPCs.Any(n => ReferenceEquals(n, character)) || g.Players.Any(p => ReferenceEquals(p.Character, character)));
-        }
-    }
-
-    // Lock che protegge lo stato del personaggio: il SyncRoot del suo game, oppure uno condiviso se è fuori partita.
-    private object SyncFor(Character character) => FindGameOf(character)?.SyncRoot ?? _noGameSync;
-
     // Salva la scheda serializzandola sotto il lock del suo game: il file è sempre uno stato coerente.
-    // Da chiamare SENZA tenere _gamesLock né alcun Game.SyncRoot (vedi la gerarchia dei lock).
+    // Da chiamare SENZA tenere _registry.GamesLock né alcun Game.SyncRoot (vedi la gerarchia dei lock).
     private void SaveCharacter(Character character)
-        => CharacterRepository.TrySaveCharacter(character, CharacterRepository.CharactersFolder, SyncFor(character));
+        => CharacterRepository.TrySaveCharacter(character, CharacterRepository.CharactersFolder, _registry.SyncFor(character));
 
     // Pacchetto con una scheda (o un payload che la contiene): la serializzazione avviene sotto il lock del
     // game del personaggio, così il client riceve uno stato coerente. Anche questo SENZA lock già in mano.
     private NetworkPacket CreateCharacterPacket<T>(OpCode opCode, T payload, Character character)
     {
-        lock (SyncFor(character))
+        lock (_registry.SyncFor(character))
         {
             return NetworkPacket.Create(opCode, payload);
         }
@@ -699,7 +676,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             ? null
             : owner.Ammos.FirstOrDefault(a => a.Id.Equals(weapon.LoadedAmmoId, StringComparison.OrdinalIgnoreCase));
 
-    // Da chiamare sotto _gamesLock. Cerca il personaggio per handle tra i partecipanti del game.
+    // Da chiamare sotto _registry.GamesLock. Cerca il personaggio per handle tra i partecipanti del game.
     private Combatant? FindCombatantInGame(Game game, string handle)
     {
         foreach (var p in game.Players)
@@ -716,7 +693,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         return npc != null ? new Combatant(npc, null) : null;
     }
 
-    // Da chiamare sotto _gamesLock. Sessioni dei partecipanti del game.
+    // Da chiamare sotto _registry.GamesLock. Sessioni dei partecipanti del game.
     private List<ClientSession> GetGameSessions(Game game)
     {
         return [.. game.Players
@@ -748,9 +725,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         Combatant? target = null;
         List<ClientSession> audience = [];
 
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
-            game = _games.FirstOrDefault(g => g.Players.Contains(reporter.Player));
+            game = _registry.FindGameOfPlayer(reporter.Player);
             if (game != null)
             {
                 target = FindCombatantInGame(game, attackReq.TargetHandle);
@@ -865,7 +842,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     // Serve solo alla stima mostrata nel game status, non è un limite di gioco.
     private const int MaxActionsPerRound = 2;
 
-    // Da chiamare sotto _gamesLock. Passa al prossimo personaggio valido dell'ordine (ancora nel game e non morto),
+    // Da chiamare sotto _registry.GamesLock. Passa al prossimo personaggio valido dell'ordine (ancora nel game e non morto),
     // incrementando il round al giro completo, e azzera movimento e azione. False se non c'è più nessuno.
     // I personaggi morti durante la scansione vengono aggiunti a newlyDead (da salvare su disco fuori dal lock).
     private bool MoveToNextTurn(Game game, List<string> notes, List<Character> newlyDead)
@@ -927,7 +904,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         return false;
     }
 
-    // Da chiamare sotto _gamesLock. Toglie un personaggio dall'ordine di gioco tenendo coerente il turno corrente.
+    // Da chiamare sotto _registry.GamesLock. Toglie un personaggio dall'ordine di gioco tenendo coerente il turno corrente.
     // Restituisce l'annuncio da inviare al game se il turno corrente è cambiato (o il combattimento è finito), altrimenti null.
     private string? RemoveFromTurnOrder(Game game, string handle, List<Character> newlyDead)
     {
@@ -987,9 +964,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
 
         Game? game;
         bool isMaster;
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
-            game = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
+            game = _registry.FindGameOfPlayer(client.Player);
             isMaster = client.Player.Role == Player.RoleType.master;
         }
 
@@ -1004,7 +981,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         if (action == "status")
         {
             string text;
-            lock (_gamesLock)
+            lock (_registry.GamesLock)
             lock (game.SyncRoot)
             {
                 if (!game.CombatActive)
@@ -1036,7 +1013,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                     string? error = null;
                     string announce = string.Empty;
                     var newlyDead = new List<Character>();
-                    lock (_gamesLock)
+                    lock (_registry.GamesLock)
                     lock (game.SyncRoot)
                     {
                         if (game.CombatActive)
@@ -1089,7 +1066,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                 {
                     bool was;
                     string endedEffects = string.Empty;
-                    lock (_gamesLock)
+                    lock (_registry.GamesLock)
                     lock (game.SyncRoot)
                     {
                         was = game.CombatActive;
@@ -1127,9 +1104,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             Role = me.Role.ToString()
         };
 
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
-            var game = _games.FirstOrDefault(g => g.Players.Contains(me));
+            var game = _registry.FindGameOfPlayer(me);
             if (game != null)
             {
                 payload.GameName = game.Name;
@@ -1146,7 +1123,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             payload.MaxHealth = c.Health.MaxHealth;
             payload.WoundStatus = c.Health.GetWoundStatusDescription();
             payload.MA = c.Stats.MA;
-            var maGame = FindGameOf(c);
+            var maGame = _registry.FindGameOf(c);
             if (maGame != null)
             {
                 lock (maGame.SyncRoot) payload.MAEffective = EffectiveMA(maGame, c);
@@ -1172,9 +1149,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         var me = client.Player;
         var payload = new GameStatusResponsePayload();
 
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
-            var game = _games.FirstOrDefault(g => g.Players.Contains(me));
+            var game = _registry.FindGameOfPlayer(me);
             if (game != null)
             lock (game.SyncRoot)
             {
@@ -1260,9 +1237,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     private async Task HandleNextAsync(ClientSession client)
     {
         Game? game;
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
-            game = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
+            game = _registry.FindGameOfPlayer(client.Player);
         }
 
         async Task Reply(string message) =>
@@ -1277,7 +1254,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         string? error = null;
         string announce = string.Empty;
         var newlyDead = new List<Character>();
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         lock (game.SyncRoot)
         {
             if (!game.CombatActive)
@@ -1348,9 +1325,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         GameMap? map = null;
         List<ClientSession> audience = [];
 
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
-            game = _games.FirstOrDefault(g => g.Players.Contains(reporter.Player));
+            game = _registry.FindGameOfPlayer(reporter.Player);
             if (game != null)
             {
                 map = game.Map;
@@ -1637,9 +1614,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         string weaponKey = InputLimits.Clean(reloadReq?.WeaponKey, InputLimits.MaxNameFieldLength) ?? string.Empty;
 
         Game? game;
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
-            game = _games.FirstOrDefault(g => g.Players.Contains(reporter.Player));
+            game = _registry.FindGameOfPlayer(reporter.Player);
         }
 
         string? error;
@@ -1665,7 +1642,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         }
         else
         {
-            lock (_noGameSync)
+            lock (_registry.NoGameSync)
             {
                 (error, message) = ReloadRules(actor, ammoKey, weaponKey);
             }
@@ -2036,9 +2013,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
 
         // Il tiro del master non è l'azione di un PG: non alimenta il contatore delle azioni libere.
         Game? rollGame;
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
-            rollGame = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
+            rollGame = _registry.FindGameOfPlayer(client.Player);
         }
         if (rollGame != null && client.Player.Role != Player.RoleType.master) GameExecutionContext.Execute(rollGame, scope => scope.CountFreeAction());
 
@@ -2146,10 +2123,10 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     private async Task SendSkillsAsync(ClientSession reporter, Character character)
     {
         SkillListResponsePayload skillListPayload;
-        lock (SyncFor(character))
+        lock (_registry.SyncFor(character))
         {
             int penalty = character.Health.GetWoundPenalty();
-            var game = FindGameOf(character);
+            var game = _registry.FindGameOf(character);
             var gameEffects = game?.Effects ?? [];
 
             var skillInfos = character.Skills
@@ -2193,9 +2170,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     private async Task SendStatusAsync(ClientSession reporter, Character character)
     {
         // Scheda ed effetti attivi si leggono nella stessa sezione critica del game: il client vede uno stato coerente.
-        var game = FindGameOf(character);
+        var game = _registry.FindGameOf(character);
         NetworkPacket packet;
-        lock (game?.SyncRoot ?? _noGameSync)
+        lock (game?.SyncRoot ?? _registry.NoGameSync)
         {
             var payload = new CharacterStatePayload { Character = character };
             if (game != null)
@@ -2223,9 +2200,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         foreach (var c in allAuthenticated)
         {
             string gameName = "---";
-            lock (_gamesLock)
+            lock (_registry.GamesLock)
             {
-                var g = _games.FirstOrDefault(game => game.Players.Any(p => p.Username.Equals(c.Player.Username, StringComparison.OrdinalIgnoreCase)));
+                var g = _registry.Games.FirstOrDefault(game => game.Players.Any(p => p.Username.Equals(c.Player.Username, StringComparison.OrdinalIgnoreCase)));
                 if (g != null) gameName = g.Name;
             }
 
@@ -2298,13 +2275,13 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         string skillName = InputLimits.Clean(skillReq.SkillName, InputLimits.MaxNameFieldLength);
 
         Game? checkGame;
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
-            checkGame = _games.FirstOrDefault(g => g.Players.Contains(reporter.Player));
+            checkGame = _registry.FindGameOfPlayer(reporter.Player);
         }
 
         SkillRollResult? rolled;
-        lock (checkGame?.SyncRoot ?? _noGameSync)
+        lock (checkGame?.SyncRoot ?? _registry.NoGameSync)
         {
             rolled = RollSkill(checkGame, actor, skillName);
         }
@@ -2335,7 +2312,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
 
             CheckRegistration reg;
             Game.Check? completed;
-            lock (_gamesLock)
+            lock (_registry.GamesLock)
             {
                 reg = RegisterCheckRoll(checkGame, Game.CheckKind.Skill, skillName, actor.Handle, totalResult, isFumble, out completed);
             }
@@ -2393,9 +2370,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     {
         Game? game;
         GameMap? map;
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
-            game = _games.FirstOrDefault(g => g.Players.Contains(reporter.Player));
+            game = _registry.FindGameOfPlayer(reporter.Player);
             map = game?.Map;
         }
 
@@ -2484,9 +2461,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         var moved = new List<Character>();
         string? error = null;
 
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
-            var game = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
+            var game = _registry.FindGameOfPlayer(client.Player);
             if (game?.Map == null)
             {
                 error = "Devi essere in un game per usare /teleport: usa /join <game>.";
@@ -2570,9 +2547,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         string? reply = null;
         Game? game;
 
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
-            game = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
+            game = _registry.FindGameOfPlayer(client.Player);
             if (game == null)
             {
                 error = "Devi essere in un game per usare /bonus: usa /join <game>.";
@@ -2701,9 +2678,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             // Cambiare scheda mentre si è in un game lascerebbe turno e check appesi al vecchio personaggio:
             // per cambiare si esce prima con /leave.
             bool alreadyInGame;
-            lock (_gamesLock)
+            lock (_registry.GamesLock)
             {
-                alreadyInGame = _games.Any(g => g.Players.Contains(client.Player));
+                alreadyInGame = _registry.Games.Any(g => g.Players.Contains(client.Player));
             }
 
             if (alreadyInGame)
@@ -2733,11 +2710,11 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                     && c.LinkedCharacterHandle != null
                     && c.LinkedCharacterHandle.Equals(linkReq.CharacterHandle, StringComparison.OrdinalIgnoreCase));
 
-                // Ordine dei lock: _linkLock, poi _gamesLock (come in /npc add)
+                // Ordine dei lock: _linkLock, poi _registry.GamesLock (come in /npc add)
                 string? npcGame = null;
-                lock (_gamesLock)
+                lock (_registry.GamesLock)
                 {
-                    npcGame = _games.FirstOrDefault(g => g.NPCs.Any(n =>
+                    npcGame = _registry.Games.FirstOrDefault(g => g.NPCs.Any(n =>
                         n.Handle.Equals(linkReq.CharacterHandle, StringComparison.OrdinalIgnoreCase)))?.Name;
                 }
 
@@ -2852,9 +2829,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         lock (_linkLock)
         {
             bool inGame;
-            lock (_gamesLock)
+            lock (_registry.GamesLock)
             {
-                inGame = _games.Any(g => g.Players.Contains(client.Player));
+                inGame = _registry.Games.Any(g => g.Players.Contains(client.Player));
             }
 
             if (inGame)
@@ -2945,9 +2922,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         }
 
         Game? game;
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
-            game = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
+            game = _registry.FindGameOfPlayer(client.Player);
         }
 
         if (game == null)
@@ -2987,7 +2964,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         }
 
         Character? target;
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
             target = FindCombatantInGame(game, targetHandle)?.Character;
         }
@@ -3042,7 +3019,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     private async Task ResolveStabilizeAsync(ClientSession reporter, Game game, Character healer, string targetHandle)
     {
         Character? target;
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
             target = FindCombatantInGame(game, targetHandle)?.Character;
         }
@@ -3170,9 +3147,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         string itemKey = InputLimits.Clean(itemKeyRaw, InputLimits.MaxNameFieldLength) ?? string.Empty;
 
         Game? game;
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
-            game = _games.FirstOrDefault(g => g.Players.Contains(reporter.Player));
+            game = _registry.FindGameOfPlayer(reporter.Player);
         }
 
         if (game == null)
@@ -3435,9 +3412,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         }
 
         Game? game;
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
-            game = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
+            game = _registry.FindGameOfPlayer(client.Player);
         }
 
         if (game == null || client.Player.Role != Player.RoleType.master)
@@ -3462,7 +3439,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             case "list":
                 {
                     List<NpcInfoPayload> infos;
-                    lock (_gamesLock)
+                    lock (_registry.GamesLock)
                     lock (game.SyncRoot)
                     {
                         infos = [.. game.NPCs.Select(n => new NpcInfoPayload
@@ -3492,7 +3469,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                     string? turnNotice = null;
                     Game.Check? completedCheck = null;
                     var newlyDead = new List<Character>();
-                    lock (_gamesLock)
+                    lock (_registry.GamesLock)
                     lock (game.SyncRoot)
                     {
                         removed = game.NPCs.RemoveAll(n => n.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase)) > 0;
@@ -3531,7 +3508,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             case "skills":
                 {
                     Character? skillsNpc;
-                    lock (_gamesLock)
+                    lock (_registry.GamesLock)
                     {
                         skillsNpc = game.NPCs.FirstOrDefault(n => n.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase));
                     }
@@ -3554,7 +3531,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             case "status":
                 {
                     Character? npc;
-                    lock (_gamesLock)
+                    lock (_registry.GamesLock)
                     {
                         npc = game.NPCs.FirstOrDefault(n => n.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase));
                     }
@@ -3630,7 +3607,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         npc.Handle = handle;
 
         // Una scheda è usata da un solo "attore" alla volta: un giocatore (/link) oppure un NPC di un game.
-        // Ordine dei lock: _linkLock, poi _gamesLock (come in /link).
+        // Ordine dei lock: _linkLock, poi _registry.GamesLock (come in /link).
         string? error = null;
         lock (_linkLock)
         {
@@ -3638,9 +3615,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                 c.LinkedCharacterHandle != null
                 && c.LinkedCharacterHandle.Equals(handle, StringComparison.OrdinalIgnoreCase));
 
-            lock (_gamesLock)
+            lock (_registry.GamesLock)
             {
-                var otherGame = _games.FirstOrDefault(g => g.NPCs.Any(n => n.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase)));
+                var otherGame = _registry.Games.FirstOrDefault(g => g.NPCs.Any(n => n.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase)));
 
                 if (game.NPCs.Count >= MaxNpcsPerGame)
                 {
@@ -3700,9 +3677,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
 
         Game? game;
         Character? npc = null;
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
-            game = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
+            game = _registry.FindGameOfPlayer(client.Player);
             if (game != null && client.Player.Role == Player.RoleType.master)
             {
                 npc = game.NPCs.FirstOrDefault(n => n.Handle.Equals(actorHandle, StringComparison.OrdinalIgnoreCase));
@@ -3820,9 +3797,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         string? leaveTurnNotice = null;
         var newlyDead = new List<Character>();
 
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
-            var game = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
+            var game = _registry.FindGameOfPlayer(client.Player);
             if (game != null)
             lock (game.SyncRoot)
             {
@@ -3842,7 +3819,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
 
                 if (game.Players.Count == 0)
                 {
-                    _games.Remove(game);
+                    _registry.Games.Remove(game);
                     gameClosed = true;
                     Console.WriteLine($"[GAME] Game '{game.Name}' rimosso: nessun giocatore rimasto.");
                 }
@@ -3945,13 +3922,13 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         string denialMessage = string.Empty;
         bool success = false;
 
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
-            var game = _games.FirstOrDefault(g => g.Name.Equals(joinReq.GameName, StringComparison.OrdinalIgnoreCase));
+            var game = _registry.Games.FirstOrDefault(g => g.Name.Equals(joinReq.GameName, StringComparison.OrdinalIgnoreCase));
 
             // Una sessione sta in un solo game alla volta (i comandi cercano "il" game del giocatore):
             // per cambiare game si esce prima con /leave.
-            var currentGame = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
+            var currentGame = _registry.FindGameOfPlayer(client.Player);
 
             if (currentGame != null)
             {
@@ -3966,7 +3943,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             }
             else if (joinReq.Role == Player.RoleType.master)
             {
-                if (game == null && _games.Count >= InputLimits.MaxGames)
+                if (game == null && _registry.Games.Count >= InputLimits.MaxGames)
                 {
                     denialMessage = $"Il server ha raggiunto il numero massimo di giochi ({InputLimits.MaxGames}).";
                 }
@@ -3977,7 +3954,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                         Name = joinReq.GameName,
                         Description = joinReq.Description ?? "Partita senza descrizione",
                     };
-                    _games.Add(game);
+                    _registry.Games.Add(game);
                     success = true;
                 }
                 else
@@ -4064,9 +4041,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         {
             // /init del master = /check init per tutti i personaggi del game
             Game? game;
-            lock (_gamesLock)
+            lock (_registry.GamesLock)
             {
-                game = _games.FirstOrDefault(g =>
+                game = _registry.Games.FirstOrDefault(g =>
                     g.Players.Any(p => p.Username == client.Player.Username && p.Role == Player.RoleType.master));
             }
 
@@ -4113,7 +4090,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     private const int MaxCheckHandles = 64;
     private const int MaxCheckTargetNumber = 99;
 
-    // Da chiamare sotto _gamesLock. Associa il tiro alla voce del check aperto (stesso tipo, stessa abilità,
+    // Da chiamare sotto _registry.GamesLock. Associa il tiro alla voce del check aperto (stesso tipo, stessa abilità,
     // stesso personaggio). Vale il primo tiro. Se è l'ultimo che mancava, chiude il check e lo restituisce.
     private static CheckRegistration RegisterCheckRoll(Game game, Game.CheckKind kind, string? skillName, string handle,
         int total, bool isFumble, out Game.Check? completed)
@@ -4141,7 +4118,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         return CheckRegistration.Registered;
     }
 
-    // Da chiamare sotto _gamesLock. Toglie dal check aperto il personaggio che esce dal game; se così non
+    // Da chiamare sotto _registry.GamesLock. Toglie dal check aperto il personaggio che esce dal game; se così non
     // manca più nessuno restituisce il check da spogliare, se non resta nessuno lo annulla.
     private static Game.Check? PruneCheckEntry(Game game, string handle)
     {
@@ -4181,9 +4158,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             await client.SendPacketAsync(NetworkPacket.Create(OpCode.S2C_Notification, new { Message = message }));
 
         Game? game;
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
-            game = _games.FirstOrDefault(g => g.Players.Contains(client.Player));
+            game = _registry.FindGameOfPlayer(client.Player);
         }
 
         if (game == null || client.Player.Role != Player.RoleType.master)
@@ -4203,7 +4180,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             case "status":
                 {
                     string text;
-                    lock (_gamesLock)
+                    lock (_registry.GamesLock)
                     {
                         var check = game.ActiveCheck;
                         if (check == null)
@@ -4225,7 +4202,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             case "close":
                 {
                     Game.Check? check;
-                    lock (_gamesLock)
+                    lock (_registry.GamesLock)
                     {
                         check = game.ActiveCheck;
                         game.ActiveCheck = null;
@@ -4249,7 +4226,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             case "cancel":
                 {
                     bool had;
-                    lock (_gamesLock)
+                    lock (_registry.GamesLock)
                     {
                         had = game.ActiveCheck != null;
                         game.ActiveCheck = null;
@@ -4309,7 +4286,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         var excluded = new List<string>();
         string? error = null;
 
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         lock (game.SyncRoot)
         {
             if (game.ActiveCheck != null)
@@ -4408,7 +4385,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                 }
             }
 
-            lock (_gamesLock)
+            lock (_registry.GamesLock)
             {
                 RegisterCheckRoll(game, isSkill ? Game.CheckKind.Skill : Game.CheckKind.Initiative, skillName,
                     c.Character.Handle, total, fumble, out var done);
@@ -4459,7 +4436,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             Forced = forced
         };
 
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         lock (game.SyncRoot)
         {
             audience = GetGameSessions(game);
@@ -4558,9 +4535,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     private async Task ResolveInitiativeAsync(ClientSession reporter, Character actor)
     {
         Game? game;
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
-            game = _games.FirstOrDefault(g => g.Players.Contains(reporter.Player));
+            game = _registry.FindGameOfPlayer(reporter.Player);
         }
 
         if (game == null)
@@ -4583,7 +4560,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
 
         CheckRegistration reg;
         Game.Check? completed;
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
             reg = RegisterCheckRoll(game, Game.CheckKind.Initiative, null, actor.Handle, total, false, out completed);
 
@@ -4619,9 +4596,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     {
         // Chi sta usando quale scheda: NPC di un game, oppure giocatore collegato
         var npcOwner = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
-            foreach (var game in _games)
+            foreach (var game in _registry.Games)
             {
                 foreach (var npc in game.NPCs) npcOwner[npc.Handle] = game.Name;
             }
@@ -4658,9 +4635,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     {
         var gamesResponsePayload = new GamesResponsePayload();
 
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
-            foreach (var game in _games)
+            foreach (var game in _registry.Games)
                 gamesResponsePayload.Games.Add(game.Name);
         }
 
@@ -4699,9 +4676,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         turnNotices = [];
         deadCharacters = [];
 
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
-            foreach (var game in _games.Where(g => g.Players.Contains(player)).ToList())
+            foreach (var game in _registry.Games.Where(g => g.Players.Contains(player)).ToList())
             lock (game.SyncRoot)
             {
                 game.Players.Remove(player);
@@ -4717,7 +4694,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
 
                 if (game.Players.Count == 0)
                 {
-                    _games.Remove(game);
+                    _registry.Games.Remove(game);
                     Console.WriteLine($"[GAME] Game '{game.Name}' rimosso: nessun giocatore rimasto.");
                 }
                 else if (player.Role == Player.RoleType.master)
@@ -4738,9 +4715,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     private async Task BroadcastToGameAsync(ClientSession origin, NetworkPacket packet, bool includeOrigin = true)
     {
         List<ClientSession> audience;
-        lock (_gamesLock)
+        lock (_registry.GamesLock)
         {
-            var game = _games.FirstOrDefault(g => g.Players.Contains(origin.Player));
+            var game = _registry.FindGameOfPlayer(origin.Player);
             audience = game != null ? GetGameSessions(game) : [origin];
         }
 
