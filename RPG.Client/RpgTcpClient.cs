@@ -273,7 +273,7 @@ public class RpgTcpClient(bool useTls = true)
                 if (_player != null && statePayload?.Character != null)
                 {
                     _player.Character = statePayload.Character;
-                    PrintServerOutput(() => PrintCharacterStatus(_player.Character));
+                    PrintServerOutput(() => PrintCharacterStatus(_player.Character, statePayload.Effects, statePayload.MAEffective));
                 }
                 break;
 
@@ -1161,7 +1161,7 @@ public class RpgTcpClient(bool useTls = true)
     /// <summary>
     /// Stampa lo stato completo del personaggio con layout Cyberpunk HUD via Spectre.Console.
     /// </summary>
-    private static void PrintCharacterStatus(Character c)
+    private static void PrintCharacterStatus(Character c, IReadOnlyList<string>? effects = null, int maEffective = -1)
     {
         var mainGrid = new Grid();
         mainGrid.AddColumn();
@@ -1190,11 +1190,17 @@ public class RpgTcpClient(bool useTls = true)
             c.Stats.TECH.ToString(),
             c.Stats.COOL.ToString(),
             c.Stats.ATTR.ToString(),
-            c.Stats.MA.ToString(),
+            maEffective >= 0 && maEffective != c.Stats.MA ? $"{c.Stats.MA} [yellow]→ {maEffective}[/]" : c.Stats.MA.ToString(),
             c.Stats.BODY.ToString(),
             c.Stats.EMP.ToString()
         );
         mainGrid.AddRow(statsTable);
+
+        // 3b. Effetti attivi (bonus/malus del game): solo se ce ne sono
+        if (effects is { Count: > 0 })
+        {
+            mainGrid.AddRow(new Markup("[bold yellow]EFFETTI ATTIVI:[/] " + string.Join("  [grey]|[/]  ", effects.Select(e => $"[white]{Markup.Escape(e)}[/]"))));
+        }
 
         // 4. Armatura
         var equipTable = new Table().Border(TableBorder.Simple).BorderColor(Color.DarkSlateGray3);

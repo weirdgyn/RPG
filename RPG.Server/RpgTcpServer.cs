@@ -2254,10 +2254,21 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     // La scheda di <paramref name="character"/> inviata a <paramref name="reporter"/> (chi ha dato il comando).
     private async Task SendStatusAsync(ClientSession reporter, Character character)
     {
-        await reporter.SendPacketAsync(CreateCharacterPacket(OpCode.S2C_PlayerStateUpdate, new CharacterStatePayload
+        // Scheda ed effetti attivi si leggono nella stessa sezione critica del game: il client vede uno stato coerente.
+        var game = FindGameOf(character);
+        NetworkPacket packet;
+        lock (game?.SyncRoot ?? _noGameSync)
         {
-            Character = character
-        }, character));
+            var payload = new CharacterStatePayload { Character = character };
+            if (game != null)
+            {
+                payload.Effects = DescribeEffectsOf(game, character.Handle);
+                payload.MAEffective = EffectiveMA(game, character);
+            }
+            packet = NetworkPacket.Create(OpCode.S2C_PlayerStateUpdate, payload);
+        }
+
+        await reporter.SendPacketAsync(packet);
     }
 
     private async Task HandleGetPlayersAsync(ClientSession client, NetworkPacket packet)

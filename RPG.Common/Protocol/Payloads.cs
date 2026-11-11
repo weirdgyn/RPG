@@ -31,6 +31,10 @@ public class LoginResponsePayload
 public class CharacterStatePayload
 {
     public Character Character { get; set; } = new();
+    /// <summary>Effetti attivi (bonus/malus del game) del personaggio, già descritti; vuoto fuori da un game.</summary>
+    public List<string> Effects { get; set; } = [];
+    /// <summary>MA con gli effetti attivi; -1 se non applicabile (nessun game).</summary>
+    public int MAEffective { get; set; } = -1;
 }
 
 public class MoveRequestPayload

@@ -100,7 +100,7 @@ Il ruolo di master si prende entrando in un game con `/join <game> master`: se i
 | `/create <archetipo> <handle>` | Crea un personaggio da un archetipo, con statistiche leggermente variate a caso. Archetipi: **Solo, Netrunner, Nomad, Rocker, Fixer, Corporate, Techie, TechMed, Cop, Media**. |
 | `/link <personaggio>` | Ti collega a una scheda esistente. Se sei già in un game, esci prima con `/leave`: cambiare scheda durante una partita non è supportato. |
 | `/unlink` | Scioglie il collegamento con il personaggio corrente. È inibito dentro un game: esci prima con `/leave`. |
-| `/status` | Mostra la scheda del personaggio collegato: statistiche, salute, armi e munizioni, armatura, cyberware. |
+| `/status` | Mostra la scheda del personaggio collegato: statistiche, salute, armi e munizioni, armatura, cyberware. In un game mostra anche gli effetti attivi e la MA con gli effetti (`3 → 5`). |
 | `/skills` | Elenco abilità con statistica associata e il tuo pool di tiro. |
 
 Un archetipo definisce abilità, armi, munizioni, armatura e cyberware iniziali. Alcune armi ad area (granate) sono presenti solo in certi archetipi (per esempio Solo e Nomad): se la tua scheda non ne ha, `/throw` risponde che non hai armi ad area.
