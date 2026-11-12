@@ -1065,8 +1065,6 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         await ResolveThrowAsync(client, client.Player.Character!, throwReq);
     }
 
-    private sealed record ThrowOutcome(string? Error, AreaResultPayload? Result, string? LogLine, List<Character> Changed);
-
     /// <summary>
     /// Lancio di un'arma ad area di <paramref name="thrower"/> verso un punto. Colpisce tutti i personaggi del game
     /// (giocatori e NPC, lanciatore compreso) entro il raggio dell'esplosione.
@@ -1103,26 +1101,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
 
         // Validazione, consumo dell'azione e risoluzione nella stessa sezione critica; i bersagli dell'area
         // sono i partecipanti di quel momento, non una copia presa prima.
-        var ctx = new GameExecutionContext(game, SaveCharacter);
-        var outcome = ctx.Execute(scope =>
-        {
-            string? denial = scope.CheckActor(thrower) ?? scope.CheckTurn(thrower, needsAction: true);
-            if (denial != null)
-            {
-                return new ThrowOutcome(denial, null, null, []);
-            }
-
-            var res = ResolveThrowRules(game, thrower, target, throwReq.WeaponKey, scope.GetParticipants(), game.CombatActive);
-            if (res.Error != null)
-            {
-                scope.RefundAction();
-            }
-            else
-            {
-                scope.MarkDirty(res.Changed);
-            }
-            return res;
-        });
+        var outcome = GameExecutionContext.Execute(game, scope => CombatService.Throw(scope, thrower, target, throwReq.WeaponKey), SaveCharacter);
 
         if (outcome.Error != null)
         {
@@ -1137,216 +1116,6 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         {
             try { await session.SendPacketAsync(packet); }
             catch (Exception ex) { Console.WriteLine($"[COMBAT] Esito area non consegnato a [{session.IdShort}]: {ex.Message}"); }
-        }
-    }
-
-    // Regole del lancio/esplosione, sincrone e sotto Game.SyncRoot. Nessun I/O di rete qui dentro.
-    private static ThrowOutcome ResolveThrowRules(Game game, Character thrower, Position3D aimed, string? weaponKey, List<Character> everyone, bool combatActive)
-    {
-        static ThrowOutcome Error(string message) => new(message, null, null, []);
-
-        lock (game.SyncRoot)
-        {
-            Weapon? weapon;
-            if (!string.IsNullOrWhiteSpace(weaponKey))
-            {
-                string key = weaponKey.Trim();
-                weapon = thrower.Weapons.FirstOrDefault(w => w.Type == Weapon.WeaponType.Area &&
-                    (w.Name.Equals(key, StringComparison.OrdinalIgnoreCase) || w.Id.Equals(key, StringComparison.OrdinalIgnoreCase)));
-                if (weapon == null) return Error($"Nessuna arma ad area '{key}' nell'inventario.");
-            }
-            else
-            {
-                weapon = thrower.EquippedWeapon is { Type: Weapon.WeaponType.Area, CurrentAmmo: > 0 }
-                    ? thrower.EquippedWeapon
-                    : thrower.Weapons.FirstOrDefault(w => w.Type == Weapon.WeaponType.Area && w.CurrentAmmo > 0)
-                      ?? thrower.Weapons.FirstOrDefault(w => w.Type == Weapon.WeaponType.Area);
-                if (weapon == null) return Error("Non hai armi ad area da lanciare.");
-            }
-
-            if (weapon.CurrentAmmo <= 0) return Error($"{weapon.Name}: pezzi esauriti.");
-
-            double radius = weapon.BlastRadiusMeters ?? 0;
-            if (radius <= 0) return Error($"{weapon.Name} non ha un raggio d'esplosione valido.");
-
-            int penalty = thrower.Health.GetWoundPenalty();
-
-            if (!Skills.TryGetStatForSkill(weapon.ScatterSkillName, out string statName))
-            {
-                return Error($"L'abilità '{weapon.ScatterSkillName}' di {weapon.Name} non è riconosciuta: scheda o arma non valida.");
-            }
-
-            double throwRange = weapon.OptimalRangeMeters > 0 ? weapon.OptimalRangeMeters : 15;
-            double distance = CombatRules.CalculateDistance(thrower.Position, aimed);
-            if (distance > throwRange)
-            {
-                return Error($"Troppo lontano per {weapon.Name}: {distance:F1}m, gittata di lancio {throwRange:F0}m.");
-            }
-
-            int throwTn = CombatRules.GetRangedTargetNumber(distance, throwRange) ?? 30;
-            int statVal = thrower.Stats.GetStatValue(statName);
-            int skillLvl = thrower.Skills.TryGetValue(weapon.ScatterSkillName, out int lvl) ? lvl : 0;
-            var roll = GameDice.RollExplodingD10Detailed();
-            // Un lancio è una prova di abilità: valgono ALL, STAT e SKILL ma non HIT (che è del tiro per colpire)
-            var throwCtx = new EffectContext(RollKind.Skill, statName, weapon.ScatterSkillName);
-            var throwTerms = EffectService.CollectTerms(game, thrower, throwCtx);
-            var expiredOnThrow = EffectRules.ConsumeUses(game.Effects, thrower.Handle, throwCtx);
-            int total = statVal + skillLvl + penalty + throwTerms.Sum(t => t.Value) + roll.Total;
-
-            bool onTarget = !roll.IsFumble && total >= throwTn;
-            weapon.CurrentAmmo--;
-
-            var throwSteps = new List<string>();
-            var throwParts = new List<(string, int, string?)>
-            {
-                ("d10", roll.Total, RollFormatter.DiceExtra(roll)),
-                (statName, statVal, null),
-                (weapon.ScatterSkillName, skillLvl, null)
-            };
-            if (penalty != 0) throwParts.Add(("ferite", penalty, null));
-            EffectService.AddTermParts(throwParts, throwTerms);
-            throwSteps.Add($"Tiro di lancio: {RollFormatter.FormatSum(throwParts)}");
-            throwSteps.AddRange(EffectService.DescribeExpired(expiredOnThrow));
-            throwSteps.Add($"Difficoltà: TN {throwTn} (distanza {distance:F1} m, gittata di lancio {throwRange:F0} m)");
-            throwSteps.Add(roll.IsFumble
-                ? "Esito: FALLIMENTO CRITICO (1 naturale sul d10)"
-                : onTarget ? $"Esito: A SEGNO ({total} contro TN {throwTn})" : $"Esito: FUORI BERSAGLIO ({total} contro TN {throwTn})");
-
-            // Se il lancio fallisce la granata devia: d10 metri in direzione casuale (doppio con un fallimento critico)
-            var landed = new Position3D { X = aimed.X, Y = aimed.Y, Z = aimed.Z };
-            double deviation = 0;
-            if (!onTarget)
-            {
-                int deviationRoll = (int)GameDice.Roll("1d10").Total;
-                deviation = deviationRoll * (roll.IsFumble ? 2 : 1);
-                double angle = Random.Shared.NextDouble() * 2 * Math.PI;
-                landed.X += (int)Math.Round(deviation * Math.Cos(angle));
-                landed.Y += (int)Math.Round(deviation * Math.Sin(angle));
-                throwSteps.Add($"Deviazione: d10 {deviationRoll}{(roll.IsFumble ? " x2 (fallimento critico)" : "")} = {deviation:F0} m in direzione casuale");
-            }
-            throwSteps.Add($"Esplosione in ({landed.X}, {landed.Y}, {landed.Z}), raggio {radius:0.#} m");
-
-            // Un solo tiro di danno per fascia: tutti quelli nella stessa fascia subiscono lo stesso danno
-            var bandRolls = new Dictionary<string, (int Raw, string Text)>();
-            var victims = new List<AreaVictim>();
-            var changed = new List<Character> { thrower };
-
-            foreach (var target in everyone)
-            {
-                if (target.Health.IsDead) continue;   // i morti non subiscono altro danno
-
-                double d = CombatRules.CalculateDistance(target.Position, landed);
-                if (d > radius) continue;
-
-                string? dice;
-                string bandKey;
-                string bandLabel;
-                if (weapon.AreaDamageBands is { Count: > 0 })
-                {
-                    var band = weapon.AreaDamageBands.FirstOrDefault(b => d >= b.FromMeters && d < b.ToMeters);
-                    if (band == null) continue;
-                    dice = band.DamageDice;
-                    bandKey = $"{band.FromMeters}-{band.ToMeters}";
-                    bandLabel = $"fascia {band.FromMeters:0.#}-{band.ToMeters:0.#} m";
-                }
-                else
-                {
-                    dice = weapon.DamageDice;
-                    bandKey = "all";
-                    bandLabel = "tutto il raggio";
-                }
-
-                var victimSteps = new List<string> { $"Distanza dal centro: {d:F1} m ({bandLabel})" };
-
-                if (!bandRolls.TryGetValue(bandKey, out var bandRoll))
-                {
-                    var dmgRoll = GameDice.Roll(dice);
-                    bandRoll = (Math.Max(0, (int)dmgRoll.Total), $"Dadi di danno ({dice}): {RollFormatter.FormatDiceDetail(dmgRoll)}");
-                    bandRolls[bandKey] = bandRoll;
-                    victimSteps.Add(bandRoll.Text);
-                }
-                else
-                {
-                    victimSteps.Add($"Dadi di danno ({dice}): stessi dadi della {bandLabel} = {bandRoll.Raw}");
-                }
-                int rawDamage = bandRoll.Raw;
-
-                // L'esplosione colpisce il corpo: protegge l'armatura del torso, nessun moltiplicatore di locazione
-                var torso = target.Armor.GetPiece(ArmorLocation.Torso);
-                var resolution = CombatRules.ResolveDamage(torso, rawDamage, 1, armorPiercing: false, target.Stats.BODY);
-                var armor = resolution.Armor;
-                int penetrating = resolution.Penetrating;
-                int btmRed = resolution.BtmReduction;
-                int afterBtm = resolution.Dealt;
-                int healthBefore = target.Health.RemainingBoxes;
-                target.Health.TakeDamage(afterBtm);
-                if (!changed.Contains(target)) changed.Add(target);
-
-                if (armor.SpFaced > 0)
-                {
-                    victimSteps.Add($"Armatura (torso, SP {armor.SpFaced}): {rawDamage} - {armor.SpFaced} = {penetrating}{(armor.Ablated ? " (SP dell'armatura -1)" : " (l'armatura regge)")}");
-                }
-                else
-                {
-                    victimSteps.Add($"Armatura: nessuna protezione sul torso ({rawDamage} danni passano)");
-                }
-                if (armor.DamageDealt > 0)
-                {
-                    victimSteps.Add($"BTM (BODY {target.Stats.BODY}): {armor.DamageDealt} - {btmRed} = {afterBtm}{(armor.DamageDealt - btmRed < 1 ? " (minimo 1)" : "")}");
-                }
-                victimSteps.Add($"Danno inflitto: {afterBtm}");
-                victimSteps.Add($"Salute: {healthBefore} -> {target.Health.RemainingBoxes}/{target.Health.MaxHealth} ({target.Health.GetWoundStatusDescription()})");
-                if (combatActive && afterBtm > 0)
-                {
-                    var stunLine = RollService.RollStunSave(target);
-                    if (stunLine != null) victimSteps.Add(stunLine);
-                }
-
-                victims.Add(new AreaVictim
-                {
-                    Handle = target.Handle,
-                    Distance = Math.Round(d, 1),
-                    RawDamage = rawDamage,
-                    ArmorSP = armor.SpFaced,
-                    DamageDealt = afterBtm,
-                    BtmReduction = armor.DamageDealt - afterBtm,
-                    RemainingHealth = target.Health.RemainingBoxes,
-                    MaxHealth = target.Health.MaxHealth,
-                    WoundStatus = target.Health.GetWoundStatusDescription(),
-                    Steps = victimSteps
-                });
-            }
-
-            string aimText = $"({aimed.X}, {aimed.Y}, {aimed.Z})";
-            string landText = $"({landed.X}, {landed.Y}, {landed.Z})";
-            string message = onTarget
-                ? $"{thrower.Handle} lancia {weapon.Name} su {aimText}: esplode nel punto indicato."
-                : roll.IsFumble
-                    ? $"FALLIMENTO CRITICO! La granata di {thrower.Handle} devia di {deviation:F0}m: esplode in {landText}."
-                    : $"La granata di {thrower.Handle} devia di {deviation:F0}m: esplode in {landText}.";
-
-            var result = new AreaResultPayload
-            {
-                ThrowerHandle = thrower.Handle,
-                WeaponName = weapon.Name,
-                ThrowTotal = total,
-                ThrowTN = throwTn,
-                IsFumble = roll.IsFumble,
-                OnTarget = onTarget,
-                DeviationMeters = deviation,
-                Aimed = aimed,
-                Landed = landed,
-                BlastRadius = radius,
-                Steps = throwSteps,
-                PiecesLeft = weapon.CurrentAmmo,
-                Victims = victims,
-                Message = message
-            };
-
-            string log = $"[COMBAT] {thrower.Handle} lancia '{weapon.Name}' su {aimText}. {string.Join(" | ", throwSteps)}"
-                + $" | Colpiti: {(victims.Count > 0 ? string.Join(", ", victims.Select(v => $"{v.Handle} -{v.DamageDealt}")) : "nessuno")} | Pezzi rimasti: {weapon.CurrentAmmo}";
-
-            return new ThrowOutcome(null, result, log, changed);
         }
     }
 
@@ -1375,28 +1144,13 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         string? message;
         if (game != null)
         {
-            var ctx = new GameExecutionContext(game, SaveCharacter);
-            (error, message) = ctx.Execute<(string?, string?)>(scope =>
-            {
-                string? denial = scope.CheckActor(actor) ?? scope.CheckTurn(actor, needsAction: true);
-                if (denial != null) return (denial, null);
-
-                var (err, msg) = ReloadRules(actor, ammoKey, weaponKey);
-                if (err != null)
-                {
-                    scope.RefundAction();
-                    return (err, null);
-                }
-
-                scope.MarkDirty(actor);
-                return (null, msg);
-            });
+            (error, message) = GameExecutionContext.Execute(game, scope => CombatService.Reload(scope, actor, ammoKey, weaponKey), SaveCharacter);
         }
         else
         {
             lock (_registry.NoGameSync)
             {
-                (error, message) = ReloadRules(actor, ammoKey, weaponKey);
+                (error, message) = CombatService.ReloadRules(actor, ammoKey, weaponKey);
             }
             if (error == null) SaveCharacter(actor);
         }
@@ -1409,90 +1163,6 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
 
         Console.WriteLine($"[COMBAT] {message}");
         await BroadcastToGameAsync(reporter, NetworkPacket.Create(OpCode.S2C_Notification, new { Message = message }));
-    }
-
-    // Regole della ricarica, sincrone e sotto Game.SyncRoot. I colpi rimasti nel caricatore tornano nella
-    // pila di provenienza, poi si caricano fino a capienza dalla pila scelta.
-    private static (string? Error, string? Message) ReloadRules(Character actor, string ammoKey, string weaponKey)
-    {
-        Weapon? weapon = weaponKey.Length == 0
-            ? actor.EquippedWeapon
-            : actor.Weapons.FirstOrDefault(w =>
-                w.Name.Equals(weaponKey, StringComparison.OrdinalIgnoreCase) ||
-                w.Id.Equals(weaponKey, StringComparison.OrdinalIgnoreCase));
-
-        if (weapon == null || !weapon.UsesAmmo || string.IsNullOrWhiteSpace(weapon.Caliber))
-        {
-            return ("Quest'arma non usa munizioni ricaricabili.", null);
-        }
-
-        string caliber = weapon.Caliber;
-        bool SameCaliber(Ammo a) => a.Caliber.Equals(caliber, StringComparison.OrdinalIgnoreCase);
-
-        // Pila da cui vengono i colpi già nel caricatore (senza indicazione: munizioni standard)
-        Ammo? loadedStack = CombatService.FindLoadedAmmo(actor, weapon)
-            ?? actor.Ammos.FirstOrDefault(a => SameCaliber(a) && a.Effect == AmmoEffect.Standard);
-
-        Ammo? chosen;
-        if (ammoKey.Length > 0)
-        {
-            // Prima l'Id esatto, poi una corrispondenza parziale su Id o nome (es. "ap", "perforanti")
-            chosen = actor.Ammos.FirstOrDefault(a => SameCaliber(a) && a.Id.Equals(ammoKey, StringComparison.OrdinalIgnoreCase))
-                ?? actor.Ammos.FirstOrDefault(a => SameCaliber(a) &&
-                    (a.Id.Contains(ammoKey, StringComparison.OrdinalIgnoreCase) ||
-                     a.Name.Contains(ammoKey, StringComparison.OrdinalIgnoreCase)));
-            if (chosen == null)
-            {
-                return ($"Nessuna munizione '{ammoKey}' compatibile con {weapon.Name} ({caliber}).", null);
-            }
-        }
-        else
-        {
-            chosen = loadedStack is { Quantity: > 0 }
-                ? loadedStack
-                : actor.Ammos.FirstOrDefault(a => SameCaliber(a) && a.Quantity > 0) ?? loadedStack;
-        }
-
-        if (chosen == null)
-        {
-            return ($"Nessuna munizione {caliber} nell'inventario.", null);
-        }
-
-        bool sameStack = ReferenceEquals(chosen, loadedStack);
-        if (sameStack && weapon.CurrentAmmo >= weapon.MagazineCapacity)
-        {
-            return ($"{weapon.Name} ha già il caricatore pieno.", null);
-        }
-
-        if (chosen.Quantity <= 0)
-        {
-            return ($"Munizioni esaurite: '{chosen.Name}'.", null);
-        }
-
-        // Scarico il caricatore nella pila di provenienza (creandola se mancava)...
-        if (weapon.CurrentAmmo > 0)
-        {
-            if (loadedStack == null)
-            {
-                loadedStack = new Ammo
-                {
-                    Id = $"ammo_{caliber}_std".Replace(' ', '_'),
-                    Name = $"Munizioni {caliber} standard",
-                    Caliber = caliber,
-                    Effect = AmmoEffect.Standard
-                };
-                actor.Ammos.Add(loadedStack);
-            }
-            loadedStack.Quantity += weapon.CurrentAmmo;
-        }
-
-        // ...e carico fino a capienza dalla pila scelta
-        int loaded = Math.Min(weapon.MagazineCapacity, chosen.Quantity);
-        chosen.Quantity -= loaded;
-        weapon.CurrentAmmo = loaded;
-        weapon.LoadedAmmoId = chosen.Id;
-
-        return (null, $"{actor.Handle} ricarica {weapon.Name} con {chosen.Name}: {loaded}/{weapon.MagazineCapacity} colpi (in riserva: {chosen.Quantity}).");
     }
 
     private const int MaxRollReasonLength = 100;
