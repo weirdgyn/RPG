@@ -1408,26 +1408,27 @@ public class RpgTcpClient(bool useTls = true)
             }
 
             string trimmedInput = input.Trim();
+            ClientCommand command = ClientCommandDispatcher.Match(trimmedInput);
 
             // Senza connessione non si può fare altro che /connect, /help e /exit
             if (!_isRunning
-                && !trimmedInput.Equals("/exit", StringComparison.OrdinalIgnoreCase)
-                && !trimmedInput.Equals("/help", StringComparison.OrdinalIgnoreCase)
-                && !trimmedInput.Equals("/connect", StringComparison.OrdinalIgnoreCase)
-                && !trimmedInput.StartsWith("/connect ", StringComparison.OrdinalIgnoreCase))
+                && command is not ClientCommand.Exit
+                    and not ClientCommand.Help
+                    and not ClientCommand.HelpTopic
+                    and not ClientCommand.Connect)
             {
                 AnsiConsole.MarkupLine("[bold red][[!]]: Non sei connesso al server. Usa[/] [yellow]/connect [[host]] [[porta]][/] [bold red]oppure[/] [yellow]/exit[/][bold red].[/]");
                 continue;
             }
 
-            if (trimmedInput.Equals("/ping", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Ping)
             {
                 _lastPingSentUtc = DateTime.UtcNow;
                 await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_Ping, new { })));
                 continue;
             }
 
-            if (trimmedInput.StartsWith("/list", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.List)
             {
                 string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 string? gameFilter = parts.Length > 1 ? parts[1].Trim() : null;
@@ -1435,7 +1436,7 @@ public class RpgTcpClient(bool useTls = true)
                 continue;
             }
 
-            if (trimmedInput.StartsWith("/create", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Create)
             {
                 string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 if (parts.Length < 3)
@@ -1457,20 +1458,20 @@ public class RpgTcpClient(bool useTls = true)
                 continue;
             }
 
-            if (trimmedInput.Equals("/exit", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Exit)
             {
                 _exitRequested = true;
                 _isRunning = false;
                 break;
             }
 
-            if (trimmedInput.Equals("/help", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Help)
             {
                 PrintHelpMenu();
                 continue;
             }
 
-            if (trimmedInput.StartsWith("/help ", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.HelpTopic)
             {
                 string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 if (parts.Length < 2)
@@ -1491,8 +1492,7 @@ public class RpgTcpClient(bool useTls = true)
                 continue;
             }
 
-            if (trimmedInput.Equals("/connect", StringComparison.OrdinalIgnoreCase)
-                || trimmedInput.StartsWith("/connect ", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Connect)
             {
                 await ReconnectAsync([.. trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries).Skip(1)]);
                 continue;
@@ -1500,8 +1500,7 @@ public class RpgTcpClient(bool useTls = true)
 
             if (_player == null) { continue; }
 
-            if (trimmedInput.Equals("/npc", StringComparison.OrdinalIgnoreCase)
-                || trimmedInput.StartsWith("/npc ", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Npc)
             {
                 string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 string action = parts.Length >= 2 ? parts[1].ToLowerInvariant() : string.Empty;
@@ -1528,8 +1527,7 @@ public class RpgTcpClient(bool useTls = true)
                 continue;
             }
 
-            if (trimmedInput.Equals("/as", StringComparison.OrdinalIgnoreCase)
-                || trimmedInput.StartsWith("/as ", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.As)
             {
                 string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 var asPacket = parts.Length >= 3 ? BuildAsPacket(parts[1], parts[2].ToLowerInvariant(), parts[3..]) : null;
@@ -1544,7 +1542,7 @@ public class RpgTcpClient(bool useTls = true)
                 continue;
             }
 
-            if (trimmedInput.Equals("/status", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Status)
             {
                 if (string.IsNullOrWhiteSpace(_player.Handle))
                 {
@@ -1556,32 +1554,31 @@ public class RpgTcpClient(bool useTls = true)
                 continue;
             }
 
-            if (trimmedInput.Equals("/skills", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Skills)
             {
                 await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetSkills, new { })));
                 continue;
             }
 
-            if (trimmedInput.Equals("/games", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Games)
             {
                 await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetGames, new { })));
                 continue;
             }
 
-            if (trimmedInput.Equals("/archetypes", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Archetypes)
             {
                 await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetArchetypes, new { })));
                 continue;
             }
 
-            if (trimmedInput.Equals("/characters", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Characters)
             {
                 await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GetCharacters, new { })));
                 continue;
             }
 
-            if (trimmedInput.Equals("/check", StringComparison.OrdinalIgnoreCase)
-                || trimmedInput.StartsWith("/check ", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Check)
             {
                 var checkReq = BuildCheckRequest(trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries));
                 if (checkReq == null)
@@ -1595,7 +1592,7 @@ public class RpgTcpClient(bool useTls = true)
                 continue;
             }
 
-            if (trimmedInput.Equals("/init", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Init)
             {
                 await _writer.WriteLineAsync(
                     JsonSerializer.Serialize(
@@ -1603,8 +1600,7 @@ public class RpgTcpClient(bool useTls = true)
                 continue;
             }
 
-            if (trimmedInput.Equals("/throw", StringComparison.OrdinalIgnoreCase)
-                || trimmedInput.StartsWith("/throw ", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Throw)
             {
                 if (string.IsNullOrWhiteSpace(_player.Handle))
                 {
@@ -1624,7 +1620,7 @@ public class RpgTcpClient(bool useTls = true)
                 continue;
             }
 
-            if (trimmedInput.StartsWith("/move", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Move)
             {
                 if (string.IsNullOrWhiteSpace(_player.Handle))
                 {
@@ -1666,8 +1662,7 @@ public class RpgTcpClient(bool useTls = true)
                 continue;
             }
 
-            if (trimmedInput.Equals("/teleport", StringComparison.OrdinalIgnoreCase)
-                || trimmedInput.StartsWith("/teleport ", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Teleport)
             {
                 string[] tp = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 var targets = TeleportRules.ParseTargets(tp.Skip(4));
@@ -1691,16 +1686,14 @@ public class RpgTcpClient(bool useTls = true)
                 continue;
             }
 
-            if (trimmedInput.Equals("/activate", StringComparison.OrdinalIgnoreCase)
-                || trimmedInput.StartsWith("/activate ", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Activate)
             {
                 string itemKey = trimmedInput.Length > 9 ? trimmedInput[9..].Trim() : string.Empty;
                 await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_Activate, new ActivateRequestPayload { ItemKey = itemKey })));
                 continue;
             }
 
-            if (trimmedInput.Equals("/bonus", StringComparison.OrdinalIgnoreCase)
-                || trimmedInput.StartsWith("/bonus ", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Bonus)
             {
                 // Lo interpreta il server (BonusRules): qui si inviano gli argomenti così come sono.
                 var bonusArgs = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries).Skip(1).ToList();
@@ -1708,28 +1701,25 @@ public class RpgTcpClient(bool useTls = true)
                 continue;
             }
 
-            if (trimmedInput.Equals("/whoami", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.WhoAmI)
             {
                 await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_WhoAmI, new { })));
                 continue;
             }
 
-            if (trimmedInput.Equals("/game", StringComparison.OrdinalIgnoreCase)
-                || trimmedInput.Equals("/gamestatus", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.GameStatus)
             {
                 await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_GameStatus, new { })));
                 continue;
             }
 
-            if (trimmedInput.Equals("/next", StringComparison.OrdinalIgnoreCase)
-                || trimmedInput.Equals("/endturn", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Next)
             {
                 await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_Next, new { })));
                 continue;
             }
 
-            if (trimmedInput.Equals("/combat", StringComparison.OrdinalIgnoreCase)
-                || trimmedInput.StartsWith("/combat ", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Combat)
             {
                 string[] combatParts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 string combatAction = combatParts.Length >= 2 ? combatParts[1].ToLowerInvariant() : "status";
@@ -1745,8 +1735,7 @@ public class RpgTcpClient(bool useTls = true)
                 continue;
             }
 
-            if (trimmedInput.Equals("/reload", StringComparison.OrdinalIgnoreCase)
-                || trimmedInput.StartsWith("/reload ", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Reload)
             {
                 if (string.IsNullOrWhiteSpace(_player.Handle))
                 {
@@ -1764,7 +1753,7 @@ public class RpgTcpClient(bool useTls = true)
                 continue;
             }
 
-            if (trimmedInput.StartsWith("/attack", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Attack)
             {
                 if (string.IsNullOrWhiteSpace(_player.Handle))
                 {
@@ -1793,7 +1782,7 @@ public class RpgTcpClient(bool useTls = true)
                 continue;
             }
 
-            if (trimmedInput.StartsWith("/roll", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Roll)
             {
                 string[] parts = trimmedInput.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
                 string diceExpr = parts.Length >= 2 ? parts[1] : "1d10";
@@ -1809,7 +1798,7 @@ public class RpgTcpClient(bool useTls = true)
                 continue;
             }
 
-            if (trimmedInput.StartsWith("/skill", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Skill)
             {
                 if (string.IsNullOrWhiteSpace(_player.Handle))
                 {
@@ -1843,7 +1832,7 @@ public class RpgTcpClient(bool useTls = true)
                 continue;
             }
 
-            if (trimmedInput.StartsWith("/chat", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Chat)
             {
                 string raw = input.Trim();
                 string rest = raw.Length > 5 ? raw[5..].Trim() : string.Empty;
@@ -1888,14 +1877,14 @@ public class RpgTcpClient(bool useTls = true)
                 continue;
             }
 
-            if (trimmedInput.Equals("/leave", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Leave)
             {
                 var leavePacket = NetworkPacket.Create(OpCode.C2S_Leave, new { });
                 await _writer.WriteLineAsync(JsonSerializer.Serialize(leavePacket));
                 continue;
             }
 
-            if (trimmedInput.StartsWith("/join", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Join)
             {
                 string[] parts = input.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 string roleInput = parts.Length >= 3 ? parts[2] : "player";
@@ -1914,14 +1903,13 @@ public class RpgTcpClient(bool useTls = true)
                 continue;
             }
 
-            if (trimmedInput.Equals("/unlink", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Unlink)
             {
                 await _writer.WriteLineAsync(JsonSerializer.Serialize(NetworkPacket.Create(OpCode.C2S_Unlink, new { })));
                 continue;
             }
 
-            if (trimmedInput.Equals("/heal", StringComparison.OrdinalIgnoreCase)
-                || trimmedInput.StartsWith("/heal ", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Heal)
             {
                 string[] parts = trimmedInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 if (parts.Length < 2)
@@ -1946,7 +1934,7 @@ public class RpgTcpClient(bool useTls = true)
                 continue;
             }
 
-            if (trimmedInput.StartsWith("/link", StringComparison.OrdinalIgnoreCase))
+            if (command == ClientCommand.Link)
             {
                 string[] parts = input.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
 

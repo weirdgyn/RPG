@@ -11,6 +11,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="RPG.Client.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Content Include="..\RPG.Common\Data\**\*.*" Link="Data\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
