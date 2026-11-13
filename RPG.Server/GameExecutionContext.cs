@@ -55,9 +55,12 @@ public sealed class GameExecutionScope(Game game)
     }
 
     /// <summary>Cerca un partecipante per handle (maiuscole indifferenti): prima i giocatori, poi gli NPC.</summary>
-    public Character? FindCharacter(string handle) =>
-        Game.Players.Select(p => p.Character).FirstOrDefault(c => c != null && c.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase))
-        ?? Game.NPCs.FirstOrDefault(n => n.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase));
+    public Character? FindCharacter(string handle) => FindParticipant(Game, handle);
+
+    /// <summary>Come <see cref="FindCharacter"/>, per chi ha un <see cref="Game"/> e non uno scope. Sotto Game.SyncRoot.</summary>
+    public static Character? FindParticipant(Game game, string handle) =>
+        game.Players.Select(p => p.Character).FirstOrDefault(c => c != null && c.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase))
+        ?? game.NPCs.FirstOrDefault(n => n.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>Restituisce tutti i partecipanti attuali al game (giocatori e NPC) senza duplicati.</summary>
     public List<Character> GetParticipants()

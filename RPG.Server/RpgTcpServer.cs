@@ -594,118 +594,6 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
     // Serve solo alla stima mostrata nel game status, non è un limite di gioco.
     private const int MaxActionsPerRound = 2;
 
-    // Da chiamare sotto _registry.GamesLock. Passa al prossimo personaggio valido dell'ordine (ancora nel game e non morto),
-    // incrementando il round al giro completo, e azzera movimento e azione. False se non c'è più nessuno.
-    // I personaggi morti durante la scansione vengono aggiunti a newlyDead (da salvare su disco fuori dal lock).
-    private bool MoveToNextTurn(Game game, List<string> notes, List<Character> newlyDead)
-    {
-        int n = game.TurnOrder.Count;
-        int fallbackRaw = -1;
-
-        for (int step = 1; step <= n; step++)
-        {
-            int raw = game.TurnIndex + step;
-            int idx = raw % n;
-            var combatant = FindCombatantInGame(game, game.TurnOrder[idx].Handle);
-            if (combatant == null || combatant.Character.Health.IsDead) continue;
-
-            // Salvezza contro la morte: a inizio turno, chi è in Mortale e non stabilizzato tira 1d10 ≤ BODY.
-            if (combatant.Character.Health.NeedsDeathSave)
-            {
-                notes.Add(RollService.RollDeathSave(combatant.Character));
-                if (combatant.Character.Health.IsDead)
-                {
-                    newlyDead.Add(combatant.Character);
-                    continue;   // morto: salta il turno
-                }
-            }
-
-            // Chi è stordito tenta di riprendersi all'inizio del suo turno; se non ci riesce il turno salta
-            if (combatant.Character.Health.IsStunned)
-            {
-                notes.Add(RollService.RollStunRecovery(combatant.Character));
-                if (combatant.Character.Health.IsStunned)
-                {
-                    if (fallbackRaw < 0) fallbackRaw = raw;
-                    continue;
-                }
-            }
-
-            if (raw / n > 0) notes.AddRange(EffectService.DescribeLapsed(EffectRules.AdvanceRound(game.Effects)));
-            game.Round += raw / n;
-            game.TurnIndex = idx;
-            game.TurnMoveUsed = 0;
-            game.TurnActionUsed = false;
-            game.TurnStamp++;
-            return true;
-        }
-
-        // Tutti gli altri sono storditi o morti: il turno va comunque al primo stordito (che può solo passare con /next)
-        if (fallbackRaw >= 0)
-        {
-            notes.Add("Nessuno in grado di agire: il turno passa a un personaggio stordito (può solo passare con /next).");
-            if (fallbackRaw / n > 0) notes.AddRange(EffectService.DescribeLapsed(EffectRules.AdvanceRound(game.Effects)));
-            game.Round += fallbackRaw / n;
-            game.TurnIndex = fallbackRaw % n;
-            game.TurnMoveUsed = 0;
-            game.TurnActionUsed = false;
-            game.TurnStamp++;
-            return true;
-        }
-
-        return false;
-    }
-
-    // Da chiamare sotto _registry.GamesLock. Toglie un personaggio dall'ordine di gioco tenendo coerente il turno corrente.
-    // Restituisce l'annuncio da inviare al game se il turno corrente è cambiato (o il combattimento è finito), altrimenti null.
-    private string? RemoveFromTurnOrder(Game game, string handle, List<Character> newlyDead)
-    {
-        int i = game.TurnOrder.FindIndex(t => t.Handle.Equals(handle, StringComparison.OrdinalIgnoreCase));
-        if (i < 0) return null;
-
-        game.TurnOrder.RemoveAt(i);
-        if (!game.CombatActive) return null;
-
-        if (game.TurnOrder.Count == 0)
-        {
-            game.CombatActive = false;
-            return $"{handle} ha lasciato il combattimento: nessuno è rimasto nell'ordine, combattimento terminato.{EffectService.EndCombatEffects(game)}";
-        }
-        else if (i < game.TurnIndex)
-        {
-            game.TurnIndex--;
-        }
-        else if (i == game.TurnIndex)
-        {
-            // Se n'è andato chi era di turno: si passa a chi lo seguiva con le stesse regole di /next
-            // (salta i morti, recupero dallo stordimento, nuovo TurnStamp, movimento e azione freschi).
-            // MoveToNextTurn parte dalla posizione successiva a TurnIndex: chi seguiva ora sta in TurnIndex.
-            game.TurnIndex--;
-            var notes = new List<string>();
-            if (!MoveToNextTurn(game, notes, newlyDead))
-            {
-                game.CombatActive = false;
-                game.TurnIndex = 0;
-                return $"{handle} ha lasciato il combattimento: nessuno è in grado di agire, combattimento terminato.{EffectService.EndCombatEffects(game)}";
-            }
-
-            string noteText = notes.Count > 0 ? string.Join(" ", notes.Select(x => x + ".")) + " " : string.Empty;
-            return $"{handle} ha lasciato il combattimento durante il suo turno. {noteText}{DescribeTurn(game)}";
-        }
-
-        return null;
-    }
-
-    private string DescribeTurn(Game game)
-    {
-        string current = game.CurrentTurnHandle ?? "nessuno";
-        var combatant = game.CurrentTurnHandle != null ? FindCombatantInGame(game, game.CurrentTurnHandle) : null;
-        string budget = combatant != null
-            ? $" Movimento: {Math.Max(0, MovementService.EffectiveMA(game, combatant.Character) - game.TurnMoveUsed):F1}/{MovementService.EffectiveMA(game, combatant.Character)}m, azione: {(game.TurnActionUsed ? "usata" : "disponibile")}."
-            : string.Empty;
-        return $"Round {game.Round} - tocca a {current}.{budget}";
-    }
-
     private async Task HandleCombatAsync(ClientSession client, NetworkPacket packet)
     {
         var req = packet.DeserializePayload<CombatRequestPayload>();
@@ -732,22 +620,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
 
         if (action == "status")
         {
-            string text;
-            lock (_registry.GamesLock)
-            lock (game.SyncRoot)
-            {
-                if (!game.CombatActive)
-                {
-                    text = game.TurnOrder.Count > 0
-                        ? $"Nessun combattimento in corso. Ordine di iniziativa pronto: {string.Join(", ", game.TurnOrder.Select(t => $"{t.Handle} ({t.Initiative})"))}."
-                        : "Nessun combattimento in corso.";
-                }
-                else
-                {
-                    var order = game.TurnOrder.Select((t, i) => i == game.TurnIndex ? $"[{t.Handle}]" : t.Handle);
-                    text = $"{DescribeTurn(game)} Ordine: {string.Join(" > ", order)}.";
-                }
-            }
+            string text = GameExecutionContext.Execute(game, scope => TurnService.CombatStatus(scope.Game));
             await Reply(text);
             return;
         }
@@ -762,48 +635,10 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
         {
             case "start":
                 {
-                    string? error = null;
-                    string announce = string.Empty;
-                    var newlyDead = new List<Character>();
-                    lock (_registry.GamesLock)
-                    lock (game.SyncRoot)
-                    {
-                        if (game.CombatActive)
-                        {
-                            error = "Il combattimento è già in corso: usa /combat status oppure /combat end.";
-                        }
-                        else if (game.ActiveCheck is { Kind: Game.CheckKind.Initiative })
-                        {
-                            error = "L'iniziativa è ancora aperta: attendi lo spoglio o chiudila con /check close.";
-                        }
-                        else if (game.TurnOrder.Count == 0)
-                        {
-                            error = "Nessun ordine di iniziativa: usa prima /check init.";
-                        }
-                        else
-                        {
-                            game.CombatActive = true;
-                            game.Round = 0;
-                            game.TurnIndex = game.TurnOrder.Count - 1;
-                            foreach (var m in game.Players.Select(pl => pl.Character).Concat(game.NPCs).OfType<Character>())
-                            {
-                                m.Health.IsStunned = false;
-                            }
-                            var startNotes = new List<string>();
-                            if (!MoveToNextTurn(game, startNotes, newlyDead))
-                            {
-                                game.CombatActive = false;
-                                error = "Nessun personaggio in grado di agire nell'ordine di iniziativa.";
-                            }
-                            else
-                            {
-                                game.FreeActionsCounter = 0;
-                                announce = $"COMBATTIMENTO INIZIATO! Ordine: {string.Join(" > ", game.TurnOrder.Select(t => t.Handle))}. {(startNotes.Count > 0 ? string.Join(" ", startNotes.Select(x => x + ".")) + " " : "")}{DescribeTurn(game)}";
-                            }
-                        }
-                    }
-
-                    foreach (var dead in newlyDead) SaveCharacter(dead);
+                    // Avvio e salvataggio degli eventuali morti (a inizio turno) nella stessa operazione
+                    var started = GameExecutionContext.Execute(game, scope => TurnService.StartCombat(scope), SaveCharacter);
+                    string? error = started.Error;
+                    string announce = started.Announce;
 
                     if (error != null) await Reply(error);
                     else
@@ -816,21 +651,9 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
 
             case "end":
                 {
-                    bool was;
-                    string endedEffects = string.Empty;
-                    lock (_registry.GamesLock)
-                    lock (game.SyncRoot)
-                    {
-                        was = game.CombatActive;
-                        game.CombatActive = false;
-                        endedEffects = EffectService.EndCombatEffects(game);
-                        game.TurnMoveUsed = 0;
-                        game.TurnActionUsed = false;
-                        foreach (var m in game.Players.Select(pl => pl.Character).Concat(game.NPCs).OfType<Character>())
-                        {
-                            m.Health.IsStunned = false;
-                        }
-                    }
+                    var ended = GameExecutionContext.Execute(game, scope => TurnService.EndCombat(scope));
+                    bool was = ended.Was;
+                    string endedEffects = ended.EndedEffects;
 
                     if (!was) await Reply("Nessun combattimento in corso.");
                     else
@@ -1003,45 +826,10 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
             return;
         }
 
-        string? error = null;
-        string announce = string.Empty;
-        var newlyDead = new List<Character>();
-        lock (_registry.GamesLock)
-        lock (game.SyncRoot)
-        {
-            if (!game.CombatActive)
-            {
-                error = "Nessun combattimento in corso.";
-            }
-            else
-            {
-                bool isMaster = client.Player.Role == Player.RoleType.master;
-                string? current = game.CurrentTurnHandle;
-                bool isCurrent = client.Player.Character != null && current != null
-                    && current.Equals(client.Player.Character.Handle, StringComparison.OrdinalIgnoreCase);
-
-                if (!isMaster && !isCurrent)
-                {
-                    error = $"Non è il tuo turno: tocca a {current ?? "nessuno"}.";
-                }
-                else
-                {
-                    string ended = current ?? "nessuno";
-                    var turnNotes = new List<string>();
-                    if (MoveToNextTurn(game, turnNotes, newlyDead))
-                    {
-                        announce = $"Fine turno di {ended}. {(turnNotes.Count > 0 ? string.Join(" ", turnNotes.Select(x => x + ".")) + " " : "")}{DescribeTurn(game)}";
-                    }
-                    else
-                    {
-                        game.CombatActive = false;
-                        announce = "Nessun personaggio in grado di agire: combattimento terminato." + EffectService.EndCombatEffects(game);
-                    }
-                }
-            }
-        }
-
-        foreach (var dead in newlyDead) SaveCharacter(dead);
+        bool isMasterCaller = client.Player.Role == Player.RoleType.master;
+        var next = GameExecutionContext.Execute(game, scope => TurnService.NextTurn(scope, isMasterCaller, client.Player.Character), SaveCharacter);
+        string? error = next.Error;
+        string announce = next.Announce;
 
         if (error != null)
         {
@@ -2374,7 +2162,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                         if (removed)
                         {
                             game.InitRolls.RemoveAll(r => r.PlayerName.Equals(handle, StringComparison.OrdinalIgnoreCase));
-                            turnNotice = RemoveFromTurnOrder(game, handle, newlyDead);
+                            turnNotice = TurnService.RemoveFromTurnOrder(game, handle, newlyDead.Add);
                             // Senza questo, il check resterebbe in attesa di un NPC che non è più nel game.
                             completedCheck = PruneCheckEntry(game, handle);
                         }
@@ -2711,7 +2499,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                 if (client.Player.Character != null)
                 {
                     game.InitRolls.RemoveAll(r => r.PlayerName.Equals(client.Player.Character.Handle, StringComparison.OrdinalIgnoreCase));
-                    leaveTurnNotice = RemoveFromTurnOrder(game, client.Player.Character.Handle, newlyDead);
+                    leaveTurnNotice = TurnService.RemoveFromTurnOrder(game, client.Player.Character.Handle, newlyDead.Add);
                     completedCheck = PruneCheckEntry(game, client.Player.Character.Handle);
                 }
 
@@ -3548,7 +3336,7 @@ public class RpgTcpServer(string ipAddress, int port, AccountStore accounts, boo
                 if (player.Character != null)
                 {
                     game.InitRolls.RemoveAll(r => r.PlayerName.Equals(player.Character.Handle, StringComparison.OrdinalIgnoreCase));
-                    var turnText = RemoveFromTurnOrder(game, player.Character.Handle, deadCharacters);
+                    var turnText = TurnService.RemoveFromTurnOrder(game, player.Character.Handle, deadCharacters.Add);
                     if (turnText != null && game.Players.Count > 0) turnNotices.Add(([.. game.Players], turnText));
                     var done = PruneCheckEntry(game, player.Character.Handle);
                     if (done != null && game.Players.Count > 0) completedChecks.Add((game, done));
