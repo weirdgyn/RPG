@@ -123,7 +123,7 @@ public static class TurnService
         string current = game.CurrentTurnHandle ?? "nessuno";
         var combatant = game.CurrentTurnHandle != null ? GameExecutionScope.FindParticipant(game, game.CurrentTurnHandle) : null;
         string budget = combatant != null
-            ? $" Movimento: {Math.Max(0, MovementService.EffectiveMA(game, character) - game.TurnMoveUsed):F1}/{MovementService.EffectiveMA(game, character)}m, azione: {(game.TurnActionUsed ? "usata" : "disponibile")}."
+            ? $" Movimento: {Math.Max(0, MovementService.EffectiveMA(game, combatant) - game.TurnMoveUsed):F1}/{MovementService.EffectiveMA(game, combatant)}m, azione: {(game.TurnActionUsed ? "usata" : "disponibile")}."
             : string.Empty;
         return $"Round {game.Round} - tocca a {current}.{budget}";
     }
